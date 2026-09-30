@@ -21,6 +21,15 @@ import { loadEnv } from "./env.js";
 /** Problems caused by the caller's input; servers report them as 4xx / tool errors, not crashes. */
 export class UserError extends Error {}
 
+/** Most rows one untrusted-caller run (web export, MCP generate_data) may build in memory. */
+export const MAX_TOTAL_ROWS = 1_000_000;
+
+/** Refuse a schema whose tables add up to more than `max` rows, before any generation work. */
+export function assertRowBudget(schema: { tables: Record<string, { rows: number }> }, max = MAX_TOTAL_ROWS): void {
+  const total = Object.values(schema.tables).reduce((n, t) => n + t.rows, 0);
+  if (total > max) throw new UserError(`The schema would generate ${total} rows; the limit is ${max}. Lower the row counts in the schema.`);
+}
+
 export const SCHEMA_EXT = new Set([".yaml", ".yml", ".json"]);
 export const isEnvFile = (p: string): boolean => path.basename(p).startsWith(".env");
 

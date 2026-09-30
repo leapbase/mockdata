@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { assertNotSymlink, resolveInside, serialize, UserError } from "@mockdata/cli";
+import { assertNotSymlink, assertRowBudget, resolveInside, serialize, UserError } from "@mockdata/cli";
 import { LlmCancelledError, generateWithLlm } from "@mockdata/llm";
 import { HttpError, optBool, optEnum, optInt, optString, readJson, sendJson, type Handler } from "../http.js";
 import { zip } from "../zip.js";
@@ -12,6 +12,7 @@ const FORMATS = ["json", "ndjson", "csv"] as const;
 export const exportRoute: Handler = async (ctx, req, res) => {
   const body = await readJson(req);
   const schema = parseSchemaBody(body);
+  assertRowBudget(schema);
   const format = optEnum(body, "format", FORMATS) ?? "json";
   const outputDir = optString(body, "outputDir");
   const wantZip = optBool(body, "zip") ?? false;

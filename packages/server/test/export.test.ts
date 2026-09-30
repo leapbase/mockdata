@@ -17,6 +17,15 @@ describe("POST /api/export", () => {
     expect(csv).toHaveLength(15 + 2);
   });
 
+  it("refuses a schema that would generate too many rows, before writing anything", async () => {
+    const root = tmpRoot();
+    const { post } = await boot({ root });
+    const huge = "tables:\n  t:\n    rows: 2000000000\n    columns:\n      id: { type: integer, primaryKey: true }\n";
+    const r = await post("/api/export", { text: huge, zip: true });
+    expect(r.status).toBe(400);
+    expect(JSON.stringify(r.json)).toMatch(/2000000000 rows.*limit/);
+  });
+
   it("supports json and ndjson and honours the seed", async () => {
     const root = tmpRoot();
     const { post } = await boot({ root });

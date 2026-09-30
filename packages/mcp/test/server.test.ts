@@ -64,6 +64,14 @@ describe("mcp server", () => {
     expect((await call("validate_schema", { schema, schemaPath: "x.yaml" })).isError).toBe(true);
   });
 
+  it("generate_data refuses a schema that would generate too many rows", async () => {
+    const { call } = await start();
+    const huge = { tables: { t: { rows: 2_000_000_000, columns: { id: { type: "integer", primaryKey: true } } } } };
+    const r = await call("generate_data", { schema: huge });
+    expect(r.isError).toBe(true);
+    expect(r.body).toMatch(/2000000000 rows.*limit/);
+  });
+
   it("generate_data returns counts, a capped preview and a run report", async () => {
     const { call } = await start();
     expect((await call("get_run_report")).body).toMatch(/No generate_data run yet/);

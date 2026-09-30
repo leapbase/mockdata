@@ -175,6 +175,8 @@ The MCP server exposes the same abilities to agents, over stdio or HTTP:
 | `generate_data` | Returns row counts and a small preview; can write every row to files |
 | `get_run_report` | Seed, row counts, files written, LLM calls and tokens for the last run |
 
+`generate_data` and the web UI's Export refuse schemas that add up to more than 1,000,000 rows, since they build everything in memory for a caller you may not control. The CLI has no such limit. Inferring from a folder of samples skips symlinks and reports them as warnings.
+
 Register it in `.mcp.json` (or with `claude mcp add`), using absolute paths:
 
 ```json

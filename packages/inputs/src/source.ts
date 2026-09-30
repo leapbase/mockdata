@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { InferError, type InferOptions, type InferResult } from "./common.js";
@@ -65,12 +65,21 @@ export async function inferFromSource(source: string, opts: SourceOptions = {}):
   }
 
   if (stat.isDirectory()) {
-    const files = readdirSync(source)
+    // Links are never followed: one could point at .env or a file outside the folder the caller was allowed to name.
+    const skipped: string[] = [];
+    const names = readdirSync(source)
       .filter((f) => SAMPLE_EXT.test(f))
       .sort()
-      .map((f) => ({ name: f, text: readCapped(path.join(source, f)) }));
+      .filter((f) => {
+        const isLink = lstatSync(path.join(source, f)).isSymbolicLink();
+        if (isLink) skipped.push(f);
+        return !isLink;
+      });
+    const files = names.map((f) => ({ name: f, text: readCapped(path.join(source, f)) }));
     if (files.length === 0) throw new InferError(`No .csv, .json or .ndjson files in ${source}`);
-    return inferFromSampleFiles(files, opts);
+    const result = inferFromSampleFiles(files, opts);
+    for (const f of skipped) result.warnings.push(`Skipped ${f}: symlinks in a sample folder are not followed`);
+    return result;
   }
 
   const text = readCapped(source);

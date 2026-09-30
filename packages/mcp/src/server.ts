@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { assertNotEnv, assertNotSymlink, checkSchemaPath, inferConfined, loadEnv, parseSchemaText, resolveInside, serialize, UserError } from "@mockdata/cli";
+import { assertNotEnv, assertNotSymlink, assertRowBudget, checkSchemaPath, inferConfined, loadEnv, parseSchemaText, resolveInside, serialize, UserError } from "@mockdata/cli";
 import { llmColumns, parseSchema, type Dataset } from "@mockdata/core";
 import { generateWithLlm, type GenerateWithLlmOptions, type LlmReport } from "@mockdata/llm";
 import { SCHEMA_REFERENCE } from "./reference.js";
@@ -170,6 +170,7 @@ export function createServer(opts: ServerOptions = {}): McpServer {
           }
         }
 
+        assertRowBudget(schema);
         const env = loadEnv(root, baseEnv);
         const { data, report } = await generateWithLlm(schema, { seed: args.seed, ...opts.llm, env });
 
