@@ -8,6 +8,7 @@ import { assertLocal, HttpError, sendJson, type Ctx, type Handler } from "./http
 import { serveStatic } from "./static.js";
 import { getConfig } from "./routes/config.js";
 import { listFiles, readFile, writeFile } from "./routes/files.js";
+import { generateRoute, validateRoute } from "./routes/run.js";
 
 export interface AppOptions {
   /** Directory schemas live in and all paths are confined to; .env is read from here. Default: cwd. */
@@ -25,6 +26,8 @@ const ROUTES: Record<string, Handler> = {
   "GET /api/files": listFiles,
   "GET /api/file": readFile,
   "PUT /api/file": writeFile,
+  "POST /api/validate": validateRoute,
+  "POST /api/generate": generateRoute,
 };
 
 /** Errors caused by the caller's schema or input are 400; failures talking to a model are 502. */
