@@ -55,7 +55,65 @@ const DEFAULT_KEY_ENV: Record<string, string | undefined> = {
 /** ollama and openai-compatible servers speak the OpenAI chat wire format; their key is optional. */
 const KEY_OPTIONAL = new Set(["ollama", "openai-compatible"]);
 
+const RESERVED_KEY_ENV: Record<string, string> = { ANTHROPIC_API_KEY: "anthropic", OPENAI_API_KEY: "openai" };
+const API_KEY_ENV_NAME = /^[A-Z][A-Z0-9_]*_API_(KEY|TOKEN)$/;
+const DEFAULT_HOSTS = new Set(["api.anthropic.com", "api.openai.com"]);
+
+function hostname(url: string): string {
+  return new URL(url).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+}
+
+function isLoopback(host: string): boolean {
+  return host === "localhost" || host === "::1" || /^127\./.test(host);
+}
+
+/** Cloud metadata and link-local addresses: never a legitimate model server. */
+function isLinkLocal(host: string): boolean {
+  return /^169\.254\./.test(host) || /^fe[89ab][0-9a-f]:/.test(host) || host === "metadata.google.internal";
+}
+
+/** Origin and path only: no credentials or query string from the configured URL. */
+function redactUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return "<invalid url>";
+  }
+}
+
+/**
+ * The schema (possibly untrusted) can set baseUrl and apiKeyEnv, so this keeps
+ * credentials from reaching a host the user did not choose in the environment.
+ */
+function assertSafeTarget(config: ResolvedLlmConfig, apiKey: string | undefined): void {
+  if (config.baseUrl) {
+    const host = hostname(config.baseUrl);
+    if (isLinkLocal(host)) throw new LlmConfigError(`"llm.baseUrl" points at a link-local or metadata address`);
+    if (config.provider === "anthropic" || config.provider === "openai") {
+      throw new LlmConfigError(`"llm.baseUrl" is not allowed for provider "${config.provider}" (its key is only sent to the official API); use "openai-compatible" for a custom endpoint`);
+    }
+    if (apiKey && new URL(config.baseUrl).protocol !== "https:" && !isLoopback(host)) {
+      throw new LlmConfigError(`An API key is only sent over https (or to localhost); "llm.baseUrl" must use https`);
+    }
+  }
+  if (config.apiKeyEnv) {
+    if (!API_KEY_ENV_NAME.test(config.apiKeyEnv)) {
+      throw new LlmConfigError(`"llm.apiKeyEnv" must be an upper-case variable name ending in _API_KEY or _API_TOKEN`);
+    }
+    const owner = RESERVED_KEY_ENV[config.apiKeyEnv];
+    if (owner && owner !== config.provider) {
+      throw new LlmConfigError(`"llm.apiKeyEnv" names the ${owner} key, which is only used with provider "${owner}"`);
+    }
+  }
+}
+
 async function postJson(f: typeof fetch, url: string, headers: Record<string, string>, body: unknown, timeoutMs: number): Promise<any> {
+  // Response bodies are only echoed from loopback and the official APIs, so a
+  // schema-chosen host cannot use error messages to read back internal services.
+  const host = hostname(url);
+  const echoBody = isLoopback(host) || DEFAULT_HOSTS.has(host);
+  const shown = redactUrl(url);
   let res: Response;
   try {
     res = await f(url, {
@@ -67,14 +125,14 @@ async function postJson(f: typeof fetch, url: string, headers: Record<string, st
   } catch (e) {
     const err = e as Error;
     const why = err.name === "TimeoutError" ? `timed out after ${timeoutMs} ms` : err.message;
-    throw new LlmHttpError(`Network error calling ${url}: ${why}`, 0);
+    throw new LlmHttpError(`Network error calling ${shown}: ${why}`, 0);
   }
   const text = await res.text();
-  if (!res.ok) throw new LlmHttpError(`${url} returned ${res.status}: ${text.slice(0, 300)}`, res.status);
+  if (!res.ok) throw new LlmHttpError(`${shown} returned ${res.status}${echoBody ? `: ${text.slice(0, 300)}` : ""}`, res.status);
   try {
     return JSON.parse(text);
   } catch {
-    throw new LlmHttpError(`${url} returned non-JSON: ${text.slice(0, 200)}`, 502);
+    throw new LlmHttpError(`${shown} returned non-JSON${echoBody ? `: ${text.slice(0, 200)}` : ""}`, 502);
   }
 }
 
@@ -85,6 +143,8 @@ export function createProvider(config: ResolvedLlmConfig, deps: ProviderDeps = {
   const env = deps.env ?? process.env;
   const keyEnv = config.apiKeyEnv ?? DEFAULT_KEY_ENV[config.provider];
   const apiKey = keyEnv ? env[keyEnv] : undefined;
+
+  assertSafeTarget(config, apiKey);
 
   // Required for hosted providers; for local servers only when the schema names a key variable.
   if (!apiKey && (!KEY_OPTIONAL.has(config.provider) || config.apiKeyEnv)) {

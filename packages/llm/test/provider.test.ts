@@ -89,4 +89,50 @@ describe("timeouts", () => {
     expect(err.message).toMatch(/timed out after 20 ms/);
     expect(err.retryable).toBe(true);
   });
+
+  describe("credential safety (schema may be untrusted)", () => {
+    const env = { ANTHROPIC_API_KEY: "sk-secret", OPENAI_API_KEY: "sk-secret2", DATABASE_URL: "postgres://u:pw@h/db", MY_SERVICE_API_KEY: "svc" };
+
+    it("never sends the anthropic/openai keys to a schema-chosen host", () => {
+      for (const provider of ["anthropic", "openai"] as const) {
+        expect(() => createProvider({ provider, model: "m", baseUrl: "https://evil.example" }, { env })).toThrow(LlmConfigError);
+      }
+      expect(() => createProvider({ provider: "openai-compatible", model: "m", baseUrl: "https://evil.example", apiKeyEnv: "ANTHROPIC_API_KEY" }, { env })).toThrow(LlmConfigError);
+      expect(() => createProvider({ provider: "openai-compatible", model: "m", baseUrl: "https://evil.example", apiKeyEnv: "OPENAI_API_KEY" }, { env })).toThrow(LlmConfigError);
+    });
+
+    it("apiKeyEnv must look like an API key variable, not a database URL", () => {
+      expect(() => createProvider({ provider: "openai-compatible", model: "m", baseUrl: "https://api.example.com/v1", apiKeyEnv: "DATABASE_URL" }, { env })).toThrow(/apiKeyEnv/);
+    });
+
+    it("does not send a key over plain http to a non-loopback host", () => {
+      expect(() => createProvider({ provider: "openai-compatible", model: "m", baseUrl: "http://api.example.com/v1", apiKeyEnv: "MY_SERVICE_API_KEY" }, { env })).toThrow(LlmConfigError);
+    });
+
+    it("still allows a custom https host with its own key, and loopback http", async () => {
+      const { f, calls } = fakeFetch(200, { choices: [{ message: { content: "ok" } }] });
+      const p = createProvider({ provider: "openai-compatible", model: "m", baseUrl: "https://api.example.com/v1", apiKeyEnv: "MY_SERVICE_API_KEY" }, { fetch: f, env });
+      await p.complete(req);
+      expect((calls[0]!.init.headers as Record<string, string>).authorization).toBe("Bearer svc");
+      expect(() => createProvider({ provider: "openai-compatible", model: "m", baseUrl: "http://127.0.0.1:8000/v1", apiKeyEnv: "MY_SERVICE_API_KEY" }, { env })).not.toThrow();
+    });
+
+    it("refuses link-local/metadata hosts", () => {
+      expect(() => createProvider({ provider: "openai-compatible", model: "m", baseUrl: "http://169.254.169.254/latest" }, { env })).toThrow(LlmConfigError);
+    });
+
+    it("does not echo a remote response body or URL credentials in errors", async () => {
+      const { f } = fakeFetch(500, "INTERNAL-SECRET-BODY");
+      const p = createProvider({ provider: "openai-compatible", model: "m", baseUrl: "https://user:pw@api.example.com/v1?token=abc" }, { fetch: f, env: {} });
+      const err = await p.complete(req).catch((e) => e as Error);
+      expect(err.message).not.toMatch(/INTERNAL-SECRET-BODY|pw|token=abc|user:/);
+      expect(err.message).toMatch(/500/);
+    });
+
+    it("keeps the response body for loopback and default hosts (useful API errors)", async () => {
+      const { f } = fakeFetch(400, "model not found");
+      const p = createProvider({ provider: "ollama", model: "m", baseUrl: "http://localhost:11434/v1" }, { fetch: f, env: {} });
+      expect((await p.complete(req).catch((e) => e as Error)).message).toMatch(/model not found/);
+    });
+  });
 });

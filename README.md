@@ -154,6 +154,8 @@ Settings come from a `.env` file in the directory you run from (copy `.env.examp
 | `OLLAMA_BASE_URL` | Ollama host, e.g. `http://localhost:11434` (`/v1` is added) |
 | `DATABASE_URL` | Optional: used as `mockdata infer env:DATABASE_URL` |
 
+Because a schema can come from someone else, its `llm:` block cannot redirect your keys. `baseUrl` is only accepted for `ollama` and `openai-compatible` (not `anthropic`/`openai`, whose keys go only to the official API) and never for link-local/metadata addresses. `apiKeyEnv` must be an upper-case name ending `_API_KEY` or `_API_TOKEN`, and `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` work only with their own provider. A key is sent only over https (or to localhost). Error messages show a remote body only for localhost and the official APIs.
+
 ```
 cp .env.example .env        # fill in AI_PROVIDER and the matching model / key
 npx mockdata generate examples/shop-llm.yaml

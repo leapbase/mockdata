@@ -66,7 +66,7 @@ export function resolveLlmConfig(
     try {
       new URL(baseUrl);
     } catch {
-      throw new LlmConfigError(`Invalid LLM base URL "${baseUrl}"`);
+      throw new LlmConfigError(`Invalid LLM base URL (from "llm.baseUrl" or OLLAMA_BASE_URL)`);
     }
   }
 
