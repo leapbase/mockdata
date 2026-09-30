@@ -1,0 +1,134 @@
+import { networkInterfaces } from "node:os";
+
+/** Thrown for bad user input; the same class confined.ts uses (re-exported there). */
+export class NetworkConfigError extends Error {}
+
+export interface Cidr {
+  base: number;
+  mask: number;
+  /** Normalised "a.b.c.d/n". */
+  text: string;
+}
+
+/** Who may reach a server that is listening beyond localhost. Without one, only localhost is served. */
+export interface NetworkAccess {
+  allow: Cidr[];
+  /** This machine's own IPv4 addresses: accepted as a Host header (an IP literal cannot be DNS-rebound). */
+  hosts: Set<string>;
+}
+
+/** Private ranges a caller may be allowed from. There is no authentication, so public ranges are refused. */
+const PRIVATE = [cidr("10.0.0.0/8"), cidr("172.16.0.0/12"), cidr("192.168.0.0/16"), cidr("100.64.0.0/10")];
+const MIN_PREFIX = 16;
+
+function ipv4(text: string): number | undefined {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(text);
+  if (!m) return undefined;
+  const parts = m.slice(1).map(Number);
+  if (parts.some((p) => p > 255)) return undefined;
+  return ((parts[0]! << 24) | (parts[1]! << 16) | (parts[2]! << 8) | parts[3]!) >>> 0;
+}
+
+function cidr(text: string): Cidr {
+  const [ip, len = "32"] = text.split("/");
+  const base = ipv4(ip ?? "");
+  const bits = Number(len);
+  if (base === undefined || !/^\d+$/.test(len) || bits > 32) throw new NetworkConfigError(`Invalid address "${text}"`);
+  const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
+  return { base: (base & mask) >>> 0, mask, text: `${ip}/${bits}` };
+}
+
+const within = (inner: Cidr, outer: Cidr) => (inner.mask & outer.mask) >>> 0 === outer.mask && ((inner.base & outer.mask) >>> 0) === outer.base;
+
+/**
+ * Parse an allow list: comma-separated single IPs ("10.1.2.3"), CIDRs
+ * ("192.168.0.0/16") or the shorthand "100.100.1.x" (a /24). Every entry must
+ * sit inside a private range and be at most as wide as a /16.
+ */
+export function parseAllow(spec: string): Cidr[] {
+  const items = spec.split(",").map((s) => s.trim()).filter(Boolean);
+  if (items.length === 0) throw new NetworkConfigError("--allow needs at least one address, e.g. 100.100.1.x");
+  return items.map((item) => {
+    const shorthand = /^(\d{1,3}\.\d{1,3}\.\d{1,3})\.x$/.exec(item);
+    const c = cidr(shorthand ? `${shorthand[1]}.0/24` : item);
+    if (!PRIVATE.some((p) => within(c, p))) {
+      throw new NetworkConfigError(`"${item}" is not a private address range (10/8, 172.16/12, 192.168/16, 100.64/10): this server has no login, so it must not be opened to the internet`);
+    }
+    if (Number(c.text.split("/")[1]) < MIN_PREFIX) throw new NetworkConfigError(`"${item}" is wider than a /${MIN_PREFIX}; list a narrower range`);
+    return c;
+  });
+}
+
+/** Strip the IPv4-mapped IPv6 prefix Node reports for IPv4 peers on a dual-stack socket. */
+function plainAddress(addr: string): string {
+  return addr.toLowerCase().replace(/^::ffff:/, "");
+}
+
+export function isLoopback(addr: string): boolean {
+  const a = plainAddress(addr);
+  return a === "::1" || a.startsWith("127.");
+}
+
+/** Is this peer address one we serve? Loopback always; otherwise it must be inside the allow list. */
+export function remoteAllowed(addr: string | undefined, allow: Cidr[]): boolean {
+  if (!addr) return false;
+  if (isLoopback(addr)) return true;
+  const ip = ipv4(plainAddress(addr));
+  return ip !== undefined && allow.some((c) => ((ip & c.mask) >>> 0) === c.base);
+}
+
+/** This machine's IPv4 addresses (for accepting them as Host, and for telling the user where to connect). */
+export function localAddresses(): string[] {
+  return Object.values(networkInterfaces())
+    .flatMap((list) => list ?? [])
+    .filter((i) => i.family === "IPv4" && !i.internal)
+    .map((i) => i.address);
+}
+
+export function networkAccess(allow: Cidr[], hosts: string[] = localAddresses()): NetworkAccess {
+  return { allow, hosts: new Set(hosts) };
+}
+
+/** May this Host-header hostname (no port, no brackets) be served? Used for Host and for Origin. */
+export function hostnameAllowed(hostname: string, access?: NetworkAccess): boolean {
+  const h = hostname.toLowerCase();
+  if (h === "localhost" || h === "127.0.0.1" || h === "::1") return true;
+  if (!access) return false;
+  const ip = ipv4(h);
+  if (ip === undefined) return false; // names can be re-pointed by DNS; only IP literals are accepted
+  return access.hosts.has(h) || access.allow.some((c) => ((ip & c.mask) >>> 0) === c.base);
+}
+
+export interface ListenOptions {
+  host?: string;
+  /** Private ranges allowed to connect besides localhost. Giving any opens the server beyond localhost. */
+  allow?: Cidr[];
+  /** Override this machine's addresses (tests). */
+  localHosts?: string[];
+}
+
+/**
+ * Where to bind and who to serve. Default: 127.0.0.1, localhost only. With an
+ * allow list the default becomes 0.0.0.0 (connections from outside the list are
+ * dropped, see dropForeignConnections). Binding beyond loopback without an allow
+ * list is refused rather than silently opening the server to everyone.
+ */
+export function listenPlan(opts: ListenOptions): { host: string; access?: NetworkAccess } {
+  const allow = opts.allow ?? [];
+  const host = opts.host ?? (allow.length > 0 ? "0.0.0.0" : "127.0.0.1");
+  if (allow.length === 0) {
+    if (host !== "localhost" && !isLoopback(host)) {
+      throw new NetworkConfigError(`Listening on "${host}" needs --allow (e.g. --allow 100.100.1.x): this server has no login, so you must say who may connect`);
+    }
+    return { host };
+  }
+  return { host, access: networkAccess(allow, opts.localHosts) };
+}
+
+/** Close connections from addresses outside the allow list before any HTTP is read. */
+export function dropForeignConnections(server: { on(event: "connection", cb: (s: { remoteAddress?: string; destroy(): void }) => void): unknown }, access?: NetworkAccess): void {
+  if (!access) return;
+  server.on("connection", (socket) => {
+    if (!remoteAllowed(socket.remoteAddress, access.allow)) socket.destroy();
+  });
+}

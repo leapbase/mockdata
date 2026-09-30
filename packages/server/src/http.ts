@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { localRequestProblem } from "@mockdata/cli";
+import { localRequestProblem, type NetworkAccess } from "@mockdata/cli";
 import type { GenerateWithLlmOptions } from "@mockdata/llm";
 
 export interface Ctx {
@@ -23,8 +23,8 @@ export class HttpError extends Error {
 
 export const MAX_BODY = 10 * 1024 * 1024;
 /** Refuse requests that were not addressed to localhost or that a foreign web page initiated (DNS rebinding, CSRF). */
-export function assertLocal(req: IncomingMessage): void {
-  const problem = localRequestProblem(req.headers.host, req.headers.origin);
+export function assertLocal(req: IncomingMessage, access?: NetworkAccess): void {
+  const problem = localRequestProblem(req.headers.host, req.headers.origin, access);
   if (problem) throw new HttpError(403, problem);
 }
 

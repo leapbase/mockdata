@@ -11,6 +11,7 @@ import {
   type InferResult,
 } from "@mockdata/inputs";
 import { loadEnv } from "./env.js";
+import { hostnameAllowed, type NetworkAccess } from "./network.js";
 
 /**
  * Helpers for servers (MCP, web UI) that act on input from an untrusted
@@ -135,25 +136,27 @@ export function writeFileConfined(root: string, file: string, data: string | Buf
   }
 }
 
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-
 /**
  * Why a request must be refused, or undefined if it is fine: it has to be
- * addressed to localhost (DNS rebinding) and, if a browser page sent it, come
- * from the same origin as the Host it addressed (CSRF). Shared by the web UI and the MCP HTTP server.
+ * addressed to localhost or, when `access` is given, to an IP address of this
+ * machine or in the allow list (DNS rebinding), and, if a browser page sent it,
+ * come from the same origin as the Host it addressed (CSRF). Shared by the web
+ * UI and the MCP HTTP server.
  */
-export function localRequestProblem(host: string | undefined, origin: string | undefined): string | undefined {
+export function localRequestProblem(host: string | undefined, origin: string | undefined, access?: NetworkAccess): string | undefined {
   const m = host ? /^(\[[^\]]+\]|[^:]+)(?::\d+)?$/.exec(host.trim()) : null;
-  if (!m || !LOCAL_HOSTS.has(m[1]!.toLowerCase())) return "Host not allowed: this server only answers on localhost";
+  if (!m || !hostnameAllowed(m[1]!.replace(/^\[|\]$/g, ""), access)) {
+    return access ? "Host not allowed: use localhost or an allowed IP address" : "Host not allowed: this server only answers on localhost";
+  }
   if (origin !== undefined) {
-    let hostname = "";
+    let parsed: URL | undefined;
     try {
-      hostname = new URL(origin).hostname;
+      parsed = new URL(origin);
     } catch {
       /* falls through to the rejection below */
     }
-    // Same-origin only: a page on another localhost port (another dev server, a local app) is as foreign as any website.
-    if (!LOCAL_HOSTS.has(hostname) || new URL(origin).host !== host!.trim().toLowerCase()) return "Origin not allowed";
+    // Same-origin only: a page on another port (another dev server, a local app) is as foreign as any website.
+    if (!parsed || !hostnameAllowed(parsed.hostname.replace(/^\[|\]$/g, ""), access) || parsed.host !== host!.trim().toLowerCase()) return "Origin not allowed";
   }
   return undefined;
 }

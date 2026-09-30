@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { localRequestProblem } from "@mockdata/cli";
+import { dropForeignConnections, listenPlan, localRequestProblem, remoteAllowed, type ListenOptions } from "@mockdata/cli";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createServer, type ServerOptions } from "./server.js";
 
-export interface McpHttpOptions extends ServerOptions {
+export interface McpHttpOptions extends ServerOptions, ListenOptions {
   /** Default 4748. 0 picks a free port (tests). */
   port?: number;
   /** Open sessions allowed at once (default 20); each holds a server in memory. */
@@ -39,11 +39,13 @@ async function readBody(req: IncomingMessage): Promise<string | undefined> {
 /**
  * MCP over Streamable HTTP at /mcp, for clients that connect to a URL instead
  * of spawning a process. Same tools and file confinement as stdio. Listens on
- * 127.0.0.1 only and refuses foreign Host/Origin headers: the tools read and
+ * 127.0.0.1 only (or, with `allow`, also serves those private ranges) and refuses
+ * foreign Host/Origin headers: the tools read and
  * write files and can spend LLM credits, so it is not for exposing to a network.
  * Each client session gets its own server, so `get_run_report` is per client.
  */
 export async function startMcpHttp(opts: McpHttpOptions = {}): Promise<{ server: http.Server; url: string }> {
+  const { host, access } = listenPlan(opts);
   const maxSessions = opts.maxSessions ?? 20;
   const sessionIdleMs = opts.sessionIdleMs ?? 30 * 60_000;
   const sessions = new Map<string, StreamableHTTPServerTransport>();
@@ -56,8 +58,9 @@ export async function startMcpHttp(opts: McpHttpOptions = {}): Promise<{ server:
   sweep.unref();
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const problem = localRequestProblem(req.headers.host, req.headers.origin);
+    const problem = localRequestProblem(req.headers.host, req.headers.origin, access);
     if (problem) return reply(res, 403, problem);
+    if (access && !remoteAllowed(req.socket.remoteAddress, access.allow)) return reply(res, 403, "Address not allowed");
     if (new URL(req.url ?? "/", "http://localhost").pathname !== MCP_PATH) return reply(res, 404, `Not found: MCP is served at ${MCP_PATH}`);
 
     const header = req.headers["mcp-session-id"];
@@ -109,12 +112,13 @@ export async function startMcpHttp(opts: McpHttpOptions = {}): Promise<{ server:
   const server = http.createServer((req, res) => {
     handle(req, res).catch((e) => reply(res, 500, (e as Error).message));
   });
+  dropForeignConnections(server, access);
   server.headersTimeout = 15_000;
   server.requestTimeout = 60_000;
   server.on("close", () => clearInterval(sweep));
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(opts.port ?? 4748, "127.0.0.1", () => resolve());
+    server.listen(opts.port ?? 4748, host, () => resolve());
   });
   return { server, url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };
 }

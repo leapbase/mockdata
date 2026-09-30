@@ -31,7 +31,7 @@ npx mockdata validate examples/shop.yaml                      # check a schema w
 
 ### Run the servers
 
-Run `npm run build` first (and again after code changes). Both servers listen on 127.0.0.1 only.
+Run `npm run build` first (and again after code changes). Both servers listen on 127.0.0.1 only unless you pass `--allow` (see "Opening it to your network").
 
 | What | Command | Address |
 |---|---|---|
@@ -210,7 +210,7 @@ MOCKDATA_ROOT=/path/to/a/working/folder node packages/mcp/dist/bin.js --http [--
 claude mcp add --transport http mockdata http://127.0.0.1:4748/mcp
 ```
 
-It serves MCP at `/mcp` on 127.0.0.1 only and refuses requests whose `Host` or `Origin` is not localhost. There is no login: the tools read and write files and can spend LLM credits, so do not put it behind a public address or tunnel. Each client session gets its own server (so `get_run_report` is per client), up to 20 open sessions.
+It serves MCP at `/mcp` on 127.0.0.1 only (unless you use `--allow`, below) and refuses requests whose `Host` or `Origin` is not localhost. There is no login: the tools read and write files and can spend LLM credits, so do not put it behind a public address or tunnel. Each client session gets its own server (so `get_run_report` is per client), up to 20 open sessions.
 
 The agent can only read schemas and write output inside `MOCKDATA_ROOT`. It never reads `.env` files and never overwrites an existing file unless asked. It cannot supply a connection string: `infer_schema` only accepts the *name* of an environment variable that looks like database config (for example `DATABASE_URL`).
 
@@ -231,7 +231,20 @@ Open http://127.0.0.1:4747. The folder you pass is the root: schema files are li
 - **Infer from source**: pick a file under the root, paste sample rows or a JSON Schema/OpenAPI document, or choose a database variable by name. The result opens as an unsaved draft with the warnings listed.
 - **Export**: write json/ndjson/csv files to a folder under the root (existing files are kept unless you tick Overwrite) or download a zip.
 
-The server listens on 127.0.0.1 only and rejects requests from other hosts or origins. Connection strings are never typed into the browser: keep them in `.env` and pick the variable name. For development run `npm run dev -w packages/web` (Vite on its own port, proxying `/api` to a running `mockdata-ui`).
+The server listens on 127.0.0.1 only (unless you use `--allow`, below) and rejects requests from other hosts or origins. Connection strings are never typed into the browser: keep them in `.env` and pick the variable name. For development run `npm run dev -w packages/web` (Vite on its own port, proxying `/api` to a running `mockdata-ui`).
+
+## Opening it to your network
+
+By default both servers answer on 127.0.0.1 only. To let other machines on a trusted network use them, say which ranges may connect:
+
+```
+npm run ui -- <folder> --allow 100.100.1.x
+MOCKDATA_ROOT=<folder> node packages/mcp/dist/bin.js --http --allow 100.100.1.x
+```
+
+`--allow` takes a comma-separated list of `100.100.1.x` (a /24), CIDRs such as `192.168.0.0/16`, or single IPs. Only private ranges are accepted (10/8, 172.16/12, 192.168/16 and 100.64/10, which covers Tailscale), each at most a /16 wide; anything else is refused at startup. With `--allow` the server binds 0.0.0.0, drops connections from outside the list, and accepts requests addressed to one of this machine's IP addresses or to an allowed IP (never a host name, which DNS could re-point). Localhost keeps working. `--host <address>` binds one address instead, and binding beyond loopback without `--allow` is refused. On start it prints the addresses to browse to.
+
+There is no login. Anyone in an allowed range can read and write schema files under the root and spend your LLM credits, and the MCP endpoint exposes the same tools. Allow only networks you trust, and keep sensitive files out of the root.
 
 ## Use it as a library
 

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { NetworkConfigError, parseAllow } from "@mockdata/cli";
 import { startMcpHttp, type McpHttpOptions } from "../src/http.js";
 
 const SCHEMA = `seed: 7
@@ -109,6 +110,22 @@ describe("mcp over http", () => {
     const after = (await c.callTool({ name: "validate_schema", arguments: { schemaPath: "shop.yaml" } }).catch((e) => e)) as any;
     expect(after instanceof Error || after.isError).toBe(true);
     void url;
+  });
+
+  it("serves an allowed IP as the Host only when an allow list is given, and binds beyond loopback only then", async () => {
+    const headers = { "content-type": "application/json", accept: "application/json, text/event-stream" };
+    const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "x", version: "0" } } });
+    const closed = await boot();
+    expect((await raw(closed.url, "/mcp", { method: "POST", headers: { ...headers, host: "100.100.1.5:4748" }, body })).status).toBe(403);
+
+    const open = await boot({ allow: parseAllow("100.100.1.x"), localHosts: ["100.100.2.7"] });
+    for (const host of ["100.100.1.5:4748", "100.100.2.7:4748"]) {
+      expect((await raw(open.url, "/mcp", { method: "POST", headers: { ...headers, host }, body })).status, host).toBe(200);
+    }
+    for (const host of ["100.100.3.5:4748", "evil.example"]) {
+      expect((await raw(open.url, "/mcp", { method: "POST", headers: { ...headers, host }, body })).status, host).toBe(403);
+    }
+    await expect(startMcpHttp({ env: {}, port: 0, host: "0.0.0.0" })).rejects.toThrow(NetworkConfigError);
   });
 
   it("answers bad requests with clear errors, not crashes", async () => {

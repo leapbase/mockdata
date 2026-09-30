@@ -3,7 +3,9 @@ import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach } from "vitest";
-import { startServer, type AppOptions } from "../src/index.js";
+import { startServer } from "../src/index.js";
+
+type AppOptions = NonNullable<Parameters<typeof startServer>[0]>;
 
 const closers: (() => Promise<void>)[] = [];
 afterEach(async () => {

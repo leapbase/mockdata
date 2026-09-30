@@ -1,7 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { loadEnv, UserError } from "@mockdata/cli";
+import { loadEnv, remoteAllowed, UserError, type NetworkAccess } from "@mockdata/cli";
 import { CycleError, GenerationError, SchemaError, ValidationError } from "@mockdata/core";
 import { LlmConfigError, LlmFillError, LlmHttpError } from "@mockdata/llm";
 import { assertLocal, HttpError, sendJson, type Ctx, type Handler } from "./http.js";
@@ -19,6 +19,8 @@ export interface AppOptions {
   env?: Record<string, string | undefined>;
   /** Test hooks for the LLM layer. */
   llm?: Ctx["llm"];
+  /** Set when listening beyond localhost (see startServer): who may reach the server. */
+  access?: NetworkAccess;
   /** Built web app (default: packages/web/dist next to this package). */
   staticDir?: string;
 }
@@ -69,7 +71,8 @@ export function createApp(opts: AppOptions = {}): (req: IncomingMessage, res: Se
   const ctx: Ctx = { root, env: () => loadEnv(root, baseEnv), llm: opts.llm ?? {} };
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    assertLocal(req);
+    assertLocal(req, opts.access);
+    if (opts.access && !remoteAllowed(req.socket.remoteAddress, opts.access.allow)) throw new HttpError(403, "Address not allowed");
     const url = new URL(req.url ?? "/", "http://localhost");
     if (url.pathname.startsWith("/api/")) {
       const route = ROUTES[`${req.method} ${url.pathname}`];
