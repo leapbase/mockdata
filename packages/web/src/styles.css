@@ -80,3 +80,20 @@ tr.focus td { background: var(--focus); }
 .warnings { margin: 0; padding: 6px 10px 6px 28px; max-height: 120px; overflow: auto; color: var(--warn); border-top: 1px solid var(--line); }
 .error { color: var(--err); }
 .note { color: var(--warn); }
+
+/* Accounts: sign-in screen and the signed-in chip */
+.login { max-width: 360px; margin: 10vh auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.login h1 { margin: 0; font-size: 22px; }
+.login h2 { margin: 0; font-size: 16px; }
+.login form { display: flex; flex-direction: column; gap: 10px; }
+.login label, .stack label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.login a.button { text-align: center; text-decoration: none; padding: 6px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: inherit; }
+.login .links { display: flex; justify-content: space-between; margin: 0; }
+.login .hint, .stack .hint { font-size: 12px; opacity: 0.75; margin: 0; }
+.login .error, .stack .error { color: #b42318; margin: 0; }
+.login .note, .stack .note { margin: 0; }
+.login-loading { padding: 24px; }
+button.link { background: none; border: 0; padding: 0; text-decoration: underline; color: var(--accent); }
+.stack { display: flex; flex-direction: column; gap: 10px; }
+.account-chip { position: fixed; left: 8px; bottom: 8px; z-index: 5; max-width: 204px; display: flex; flex-direction: column; gap: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 12px; }
+.account-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

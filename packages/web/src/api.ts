@@ -1,6 +1,16 @@
 import { readSse } from "./sse";
 
-export class ApiError extends Error {}
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    /** HTTP status (0 when the failure was not an HTTP response). */
+    readonly status = 0,
+    /** A stable reason from the server, such as "email_unverified". */
+    readonly code?: string,
+  ) {
+    super(message);
+  }
+}
 
 export interface ValidateResult {
   ok: boolean;
@@ -72,27 +82,36 @@ export interface ExportResult {
   rows: Record<string, number>;
 }
 
-async function errorMessage(res: Response): Promise<string> {
+async function failure(res: Response): Promise<ApiError> {
   try {
     const body = await res.json();
-    return body?.error?.message ?? `HTTP ${res.status}`;
+    return new ApiError(body?.error?.message ?? `HTTP ${res.status}`, res.status, body?.error?.code);
   } catch {
-    return `HTTP ${res.status}`;
+    return new ApiError(`HTTP ${res.status}`, res.status);
   }
 }
 
-function send(method: string, url: string, body?: unknown, signal?: AbortSignal): Promise<Response> {
-  return fetch(url, {
+let onUnauthorized: (() => void) | undefined;
+/** Called when a call outside /api/auth/ is answered 401, meaning the session is gone. */
+export function setOnUnauthorized(fn: (() => void) | undefined): void {
+  onUnauthorized = fn;
+}
+
+async function send(method: string, url: string, body?: unknown, signal?: AbortSignal): Promise<Response> {
+  const res = await fetch(url, {
     method,
     headers: body === undefined ? {} : { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal,
   });
+  // A wrong password is also a 401, but from /api/auth/: only other calls mean "your session ended".
+  if (res.status === 401 && !url.startsWith("/api/auth/")) onUnauthorized?.();
+  return res;
 }
 
 async function json<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await send(method, url, body);
-  if (!res.ok) throw new ApiError(await errorMessage(res));
+  if (!res.ok) throw await failure(res);
   return (await res.json()) as T;
 }
 
@@ -107,14 +126,14 @@ export const exportFiles = (body: ExportBody) => json<ExportResult>("POST", "/ap
 
 export async function exportZip(body: ExportBody): Promise<Blob> {
   const res = await send("POST", "/api/export", { ...body, zip: true, outputDir: undefined });
-  if (!res.ok) throw new ApiError(await errorMessage(res));
+  if (!res.ok) throw await failure(res);
   return res.blob();
 }
 
 /** Fill LLM columns on the server, reporting progress. Aborting `signal` closes the connection, which stops the run. */
 export async function streamGenerate(body: GenerateBody, onProgress: (p: Progress) => void, signal: AbortSignal): Promise<Preview> {
   const res = await send("POST", "/api/generate/stream", body, signal);
-  if (!res.ok) throw new ApiError(await errorMessage(res));
+  if (!res.ok) throw await failure(res);
   for await (const ev of readSse(res.body!)) {
     if (ev.event === "progress") onProgress(ev.data as Progress);
     else if (ev.event === "done") return ev.data as Preview;
@@ -122,3 +141,23 @@ export async function streamGenerate(body: GenerateBody, onProgress: (p: Progres
   }
   throw new ApiError("The server closed the connection before the run finished");
 }
+
+export interface AuthUser {
+  id: number;
+  email: string | null;
+  displayName: string;
+  avatarUrl: string | null;
+}
+export interface Me {
+  user: AuthUser | null;
+  auth: { accountsEnabled: boolean; googleConfigured: boolean; emailEnabled: boolean };
+}
+
+export const getMe = () => json<Me>("GET", "/api/auth/me");
+export const login = async (email: string, password: string) => (await json<{ user: AuthUser }>("POST", "/api/auth/login", { email, password })).user;
+export const register = (email: string, password: string) => json<{ pending: true }>("POST", "/api/auth/register", { email, password });
+export const logout = () => json<{ ok: true }>("POST", "/api/auth/logout", {});
+export const forgotPassword = (email: string) => json<{ ok: true }>("POST", "/api/auth/forgot-password", { email });
+export const resetPassword = async (token: string, password: string) => (await json<{ user: AuthUser }>("POST", "/api/auth/reset-password", { token, password })).user;
+export const resendVerification = (email: string) => json<{ ok: true }>("POST", "/api/auth/resend-verification", { email });
+export const changePassword = (currentPassword: string, newPassword: string) => json<{ ok: true }>("POST", "/api/auth/change-password", { currentPassword, newPassword });

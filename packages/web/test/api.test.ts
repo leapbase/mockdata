@@ -6,9 +6,17 @@ import { errorResponse, sseResponse, stubApi } from "./stub";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("api client", () => {
-  it("turns the server's error body into an ApiError message", async () => {
+  it("turns the server's error body into an ApiError carrying the message and status", async () => {
     stubApi({ "POST /api/validate": () => errorResponse(400, "nope") });
-    await expect(validate("x")).rejects.toThrow(new ApiError("nope"));
+    const err = await validate("x").catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).toMatchObject({ message: "nope", status: 400, code: undefined });
+  });
+  it("keeps the server's reason code, and falls back to the status when there is no body", async () => {
+    stubApi({ "POST /api/auth/login": () => new Response(JSON.stringify({ error: { message: "Verify first", code: "email_unverified" } }), { status: 403 }), "POST /api/validate": () => new Response("<html>", { status: 502 }) });
+    const { login } = await import("../src/api");
+    expect(await login("a@example.com", "x").catch((e) => e)).toMatchObject({ message: "Verify first", status: 403, code: "email_unverified" });
+    expect(await validate("x").catch((e) => e)).toMatchObject({ message: "HTTP 502", status: 502 });
   });
   it("encodes paths in the query", async () => {
     const calls = stubApi({ "GET /api/file": () => ({ text: "t" }) });
