@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { run, serialize, type IO } from "../src/cli.js";
+import { parseSchemaText, run, serialize, type IO } from "../src/cli.js";
 
 const example = join(__dirname, "../../../examples/shop.yaml");
 const llmExample = join(__dirname, "../../../examples/shop-llm.yaml");
@@ -223,5 +223,15 @@ describe("csv output", () => {
     const rows = [{ a: "=HYPERLINK(\"http://evil\")", b: "+1", c: "-x", d: "@SUM(A1)", e: -5, f: "safe", g: "\tcmd" }];
     const [, line] = serialize(rows, ["a", "b", "c", "d", "e", "f", "g"], "csv").split("\n");
     expect(line).toBe(`"'=HYPERLINK(""http://evil"")",'+1,'-x,'@SUM(A1),-5,safe,'\tcmd`);
+  });
+});
+
+describe("schema text parsing", () => {
+  it("rejects a YAML alias bomb quickly instead of expanding it", () => {
+    let doc = "a0: &a0 [x,x,x,x,x,x,x,x,x]\n";
+    for (let i = 1; i < 10; i++) doc += `a${i}: &a${i} [${Array(9).fill("*a" + (i - 1)).join(",")}]\n`;
+    const start = Date.now();
+    expect(() => parseSchemaText(doc)).toThrow(/alias/i);
+    expect(Date.now() - start).toBeLessThan(2000);
   });
 });
