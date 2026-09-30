@@ -96,6 +96,48 @@ describe("clinical-claims.yaml", () => {
   });
 });
 
+describe("clinical-rwd-omop.yaml", () => {
+  it("produces data that satisfies every feature it demonstrates", async () => {
+    const d = await json("generate", join(examples, "clinical-rwd-omop.yaml"));
+    expect(Object.fromEntries(Object.entries(d).map(([t, r]) => [t, (r as unknown[]).length]))).toEqual({
+      person: 40, observation_period: 40, visit_occurrence: 120, condition_occurrence: 150, drug_exposure: 180, measurement: 300, death: 5,
+    });
+    for (const p of d.person) {
+      expect([8507, 8532]).toContain(p.gender_concept_id);
+      expect(p.person_source_value).toMatch(/^PT-[0-9]{8}$/);
+    }
+    const people = new Map<number, any>(d.person.map((p: any) => [p.person_id, p]));
+    // one observation period per person, inside the person's lifetime order
+    const periodOwners = d.observation_period.map((o: any) => o.person_id);
+    expect(new Set(periodOwners).size).toBe(periodOwners.length);
+    for (const o of d.observation_period) {
+      expect(o.observation_period_start_date >= people.get(o.person_id).birth_date).toBe(true);
+      expect(o.observation_period_end_date >= o.observation_period_start_date).toBe(true);
+    }
+    // events follow their visit
+    const visits = new Map<number, any>(d.visit_occurrence.map((v: any) => [v.visit_occurrence_id, v]));
+    for (const v of d.visit_occurrence) {
+      expect(v.visit_start_date >= people.get(v.person_id).birth_date).toBe(true);
+      expect(v.visit_end_date >= v.visit_start_date).toBe(true);
+    }
+    for (const c of d.condition_occurrence) {
+      expect(c.condition_start_date >= visits.get(c.visit_occurrence_id).visit_start_date).toBe(true);
+      if (c.condition_end_date) expect(c.condition_end_date >= c.condition_start_date).toBe(true);
+    }
+    expect(d.condition_occurrence.some((c: any) => c.condition_end_date === null)).toBe(true);
+    for (const x of d.drug_exposure) {
+      expect(x.drug_exposure_start_date >= visits.get(x.visit_occurrence_id).visit_start_date).toBe(true);
+      expect(x.drug_exposure_end_date >= x.drug_exposure_start_date).toBe(true);
+    }
+    for (const m of d.measurement) expect(m.measurement_date >= visits.get(m.visit_occurrence_id).visit_start_date).toBe(true);
+    expect(perParent(d.condition_occurrence, "visit_occurrence_id")).toBeLessThanOrEqual(4);
+    // deaths: one per person, after birth
+    const dead = d.death.map((x: any) => x.person_id);
+    expect(new Set(dead).size).toBe(dead.length);
+    for (const x of d.death) expect(x.death_date >= people.get(x.person_id).birth_date).toBe(true);
+  });
+});
+
 describe("hr.yaml", () => {
   it("produces data that satisfies every feature it demonstrates", async () => {
     const d = await json("generate", join(examples, "hr.yaml"));

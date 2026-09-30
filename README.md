@@ -76,11 +76,12 @@ Everything in [`examples/`](examples) works as written (a test runs each one):
 | `clinical-ehr.yaml` | A synthetic health record: date rules that reach from an encounter back to the patient, a one-to-one link, per-parent caps |
 | `clinical-trial.yaml` | A synthetic multi-site trial: consent -> visit and onset -> resolution date chains, optional end dates, enrolment skewed to a few sites |
 | `clinical-claims.yaml` | Synthetic insurance claims: service -> submission -> payment dates, an optional payment date, a cap on lines per claim |
+| `clinical-rwd-omop.yaml` | Real-world data shaped like the OMOP Common Data Model: person, observation period, visits, conditions, drug exposures, measurements, death; every event date follows its visit |
 | `samples/customers.csv`, `samples/orders.csv` | Sample rows (fake data) to try inferring a schema from |
 | `petstore-openapi.yaml` | An OpenAPI document to infer a schema from |
 | `make-sample-db.mjs` | Builds a small SQLite database (`node examples/make-sample-db.mjs`) to infer from |
 
-The clinical schemas are synthetic: names, identifiers and codes (ICD-10, CPT, drug names) are illustrative, never real patients.
+The clinical schemas are synthetic: names, identifiers and codes (ICD-10, CPT, OMOP concept ids, drug names) are illustrative, never real patients.
 
 Try inferring:
 
