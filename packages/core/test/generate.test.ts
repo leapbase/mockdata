@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CycleError, generate, generationLevels, parseSchema, SchemaError } from "../src/index.js";
+import { CycleError, generate, generationLevels, parseSchema, planGeneration, SchemaError } from "../src/index.js";
 
 const schema = {
   seed: 42,
@@ -75,5 +75,100 @@ describe("schema errors", () => {
       },
     };
     expect(() => generate(cyc)).toThrow(CycleError);
+  });
+});
+
+describe("pattern", () => {
+  const withPattern = (extra: object = {}) => ({
+    seed: 3,
+    tables: { skus: { rows: 30, columns: { code: { type: "string", pattern: "[A-Z]{3}-[0-9]{4}", unique: true, ...extra } } } },
+  });
+
+  it("generates strings matching the regex", () => {
+    for (const r of generate(withPattern()).skus!) expect(r.code).toMatch(/^[A-Z]{3}-[0-9]{4}$/);
+  });
+
+  it("rejects invalid or misplaced patterns", () => {
+    expect(() => parseSchema(withPattern({ pattern: "(" }))).toThrow(SchemaError);
+    const onInt = { tables: { t: { rows: 1, columns: { n: { type: "integer", pattern: "[0-9]" } } } } };
+    expect(() => parseSchema(onInt)).toThrow(/only applies to string/);
+  });
+});
+
+describe("cardinality", () => {
+  const rel = (child: object, parents = 5, children = 5) => ({
+    seed: 9,
+    tables: {
+      users: { rows: parents, columns: { id: { type: "integer", primaryKey: true } } },
+      profiles: { rows: children, columns: { user_id: { type: "integer", ref: "users.id", ...child } } },
+    },
+  });
+
+  it("unique foreign key is one-to-one", () => {
+    const ids = generate(rel({ unique: true })).profiles!.map((p) => p.user_id);
+    expect(new Set(ids).size).toBe(5);
+  });
+
+  it("maxPerParent caps children even under heavy zipf skew", () => {
+    const counts = new Map<unknown, number>();
+    for (const p of generate(rel({ maxPerParent: 3, distribution: "zipf" }, 5, 12)).profiles!) {
+      counts.set(p.user_id, (counts.get(p.user_id) ?? 0) + 1);
+    }
+    expect(Math.max(...counts.values())).toBeLessThanOrEqual(3);
+  });
+
+  it("fails clearly when capacity is impossible", () => {
+    expect(() => generate(rel({ unique: true }, 3, 5))).toThrow(/per-parent limit of 1/);
+  });
+
+  it("rejects maxPerParent on non-foreign keys", () => {
+    const bad = { tables: { t: { rows: 1, columns: { n: { type: "integer", maxPerParent: 2 } } } } };
+    expect(() => parseSchema(bad)).toThrow(/only applies to foreign keys/);
+  });
+});
+
+describe("cycles", () => {
+  const cyc = (aNullable: boolean, bNullable: boolean) => ({
+    seed: 5,
+    tables: {
+      teams: {
+        rows: 4,
+        columns: {
+          id: { type: "integer", primaryKey: true },
+          lead_id: { type: "integer", ref: "members.id", nullable: aNullable, nullRate: 0 },
+        },
+      },
+      members: {
+        rows: 10,
+        columns: {
+          id: { type: "integer", primaryKey: true },
+          team_id: { type: "integer", ref: "teams.id", nullable: bNullable, nullRate: 0 },
+        },
+      },
+    },
+  });
+
+  it("breaks a cycle through a nullable foreign key and fills it afterwards", () => {
+    const schema = parseSchema(cyc(true, false));
+    expect(planGeneration(schema)).toEqual({ levels: [["teams"], ["members"]], deferred: ["teams.lead_id"] });
+    const data = generate(schema);
+    const memberIds = new Set(data.members!.map((m) => m.id));
+    for (const t of data.teams!) expect(memberIds.has(t.lead_id)).toBe(true);
+    const teamIds = new Set(data.teams!.map((t) => t.id));
+    for (const m of data.members!) expect(teamIds.has(m.team_id)).toBe(true);
+  });
+
+  it("still throws when no foreign key on the cycle is nullable", () => {
+    expect(() => generate(cyc(false, false))).toThrow(CycleError);
+  });
+
+  it("does not defer nullable keys that are not on a cycle", () => {
+    const s = {
+      tables: {
+        a: { rows: 2, columns: { id: { type: "integer", primaryKey: true } } },
+        b: { rows: 2, columns: { id: { type: "integer", primaryKey: true }, a_id: { type: "integer", ref: "a.id", nullable: true } } },
+      },
+    };
+    expect(planGeneration(parseSchema(s)).deferred).toEqual([]);
   });
 });

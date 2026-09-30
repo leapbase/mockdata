@@ -35,7 +35,11 @@ Schema DSL points that are easy to miss:
 - Cross-column rule is `after`: `"col"` for the same row, `"fkCol.parentCol"` to read through a foreign key to the parent row.
 - Output is deterministic per `seed` via a seeded Faker instance.
 
-Not yet supported: `pattern` constraints, cardinality ratios (1:1, 1:N), cycles broken by nullable FKs, and any LLM generation.
+- `pattern` is a regex, generated with `faker.helpers.fromRegExp` and re-checked anchored in `validate`.
+- Cardinality lives on the FK column: `unique: true` means one-to-one, `maxPerParent: n` caps children per parent. `pickParent` probes forward from the sampled parent when one is full, so caps hold under zipf skew; it throws if total capacity is too small.
+- Cycles: `planGeneration` (in `graph.ts`) defers a *nullable* FK that lies on the cycle. That column is left null on the first pass and filled by `fillDeferred` after all tables exist. With no nullable FK on the cycle it still throws `CycleError`. `after` rules that read through a deferred FK throw `GenerationError`.
+
+Not yet supported: any LLM generation, and non-core packages from the plan.
 
 ## Conventions
 

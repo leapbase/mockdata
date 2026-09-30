@@ -7,27 +7,34 @@ export class CycleError extends Error {
   }
 }
 
-/** table -> set of parent tables (self references excluded; they are handled per row). */
-export function tableDependencies(schema: DataSchemaT): Map<string, Set<string>> {
-  const deps = new Map<string, Set<string>>();
-  for (const [tname, table] of Object.entries(schema.tables)) {
-    const parents = new Set<string>();
-    for (const col of Object.values(table.columns)) {
+interface Edge {
+  table: string;
+  column: string;
+  parent: string;
+  nullable: boolean;
+}
+
+/** Foreign key edges between different tables (self references are handled per row). */
+function edges(schema: DataSchemaT): Edge[] {
+  const out: Edge[] = [];
+  for (const [table, t] of Object.entries(schema.tables)) {
+    for (const [column, col] of Object.entries(t.columns)) {
       if (!col.ref) continue;
       const parent = col.ref.split(".")[0]!;
-      if (parent !== tname) parents.add(parent);
+      if (parent !== table) out.push({ table, column, parent, nullable: !!col.nullable });
     }
-    deps.set(tname, parents);
   }
+  return out;
+}
+
+/** table -> set of parent tables (self references excluded). */
+export function tableDependencies(schema: DataSchemaT): Map<string, Set<string>> {
+  const deps = new Map<string, Set<string>>(Object.keys(schema.tables).map((t) => [t, new Set<string>()]));
+  for (const e of edges(schema)) deps.get(e.table)!.add(e.parent);
   return deps;
 }
 
-/**
- * Group tables into levels: level 0 has no parents, level N depends only on
- * earlier levels. Throws CycleError instead of guessing an order.
- */
-export function generationLevels(schema: DataSchemaT): string[][] {
-  const deps = tableDependencies(schema);
+function levelsOf(deps: Map<string, Set<string>>): string[][] {
   const done = new Set<string>();
   const levels: string[][] = [];
   while (done.size < deps.size) {
@@ -41,6 +48,52 @@ export function generationLevels(schema: DataSchemaT): string[][] {
     levels.push(ready);
   }
   return levels;
+}
+
+export interface GenerationPlan {
+  /** Tables grouped so that parents always come before children. */
+  levels: string[][];
+  /**
+   * "table.column" foreign keys that are nullable and were left null on the
+   * first pass to break a table cycle; they are filled in afterwards.
+   */
+  deferred: string[];
+}
+
+/**
+ * Plan generation order. A cycle is only broken by deferring a nullable
+ * foreign key that lies on the cycle; otherwise CycleError is thrown rather
+ * than guessing an order.
+ */
+export function planGeneration(schema: DataSchemaT): GenerationPlan {
+  const all = edges(schema);
+  const deferred = new Set<string>();
+  for (;;) {
+    const deps = new Map<string, Set<string>>(Object.keys(schema.tables).map((t) => [t, new Set<string>()]));
+    for (const e of all) if (!deferred.has(`${e.table}.${e.column}`)) deps.get(e.table)!.add(e.parent);
+    try {
+      return { levels: levelsOf(deps), deferred: [...deferred] };
+    } catch (err) {
+      if (!(err instanceof CycleError)) throw err;
+      const stuck = new Set(err.tables);
+      const reaches = (from: string, to: string, seen = new Set<string>()): boolean => {
+        if (from === to) return true;
+        if (seen.has(from)) return false;
+        seen.add(from);
+        return [...(deps.get(from) ?? [])].some((p) => stuck.has(p) && reaches(p, to, seen));
+      };
+      // An edge child->parent is on a cycle when the parent depends (transitively) on the child.
+      const breakable = all.find(
+        (e) => e.nullable && !deferred.has(`${e.table}.${e.column}`) && stuck.has(e.table) && stuck.has(e.parent) && reaches(e.parent, e.table),
+      );
+      if (!breakable) throw err;
+      deferred.add(`${breakable.table}.${breakable.column}`);
+    }
+  }
+}
+
+export function generationLevels(schema: DataSchemaT): string[][] {
+  return planGeneration(schema).levels;
 }
 
 /**

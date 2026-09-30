@@ -36,6 +36,13 @@ export const ColumnSchema = z
     after: z.string().optional(),
     /** Faker path such as "person.fullName" for string columns. */
     faker: z.string().optional(),
+    /** Regex the string must match, e.g. "[A-Z]{3}-[0-9]{4}". */
+    pattern: z.string().optional(),
+    /**
+     * Foreign keys only: cap on children per parent. `unique: true` on a
+     * foreign key means one-to-one (cap of 1).
+     */
+    maxPerParent: z.number().int().positive().optional(),
   })
   .strict();
 
@@ -78,6 +85,17 @@ export function parseSchema(input: unknown): DataSchemaT {
   for (const [tname, table] of Object.entries(schema.tables)) {
     for (const [cname, col] of Object.entries(table.columns)) {
       const where = `${tname}.${cname}`;
+      if (col.pattern !== undefined) {
+        if (col.type !== "string") throw new SchemaError(`${where}: "pattern" only applies to string columns`);
+        try {
+          new RegExp(col.pattern);
+        } catch {
+          throw new SchemaError(`${where}: invalid pattern "${col.pattern}"`);
+        }
+      }
+      if (col.maxPerParent !== undefined && !col.ref) {
+        throw new SchemaError(`${where}: "maxPerParent" only applies to foreign keys`);
+      }
       if (col.ref) {
         const [pt, pc] = col.ref.split(".") as [string, string];
         const parent = schema.tables[pt];
