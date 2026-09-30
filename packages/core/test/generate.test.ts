@@ -200,3 +200,24 @@ describe("llm columns", () => {
     expect(rows.every((r) => r.body === undefined && "body" in r)).toBe(true);
   });
 });
+
+describe("faker paths", () => {
+  const withFaker = (path: string) => ({ tables: { t: { rows: 1, columns: { n: { type: "string", faker: path } } } } });
+
+  it("accepts module.method paths", () => {
+    expect(generate(withFaker("person.fullName")).t![0]!.n).toEqual(expect.any(String));
+  });
+
+  it.each(["constructor.constructor", "__proto__.toString", "a.b.c", "helpers.fake", "helpers.mustache", "person", "Person.fullName"])(
+    "rejects unsafe or malformed path %s",
+    (path) => {
+      expect(() => parseSchema(withFaker(path))).toThrow(/invalid faker path/);
+    },
+  );
+});
+
+describe("table names", () => {
+  it.each(["../evil", "a/b", "a.b", "", "1abc", "with space"])("rejects %j (they become file names)", (name) => {
+    expect(() => parseSchema({ tables: { [name]: { rows: 1, columns: { id: { type: "integer" } } } } })).toThrow(SchemaError);
+  });
+});

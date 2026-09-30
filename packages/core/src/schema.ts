@@ -87,7 +87,8 @@ export const DataSchema = z
   .object({
     seed: z.number().int().optional(),
     llm: LlmConfigSchema.optional(),
-    tables: z.record(TableSchema),
+    /** Table names double as file names, so they are restricted to a safe alphabet. */
+    tables: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_-]*$/, "table names may use letters, digits, _ and -"), TableSchema),
   })
   .strict();
 
@@ -95,6 +96,11 @@ export type LlmConfig = z.infer<typeof LlmConfigSchema>;
 export type Column = z.infer<typeof ColumnSchema>;
 export type Table = z.infer<typeof TableSchema>;
 export type DataSchemaT = z.infer<typeof DataSchema>;
+
+/** Faker methods that evaluate a template string; never callable from a schema. */
+const FAKER_DENY = new Set(["helpers.fake", "helpers.mustache", "helpers.fromRegExp"]);
+const FAKER_PATH = /^[a-z][A-Za-z0-9]*\.[a-z][A-Za-z0-9]*$/;
+const FAKER_BAD_SEGMENTS = new Set(["constructor", "prototype", "hasOwnProperty", "toString", "valueOf"]);
 
 export class SchemaError extends Error {
   constructor(message: string) {
@@ -121,6 +127,11 @@ export function parseSchema(input: unknown): DataSchemaT {
         if (col.type !== "string") throw new SchemaError(`${where}: "llm" only applies to string columns`);
         const clash = (["ref", "enum", "pattern", "faker", "after", "primaryKey"] as const).find((k) => col[k]);
         if (clash) throw new SchemaError(`${where}: "llm" cannot be combined with "${clash}"`);
+      }
+      if (col.faker !== undefined) {
+        if (!FAKER_PATH.test(col.faker) || FAKER_DENY.has(col.faker) || col.faker.split(".").some((seg) => FAKER_BAD_SEGMENTS.has(seg))) {
+          throw new SchemaError(`${where}: invalid faker path "${col.faker}" (expected "module.method", e.g. person.fullName)`);
+        }
       }
       if (col.pattern !== undefined) {
         if (col.type !== "string") throw new SchemaError(`${where}: "pattern" only applies to string columns`);

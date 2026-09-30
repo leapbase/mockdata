@@ -30,9 +30,14 @@ generate options:
 const FORMATS = ["json", "ndjson", "csv"] as const;
 type Format = (typeof FORMATS)[number];
 
+/** Parse schema text. YAML is a superset of JSON, so one parser handles both. */
+export function parseSchemaText(text: string): unknown {
+  return parseYaml(text);
+}
+
 export function loadSchemaFile(path: string): unknown {
   const text = readFileSync(path, "utf8");
-  return extname(path).toLowerCase() === ".json" ? JSON.parse(text) : parseYaml(text);
+  return extname(path).toLowerCase() === ".json" ? JSON.parse(text) : parseSchemaText(text);
 }
 
 function csvCell(v: unknown): string {

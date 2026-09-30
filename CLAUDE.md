@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `mockdata` is a hybrid synthetic data generator (TypeScript/Node, React UI planned), modelled on `~/git/syda` but fixing its gaps. Deterministic generators handle structure, keys, numbers and dates; an LLM is meant to fill only semantic free-text columns. The approved plan is at `~/.claude/plans/i-want-to-create-woolly-sunrise.md` (planned packages: llm, inputs, cli, mcp, server, web).
 
-Implemented so far: `packages/core`, `packages/llm`, `packages/cli`. The MCP server, input loaders (OpenAPI, sample inference, DB reflection) and server/web UI from the plan are still to build.
+Implemented so far: `packages/core`, `packages/llm`, `packages/cli`, `packages/mcp`. The input loaders (JSON Schema/OpenAPI, sample inference, DB reflection; so no `infer_schema` MCP tool yet) and the server/web UI from the plan are still to build.
 
 `packages/cli/src/cli.ts` exports async `run(argv, io)`, which resolves to an exit code and never calls `process.exit`, so tests call it directly (`io.llm` injects a fake provider). `bin.ts` is a thin wrapper. Commands: `generate <schema> [-o dir] [-f json|ndjson|csv] [-s seed]` and `validate <schema>`. Without `-o` it prints JSON to stdout; csv/ndjson need `-o`.
 
@@ -20,9 +20,10 @@ npm test                                   # vitest, whole repo
 npx vitest run packages/core/test/generate.test.ts -t "orphan"   # single file / test name
 npm run build                              # tsc core then cli (cli imports core's dist; typecheck is an alias)
 node packages/cli/dist/bin.js generate examples/shop.yaml -o out -f csv
+MOCKDATA_ROOT=$PWD node packages/mcp/dist/bin.js   # MCP server on stdio
 ```
 
-Each package sets its own `outDir` (a base-config `outDir` resolves relative to the repo root, not the package). Vitest aliases `@mockdata/core` to its source (`vitest.config.ts`), so tests need no build.
+Build order is core, llm, cli, mcp (each imports the previous one's `dist`). Each package sets its own `outDir` (a base-config `outDir` resolves relative to the repo root, not the package). Vitest aliases `@mockdata/core` to its source (`vitest.config.ts`), so tests need no build.
 
 ## Core architecture (`packages/core/src`)
 
@@ -53,6 +54,14 @@ Only columns marked `llm` (string type) go to a model; everything else stays det
 - `provider.ts`: raw `fetch` to Anthropic Messages and OpenAI chat completions (ollama / openai-compatible = same wire format + base URL, key optional). Requests time out after 120s (retryable) so an unreachable host cannot hang the CLI.
 - Tests use fake `fetch`/providers only (CLI tests use an empty temp cwd so a real `.env` never leaks in). A live run against Ollama has been verified manually; Anthropic/OpenAI request shapes are not yet verified live. LLM output is not reproducible by seed (only the deterministic columns are).
 - Known limits: no parent-row context in prompts yet, no cost estimate (tokens only), calls are sequential.
+
+## MCP server (`packages/mcp/src`)
+
+`createServer({root, env, llm})` in `server.ts` (official `@modelcontextprotocol/sdk`, stdio via `bin.ts`; register with e.g. `claude mcp add mockdata -e MOCKDATA_ROOT=/some/dir -- node <repo>/packages/mcp/dist/bin.js`). Tools: `describe_schema_format` (text in `reference.ts`, keep it in sync with the schema DSL), `validate_schema`, `generate_data` (row counts + capped preview; optional `outputDir`/`format`/`overwrite`), `get_run_report` (last run, in memory). Reuses `loadEnv`/`parseSchemaText`/`serialize` from `@mockdata/cli`.
+
+Tool inputs come from an agent, so file access is strict: `schemaPath` and `outputDir` must be relative and stay inside `root` (`resolveInside` also blocks symlink escapes), `schemaPath` must be .yaml/.yml/.json and never `.env*`, existing files are never overwritten without `overwrite: true`, and conflicts are checked before any LLM call. stdout is the protocol channel: never `console.log` in this package or anything it imports; use stderr.
+
+Schema hardening that exists because schemas may be untrusted: table names must match `^[A-Za-z_][A-Za-z0-9_-]*$` (they become file names), and `faker:` must be `module.method` with no `constructor`/`prototype` segments and not `helpers.fake`/`mustache`/`fromRegExp`.
 
 ## Conventions
 
