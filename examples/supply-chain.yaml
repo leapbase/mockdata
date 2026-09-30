@@ -1,0 +1,81 @@
+# Pharmaceutical supply chain with serialization (track and trace): serialized packs move
+# from a manufacturer to a wholesaler to a pharmacy and are dispensed. Synthetic data:
+# names, identifiers and terms are illustrative.
+# Each stage is its own table linked one-to-one to the previous stage, so every date
+# follows the stage before it by construction, and later stages have fewer rows (packs
+# still in transit or on the shelf): pack -> wholesale_receipts -> pharmacy_receipts ->
+# dispensing. Suspect-product investigations hang off the pack.
+# Simplifications, because the DSL has no lower bound on a gap and cannot tie values
+# together: there are no cold-chain temperature logs (a reading could fall outside its
+# shipment), and "received" is only bounded to within a few days of "shipped".
+seed: 97
+tables:
+  products:
+    rows: 5
+    columns:
+      id: { type: integer, primaryKey: true }
+      gtin: { type: string, pattern: "0[0-9]{13}", unique: true }   # global trade item number
+      dosage_form: { type: string, enum: [tablet, capsule, injection, oral solution, cream] }
+  manufacturers:
+    rows: 4
+    columns:
+      id: { type: integer, primaryKey: true }
+      gln: { type: string, pattern: "[0-9]{13}", unique: true }   # global location number
+      name: { type: string, faker: company.name }
+      country: { type: string, enum: [US, DE, IN, IE, CH] }
+  wholesalers:
+    rows: 6
+    columns:
+      id: { type: integer, primaryKey: true }
+      gln: { type: string, pattern: "[0-9]{13}", unique: true }
+      name: { type: string, faker: company.name }
+      state: { type: string, faker: location.state }
+  pharmacies:
+    rows: 20
+    columns:
+      id: { type: integer, primaryKey: true }
+      gln: { type: string, pattern: "[0-9]{13}", unique: true }
+      name: { type: string, faker: company.name }
+      city: { type: string, faker: location.city }
+      kind: { type: string, enum: [retail, hospital, mail order] }
+  packs:
+    rows: 80
+    columns:
+      id: { type: integer, primaryKey: true }
+      serial_no: { type: string, pattern: "[A-Z0-9]{12}", unique: true }   # unit-level serial number
+      product_id: { type: integer, ref: products.id, distribution: zipf }   # a few products dominate
+      manufacturer_id: { type: integer, ref: manufacturers.id, distribution: zipf }
+      lot_no: { type: string, pattern: "LOT[0-9]{6}" }
+      commissioned_on: { type: date, min: "2023-01-01", max: "2024-06-30" }   # serial number assigned
+      expiry_on: { type: date, after: commissioned_on, within: 1095 }
+  wholesale_receipts:
+    rows: 60
+    columns:
+      id: { type: integer, primaryKey: true }
+      pack_id: { type: integer, ref: packs.id, unique: true }   # each pack is received at most once
+      wholesaler_id: { type: integer, ref: wholesalers.id, distribution: zipf }
+      shipped_on: { type: date, after: pack_id.commissioned_on, within: 30 }
+      received_on: { type: date, after: shipped_on, within: 7 }
+  pharmacy_receipts:
+    rows: 45
+    columns:
+      id: { type: integer, primaryKey: true }
+      wholesale_receipt_id: { type: integer, ref: wholesale_receipts.id, unique: true }
+      pharmacy_id: { type: integer, ref: pharmacies.id, distribution: zipf }
+      shipped_on: { type: date, after: wholesale_receipt_id.received_on, within: 30 }
+      received_on: { type: date, after: shipped_on, within: 5 }
+  dispensing:
+    rows: 30
+    columns:
+      id: { type: integer, primaryKey: true }
+      pharmacy_receipt_id: { type: integer, ref: pharmacy_receipts.id, unique: true }   # dispensed once
+      dispensed_on: { type: date, after: pharmacy_receipt_id.received_on, within: 120 }
+      channel: { type: string, enum: [counter, prescription pickup, home delivery] }
+  investigations:
+    rows: 6
+    columns:
+      id: { type: integer, primaryKey: true }
+      pack_id: { type: integer, ref: packs.id, unique: true }
+      reason: { type: string, enum: [serial number mismatch, damaged packaging, suspected counterfeit, duplicate serial number] }
+      opened_on: { type: date, after: pack_id.commissioned_on, within: 365 }
+      closed_on: { type: date, after: opened_on, within: 60, nullable: true, nullRate: 0.4 }   # open when empty

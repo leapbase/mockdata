@@ -315,6 +315,52 @@ describe("manufacturing-quality.yaml", () => {
   });
 });
 
+describe("supply-chain.yaml", () => {
+  it("produces data that satisfies every feature it demonstrates", async () => {
+    const d = await json("generate", join(examples, "supply-chain.yaml"));
+    expect(Object.fromEntries(Object.entries(d).map(([t, r]) => [t, (r as unknown[]).length]))).toEqual({
+      products: 5, manufacturers: 4, wholesalers: 6, pharmacies: 20, packs: 80, wholesale_receipts: 60, pharmacy_receipts: 45, dispensing: 30, investigations: 6,
+    });
+    for (const p of d.products) expect(p.gtin).toMatch(/^0[0-9]{13}$/);
+    for (const t of ["manufacturers", "wholesalers", "pharmacies"]) for (const r of d[t]) expect(r.gln).toMatch(/^[0-9]{13}$/);
+    const serials = d.packs.map((p: any) => p.serial_no);
+    for (const s of serials) expect(s).toMatch(/^[A-Z0-9]{12}$/);
+    expect(new Set(serials).size).toBe(serials.length);
+    const days = (a: string, b: string) => (Date.parse(a) - Date.parse(b)) / 86_400_000;
+    const between = (gap: number, max: number) => {
+      expect(gap).toBeGreaterThanOrEqual(0);
+      expect(gap).toBeLessThanOrEqual(max);
+    };
+    const packs = byId(d.packs);
+    for (const p of d.packs) between(days(p.expiry_on, p.commissioned_on), 1095);
+    // the chain: each stage follows the one before it, and each link is one-to-one
+    const wholesale = byId(d.wholesale_receipts);
+    for (const w of d.wholesale_receipts) {
+      between(days(w.shipped_on, packs.get(w.pack_id).commissioned_on), 30);
+      between(days(w.received_on, w.shipped_on), 7);
+    }
+    const pharmacy = byId(d.pharmacy_receipts);
+    for (const r of d.pharmacy_receipts) {
+      between(days(r.shipped_on, wholesale.get(r.wholesale_receipt_id).received_on), 30);
+      between(days(r.received_on, r.shipped_on), 5);
+    }
+    for (const x of d.dispensing) between(days(x.dispensed_on, pharmacy.get(x.pharmacy_receipt_id).received_on), 120);
+    const unique = (rows: Record<string, any>[], key: string) => expect(new Set(rows.map((r) => r[key])).size).toBe(rows.length);
+    unique(d.wholesale_receipts, "pack_id");
+    unique(d.pharmacy_receipts, "wholesale_receipt_id");
+    unique(d.dispensing, "pharmacy_receipt_id");
+    unique(d.investigations, "pack_id");
+    // investigations: dated from the pack, and some still open
+    for (const i of d.investigations) {
+      between(days(i.opened_on, packs.get(i.pack_id).commissioned_on), 365);
+      if (i.closed_on) between(days(i.closed_on, i.opened_on), 60);
+    }
+    expect(d.investigations.some((i: any) => i.closed_on === null)).toBe(true);
+    // a few products dominate (zipf)
+    expect(perParent(d.packs, "product_id")).toBeGreaterThan(80 / 5);
+  });
+});
+
 describe("hr.yaml", () => {
   it("produces data that satisfies every feature it demonstrates", async () => {
     const d = await json("generate", join(examples, "hr.yaml"));

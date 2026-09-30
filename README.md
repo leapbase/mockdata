@@ -80,6 +80,7 @@ Everything in [`examples/`](examples) works as written (a test runs each one):
 | `clinical-sdtm.yaml` | Trial data laid out like CDISC SDTM (DM, EX, AE, DS, LB, VS) plus an ADaM-style ADSL, all dated from each subject's first dose (`after` + `within`), with string subject ids as foreign keys |
 | `pharmacovigilance.yaml` | Post-marketing drug safety reports (E2B-style cases): first drug -> onset -> receipt -> follow-up date chains, caps per case, reports concentrated on a few products |
 | `manufacturing-quality.yaml` | GMP manufacturing and quality: batches and their material lots, per-test QC results, stability studies, deviations with CAPAs (some still open), equipment calibration |
+| `supply-chain.yaml` | Serialized track and trace: a pack moves manufacturer -> wholesaler -> pharmacy -> dispensing as one-to-one stages whose dates follow each other, plus suspect-product investigations |
 | `samples/customers.csv`, `samples/orders.csv` | Sample rows (fake data) to try inferring a schema from |
 | `petstore-openapi.yaml` | An OpenAPI document to infer a schema from |
 | `make-sample-db.mjs` | Builds a small SQLite database (`node examples/make-sample-db.mjs`) to infer from |
