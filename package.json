@@ -7,7 +7,7 @@
     "test": "vitest run",
     "ui": "node packages/server/dist/bin.js",
     "typecheck": "npm run build",
-    "build": "tsc -p packages/core && tsc -p packages/auth-kit && tsc -p packages/llm && tsc -p packages/inputs && tsc -p packages/cli && tsc -p packages/mcp && tsc -p packages/server && npm run build -w packages/web"
+    "build": "tsc -p packages/core && tsc -p packages/auth-kit && tsc -p packages/accounts && tsc -p packages/llm && tsc -p packages/inputs && tsc -p packages/cli && tsc -p packages/mcp && tsc -p packages/server && npm run build -w packages/web"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

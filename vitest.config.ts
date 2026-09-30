@@ -10,6 +10,7 @@ export default defineConfig({
       "@mockdata/core": src("core"),
       "@mockdata/llm": src("llm"),
       "@mockdata/auth-kit": src("auth-kit"),
+      "@mockdata/accounts": src("accounts"),
       "@mockdata/inputs": src("inputs"),
       "@mockdata/cli": fileURLToPath(new URL("./packages/cli/src/cli.ts", import.meta.url)),
     },
