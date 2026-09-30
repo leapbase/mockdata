@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { run, type IO } from "../src/cli.js";
+import { run, serialize, type IO } from "../src/cli.js";
 
 const example = join(__dirname, "../../../examples/shop.yaml");
 const llmExample = join(__dirname, "../../../examples/shop-llm.yaml");
@@ -215,5 +215,13 @@ describe("cli infer", () => {
     const r = await execIn(work, { env: {} }, "infer", "postgres://alice:s3cret@127.0.0.1:1/db");
     expect(r.code).toBe(1);
     expect(r.err + r.out).not.toContain("s3cret");
+  });
+});
+
+describe("csv output", () => {
+  it("defuses text that a spreadsheet would run as a formula, but leaves numbers alone", () => {
+    const rows = [{ a: "=HYPERLINK(\"http://evil\")", b: "+1", c: "-x", d: "@SUM(A1)", e: -5, f: "safe", g: "\tcmd" }];
+    const [, line] = serialize(rows, ["a", "b", "c", "d", "e", "f", "g"], "csv").split("\n");
+    expect(line).toBe(`"'=HYPERLINK(""http://evil"")",'+1,'-x,'@SUM(A1),-5,safe,'\tcmd`);
   });
 });

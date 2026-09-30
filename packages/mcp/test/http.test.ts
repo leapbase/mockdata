@@ -94,6 +94,23 @@ describe("mcp over http", () => {
     expect((await raw(url, "/mcp", { method: "POST", headers, body })).status).toBe(200);
   });
 
+  it("treats a localhost page on another port as cross-origin", async () => {
+    const { url } = await boot();
+    const headers = { "content-type": "application/json", accept: "application/json, text/event-stream" };
+    const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "x", version: "0" } } });
+    expect((await raw(url, "/mcp", { method: "POST", headers: { ...headers, origin: "http://localhost:5173" }, body })).status).toBe(403);
+  });
+
+  it("closes sessions that sit idle", async () => {
+    const { client, url } = await boot({ sessionIdleMs: 50 });
+    const c = await client();
+    await c.callTool({ name: "validate_schema", arguments: { schemaPath: "shop.yaml" } });
+    await new Promise((r) => setTimeout(r, 400));
+    const after = (await c.callTool({ name: "validate_schema", arguments: { schemaPath: "shop.yaml" } }).catch((e) => e)) as any;
+    expect(after instanceof Error || after.isError).toBe(true);
+    void url;
+  });
+
   it("answers bad requests with clear errors, not crashes", async () => {
     const { url } = await boot();
     const json = { "content-type": "application/json", accept: "application/json, text/event-stream" };

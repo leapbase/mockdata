@@ -10,10 +10,13 @@ describe("localhost guard", () => {
     const r = await rawRequest(url, "/api/config", { host: "evil.example" });
     expect(r.status).toBe(403);
   });
-  it("rejects a foreign Origin but accepts a localhost one on another port (Vite dev)", async () => {
+  it("rejects a foreign Origin and any localhost Origin that is not the Host it addressed", async () => {
     const { url } = await boot();
     expect((await rawRequest(url, "/api/config", { origin: "http://evil.example" })).status).toBe(403);
-    expect((await rawRequest(url, "/api/config", { origin: "http://localhost:5173" })).status).toBe(200);
+    // Another local dev server or app on a different port is cross-origin.
+    expect((await rawRequest(url, "/api/config", { origin: "http://localhost:5173" })).status).toBe(403);
+    // Vite's dev proxy forwards the browser's own Host, so its Origin matches.
+    expect((await rawRequest(url, "/api/config", { host: "localhost:5173", origin: "http://localhost:5173" })).status).toBe(200);
     expect((await rawRequest(url, "/api/config", { origin: "null" })).status).toBe(403);
   });
 });

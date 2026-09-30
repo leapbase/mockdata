@@ -24,6 +24,7 @@ npx mockdata --help
 ```
 npx mockdata generate examples/shop.yaml                      # JSON to stdout
 npx mockdata generate examples/shop.yaml -o out -f csv        # one CSV per table
+# CSV cells of text starting with = + - @ get a leading quote so spreadsheets do not run them as formulas
 npx mockdata generate examples/shop.yaml -s 123               # same seed = same data
 npx mockdata validate examples/shop.yaml                      # check a schema without generating
 ```
@@ -175,7 +176,7 @@ The MCP server exposes the same abilities to agents, over stdio or HTTP:
 | `generate_data` | Returns row counts and a small preview; can write every row to files |
 | `get_run_report` | Seed, row counts, files written, LLM calls and tokens for the last run |
 
-`generate_data` and the web UI's Export refuse schemas that add up to more than 1,000,000 rows, since they build everything in memory for a caller you may not control. The CLI has no such limit. Inferring from a folder of samples skips symlinks and reports them as warnings.
+`generate_data` and the web UI's Export refuse schemas that add up to more than 1,000,000 rows, since they build everything in memory for a caller you may not control. The CLI has no such limit. Inferring from a folder of samples skips symlinks and reports them as warnings. Both servers answer only requests addressed to localhost, and a browser page must be same-origin with the address it called. Idle MCP HTTP sessions close after 30 minutes.
 
 Register it in `.mcp.json` (or with `claude mcp add`), using absolute paths:
 

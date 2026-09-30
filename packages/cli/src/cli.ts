@@ -48,9 +48,13 @@ export function loadSchemaFile(path: string): unknown {
   return extname(path).toLowerCase() === ".json" ? JSON.parse(text) : parseSchemaText(text);
 }
 
+/** Spreadsheets run text that starts with one of these as a formula; numbers are left alone. */
+const FORMULA_START = /^[=+\-@\t\r]/;
+
 function csvCell(v: unknown): string {
   if (v === null || v === undefined) return "";
-  const s = String(v);
+  let s = String(v);
+  if (typeof v === "string" && FORMULA_START.test(s)) s = `'${s}`;
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 

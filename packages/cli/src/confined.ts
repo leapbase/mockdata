@@ -101,7 +101,7 @@ const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 /**
  * Why a request must be refused, or undefined if it is fine: it has to be
  * addressed to localhost (DNS rebinding) and, if a browser page sent it, come
- * from a localhost origin (CSRF). Shared by the web UI and the MCP HTTP server.
+ * from the same origin as the Host it addressed (CSRF). Shared by the web UI and the MCP HTTP server.
  */
 export function localRequestProblem(host: string | undefined, origin: string | undefined): string | undefined {
   const m = host ? /^(\[[^\]]+\]|[^:]+)(?::\d+)?$/.exec(host.trim()) : null;
@@ -113,7 +113,8 @@ export function localRequestProblem(host: string | undefined, origin: string | u
     } catch {
       /* falls through to the rejection below */
     }
-    if (!LOCAL_HOSTS.has(hostname)) return "Origin not allowed";
+    // Same-origin only: a page on another localhost port (another dev server, a local app) is as foreign as any website.
+    if (!LOCAL_HOSTS.has(hostname) || new URL(origin).host !== host!.trim().toLowerCase()) return "Origin not allowed";
   }
   return undefined;
 }

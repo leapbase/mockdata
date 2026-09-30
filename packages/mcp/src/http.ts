@@ -11,6 +11,8 @@ export interface McpHttpOptions extends ServerOptions {
   port?: number;
   /** Open sessions allowed at once (default 20); each holds a server in memory. */
   maxSessions?: number;
+  /** Close a session after this many ms without a request (default 30 minutes). */
+  sessionIdleMs?: number;
 }
 
 const MAX_BODY = 10 * 1024 * 1024;
@@ -43,7 +45,15 @@ async function readBody(req: IncomingMessage): Promise<string | undefined> {
  */
 export async function startMcpHttp(opts: McpHttpOptions = {}): Promise<{ server: http.Server; url: string }> {
   const maxSessions = opts.maxSessions ?? 20;
+  const sessionIdleMs = opts.sessionIdleMs ?? 30 * 60_000;
   const sessions = new Map<string, StreamableHTTPServerTransport>();
+  const lastUsed = new Map<string, number>();
+  const sweep = setInterval(() => {
+    for (const [id, t] of sessions) {
+      if (Date.now() - (lastUsed.get(id) ?? 0) > sessionIdleMs) void t.close();
+    }
+  }, Math.min(60_000, Math.max(10, sessionIdleMs / 2)));
+  sweep.unref();
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const problem = localRequestProblem(req.headers.host, req.headers.origin);
@@ -53,6 +63,7 @@ export async function startMcpHttp(opts: McpHttpOptions = {}): Promise<{ server:
     const header = req.headers["mcp-session-id"];
     const sessionId = Array.isArray(header) ? header[0] : header;
     const existing = sessionId ? sessions.get(sessionId) : undefined;
+    if (sessionId && existing) lastUsed.set(sessionId, Date.now());
 
     if (req.method === "POST") {
       if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) return reply(res, 415, "Send JSON with Content-Type: application/json");
@@ -71,10 +82,16 @@ export async function startMcpHttp(opts: McpHttpOptions = {}): Promise<{ server:
 
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: randomUUID,
-        onsessioninitialized: (id) => void sessions.set(id, transport),
+        onsessioninitialized: (id) => {
+          sessions.set(id, transport);
+          lastUsed.set(id, Date.now());
+        },
       });
       transport.onclose = () => {
-        if (transport.sessionId) sessions.delete(transport.sessionId);
+        if (transport.sessionId) {
+          sessions.delete(transport.sessionId);
+          lastUsed.delete(transport.sessionId);
+        }
       };
       await createServer(opts).connect(transport);
       return transport.handleRequest(req, res, body);
@@ -92,6 +109,9 @@ export async function startMcpHttp(opts: McpHttpOptions = {}): Promise<{ server:
   const server = http.createServer((req, res) => {
     handle(req, res).catch((e) => reply(res, 500, (e as Error).message));
   });
+  server.headersTimeout = 15_000;
+  server.requestTimeout = 60_000;
+  server.on("close", () => clearInterval(sweep));
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(opts.port ?? 4748, "127.0.0.1", () => resolve());
