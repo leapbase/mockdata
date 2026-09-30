@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { SESSION_COOKIE, clearCookie, sendPasswordResetEmail, sendVerificationEmail, type AccountUser } from "@mockdata/accounts";
+import { BusyError, clearCookie, sendPasswordResetEmail, sendVerificationEmail, sessionCookieName, type AccountUser } from "@mockdata/accounts";
 import { EmailTakenError } from "@mockdata/auth-kit";
 import type { AccountsRuntime } from "../accounts/runtime.js";
 import { googleCallback, googleStart } from "../accounts/google.js";
@@ -32,17 +32,53 @@ function field(result: string | { error: string }): string {
 
 /** Validation messages describe the rule, never the input, so they can be shown as they are. */
 function emailOf(acc: AccountsRuntime, body: Record<string, unknown>): string {
-  return field(acc.auth.validateEmail(reqString(body, "email")));
+  const email = field(acc.auth.validateEmail(reqString(body, "email")));
+  if (!PLAIN_EMAIL.test(email)) throw new HttpError(400, "Enter a valid email address");
+  return email;
 }
 
-/** Send a message without letting a mail failure change the response (that would reveal whether an address exists). */
-async function sendQuietly(acc: AccountsRuntime, send: () => Promise<void>): Promise<void> {
+/** Never put an email address in a log line (SMTP errors usually repeat the recipient). */
+const redactEmails = (text: string): string => text.replace(/[^\s<>"',;]+@[^\s<>"',;]+/g, "<address>");
+
+/**
+ * Send a message after the response, never awaited by it: a slow mail server must not make "new address" and
+ * "existing address" look different in response times, and a mail failure must not change the answer.
+ */
+function queueMail(acc: AccountsRuntime, send: () => Promise<void>): void {
+  acc.queueMail(async () => {
+    try {
+      await send();
+    } catch (e) {
+      process.stderr.write(`mail: could not send (${redactEmails(acc.mailer.formatError(e))})\n`);
+    }
+  });
+}
+
+/** Password hashing is the expensive part of an unauthenticated request: bound how much can run, refuse the rest. */
+async function hashing<T>(acc: AccountsRuntime, res: ServerResponse, job: () => Promise<T>): Promise<T> {
   try {
-    await send();
+    return await acc.hashing.run(job);
   } catch (e) {
-    process.stderr.write(`mail: could not send (${acc.mailer.formatError(e)})\n`);
+    if (e instanceof BusyError) {
+      res.setHeader("retry-after", "5");
+      throw new HttpError(503, "The server is busy: try again in a moment");
+    }
+    throw e;
   }
 }
+
+/** The coarse per-address ceiling on unauthenticated auth requests. */
+function throttle(acc: AccountsRuntime, req: IncomingMessage, res: ServerResponse): string {
+  const ip = acc.clientIp(req);
+  if (!acc.limiters.authIp.hit(ip)) throw tooMany(res, acc.limiters.authIp.retryAfterSeconds(ip));
+  return ip;
+}
+
+/**
+ * The library's check only needs one "@", but a mail library reads "a,b@x.com", "Name <b@x.com>" and quoted or
+ * commented forms as other recipients, which would let sign-up mail anyone. Accept plain ASCII addresses only.
+ */
+const PLAIN_EMAIL = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/;
 
 function requireEmail(acc: AccountsRuntime): void {
   if (!acc.emailEnabled) throw new HttpError(503, "Email sign-up is not available on this server");
@@ -50,18 +86,31 @@ function requireEmail(acc: AccountsRuntime): void {
 
 const register: AuthHandler = async (acc, _caller, req, res) => {
   const body = await readJson(req, AUTH_BODY_MAX);
-  const ip = acc.clientIp(req);
-  if (!acc.limiters.signupIp.hit(ip)) throw tooMany(res, acc.limiters.signupIp.retryAfterSeconds(ip));
+  const ip = throttle(acc, req, res);
   requireEmail(acc);
+  // Cheap checks first: only an attempt that would hash a password and send mail counts against the sign-up limit.
   const email = emailOf(acc, body);
   const password = field(acc.auth.validateRegistrationPassword(body.password));
+  if (!acc.limiters.signupIp.hit(ip)) throw tooMany(res, acc.limiters.signupIp.retryAfterSeconds(ip));
   const started = Date.now();
+  const verifyLink = (token: string) => `${acc.config.publicUrl.origin}/api/auth/verify-email?token=${token}`;
   try {
-    const user = await acc.auth.register({ email, password });
+    const user = await hashing(acc, res, () => acc.auth.register({ email, password }));
     const token = await acc.auth.createEmailVerificationToken(user.id);
-    await sendQuietly(acc, () => sendVerificationEmail(acc.mailer, user.email!, `${acc.config.publicUrl.origin}/api/auth/verify-email?token=${token}`));
+    queueMail(acc, () => sendVerificationEmail(acc.mailer, user.email!, verifyLink(token)));
   } catch (e) {
-    if (!(e instanceof EmailTakenError)) throw e; // an existing address gets the same answer as a new one
+    if (!(e instanceof EmailTakenError)) throw e;
+    // An address nobody has verified has no owner yet, so the newest sign-up wins: whoever squatted it (or abandoned
+    // it) loses the password, the sessions and the old link, and the address gets a fresh link. A verified address is
+    // left alone and mailed nothing; the answer is the same either way.
+    const identity = await acc.auth.findEmailIdentity(email);
+    if (identity && !identity.verified) {
+      await hashing(acc, res, () => acc.auth.setPassword(identity.userId, password));
+      await acc.auth.revokeSessions(identity.userId);
+      await acc.auth.clearEmailVerificationTokens(identity.userId);
+      const token = await acc.auth.createEmailVerificationToken(identity.userId);
+      queueMail(acc, () => sendVerificationEmail(acc.mailer, email, verifyLink(token)));
+    }
   }
   await acc.auth.padToTimingFloor(started);
   sendJson(res, 202, { pending: true });
@@ -69,28 +118,41 @@ const register: AuthHandler = async (acc, _caller, req, res) => {
 
 const login: AuthHandler = async (acc, _caller, req, res) => {
   const body = await readJson(req, AUTH_BODY_MAX);
-  const ip = acc.clientIp(req);
+  const ip = throttle(acc, req, res);
+  // Every attempt is counted before any hashing, or a burst sent in parallel would all pass the check first.
+  if (!acc.limiters.loginIp.hit(ip)) throw tooMany(res, acc.limiters.loginIp.retryAfterSeconds(ip));
   if (acc.limiters.ipFail.isLimited(ip)) throw tooMany(res, acc.limiters.ipFail.retryAfterSeconds(ip));
   const email = emailOf(acc, body);
   const normalized = acc.auth.normalizeEmail(email);
+  const mailbox = `${normalized}|${ip}`;
+  if (acc.limiters.emailIpFail.isLimited(mailbox)) throw tooMany(res, acc.limiters.emailIpFail.retryAfterSeconds(mailbox));
   if (acc.limiters.emailFail.isLimited(normalized)) throw tooMany(res, acc.limiters.emailFail.retryAfterSeconds(normalized));
   const password = field(acc.auth.validateLoginPasswordShape(body.password));
-  const result = await acc.auth.login(email, password);
+  const result = await hashing(acc, res, () => acc.auth.login(email, password));
   if (!result) {
     acc.limiters.ipFail.record(ip);
+    acc.limiters.emailIpFail.record(mailbox);
     acc.limiters.emailFail.record(normalized);
     throw new HttpError(401, "Invalid email or password");
   }
   // Only someone who knows the password learns the address is unverified.
   if (!result.emailVerified) throw new HttpError(403, "Verify your email before signing in", "email_unverified");
-  acc.limiters.emailFail.reset(normalized);
+  acc.limiters.emailIpFail.reset(mailbox);
   await startSession(acc, res, result.user.id);
   sendJson(res, 200, { user: publicUser(result.user) });
 };
 
 const logout: AuthHandler = async (acc, caller, _req, res) => {
   await acc.sessions.destroy(caller.sessionId);
-  res.setHeader("set-cookie", clearCookie(SESSION_COOKIE, acc.config.publicUrl.secure));
+  res.setHeader("set-cookie", clearCookie(sessionCookieName(acc.config.publicUrl.secure), acc.config.publicUrl.secure));
+  sendJson(res, 200, { ok: true });
+};
+
+/** Sign the user out of every device, this one included. */
+const logoutAll: AuthHandler = async (acc, caller, _req, res) => {
+  if (!caller.user) throw new HttpError(401, "Sign in required");
+  await acc.auth.revokeSessions(caller.user.id);
+  res.setHeader("set-cookie", clearCookie(sessionCookieName(acc.config.publicUrl.secure), acc.config.publicUrl.secure));
   sendJson(res, 200, { ok: true });
 };
 
@@ -116,7 +178,7 @@ const verifyEmail: AuthHandler = async (acc, _caller, _req, res, url) => {
 function mailRoute(act: (acc: AccountsRuntime, email: string, normalized: string) => Promise<void>): AuthHandler {
   return async (acc, _caller, req, res) => {
     const body = await readJson(req, AUTH_BODY_MAX);
-    const ip = acc.clientIp(req);
+    const ip = throttle(acc, req, res);
     if (!acc.limiters.mailIp.hit(ip)) throw tooMany(res, acc.limiters.mailIp.retryAfterSeconds(ip));
     requireEmail(acc);
     const email = emailOf(acc, body);
@@ -132,7 +194,8 @@ const forgotPassword = mailRoute(async (acc, email) => {
   const identity = await acc.auth.findEmailIdentity(email);
   if (!identity) return;
   const token = await acc.auth.createPasswordResetToken(identity.userId);
-  await sendQuietly(acc, () => sendPasswordResetEmail(acc.mailer, email, `${acc.config.publicUrl.origin}/?reset_token=${token}`));
+  // A fragment is never sent to a server, so the token stays out of proxy logs and Referer headers.
+  queueMail(acc, () => sendPasswordResetEmail(acc.mailer, email, `${acc.config.publicUrl.origin}/#reset_token=${token}`));
 });
 
 const resendVerification = mailRoute(async (acc, email) => {
@@ -140,12 +203,12 @@ const resendVerification = mailRoute(async (acc, email) => {
   if (!identity || identity.verified) return;
   await acc.auth.clearEmailVerificationTokens(identity.userId);
   const token = await acc.auth.createEmailVerificationToken(identity.userId);
-  await sendQuietly(acc, () => sendVerificationEmail(acc.mailer, email, `${acc.config.publicUrl.origin}/api/auth/verify-email?token=${token}`));
+  queueMail(acc, () => sendVerificationEmail(acc.mailer, email, `${acc.config.publicUrl.origin}/api/auth/verify-email?token=${token}`));
 });
 
 const resetPassword: AuthHandler = async (acc, _caller, req, res) => {
   const body = await readJson(req, AUTH_BODY_MAX);
-  const ip = acc.clientIp(req);
+  const ip = throttle(acc, req, res);
   if (acc.limiters.ipFail.isLimited(ip)) throw tooMany(res, acc.limiters.ipFail.retryAfterSeconds(ip));
   const token = reqString(body, "token");
   const password = field(acc.auth.validateRegistrationPassword(body.password)); // before consuming: a weak password must not burn the link
@@ -154,7 +217,7 @@ const resetPassword: AuthHandler = async (acc, _caller, req, res) => {
     acc.limiters.ipFail.record(ip);
     throw new HttpError(400, "This reset link is invalid or has expired", "reset_invalid");
   }
-  await acc.auth.setPassword(userId, password);
+  await hashing(acc, res, () => acc.auth.setPassword(userId, password));
   await acc.auth.markEmailVerified(userId); // reading the emailed link proves the address
   await acc.auth.clearEmailVerificationTokens(userId);
   await acc.auth.clearPasswordResetTokens(userId);
@@ -172,12 +235,12 @@ const changePassword: AuthHandler = async (acc, caller, req, res) => {
   const newPassword = field(acc.auth.validateRegistrationPassword(body.newPassword));
   const current = field(acc.auth.validateLoginPasswordShape(body.currentPassword));
   if (!user.email || !(await acc.auth.hasPasswordIdentity(user.id))) throw new HttpError(400, "This account has no password to change");
-  if (acc.limiters.emailFail.isLimited(user.email)) throw tooMany(res, acc.limiters.emailFail.retryAfterSeconds(user.email));
-  if (!(await acc.auth.login(user.email, current))) {
-    acc.limiters.emailFail.record(user.email);
+  if (acc.limiters.emailIpFail.isLimited(user.email)) throw tooMany(res, acc.limiters.emailIpFail.retryAfterSeconds(user.email));
+  if (!(await hashing(acc, res, () => acc.auth.login(user.email!, current)))) {
+    acc.limiters.emailIpFail.record(user.email);
     throw new HttpError(400, "Current password is incorrect");
   }
-  await acc.auth.setPassword(user.id, newPassword);
+  await hashing(acc, res, () => acc.auth.setPassword(user.id, newPassword));
   await acc.auth.revokeSessions(user.id, caller.sessionId); // other devices are signed out, this one stays
   sendJson(res, 200, { ok: true });
 };
@@ -192,6 +255,7 @@ export const AUTH_ROUTES: Record<string, AuthHandler> = {
   "POST /api/auth/forgot-password": forgotPassword,
   "POST /api/auth/reset-password": resetPassword,
   "POST /api/auth/change-password": changePassword,
+  "POST /api/auth/logout-all": logoutAll,
   "GET /api/auth/google": googleStart,
   "GET /api/auth/google/callback": googleCallback,
 };

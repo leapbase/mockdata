@@ -14,15 +14,21 @@ describe("accounts: sign up, verify, sign in", () => {
     expect((await get("/api/auth/me")).json).toEqual({ user: null, auth: { accountsEnabled: false, googleConfigured: false, emailEnabled: false } });
   });
 
-  it("register answers 202 for a new and an existing email alike, and mails only the new one", async () => {
-    const { post, sent } = await bootAccounts();
+  it("register answers 202 for a new address and for one already registered, and mails a link to the address", async () => {
+    const { post, sent, signUp } = await bootAccounts();
     const first = await post("/api/auth/register", { email: "Ann@Example.com", password: PASSWORD });
-    const again = await post("/api/auth/register", { email: "ann@example.com", password: PASSWORD });
+    const again = await post("/api/auth/register", { email: "ann@example.com", password: PASSWORD }); // still unverified: a fresh link
     expect(first.status).toBe(202);
     expect(again.status).toBe(202);
     expect(again.raw).toBe(first.raw);
     expect(first.json).toEqual({ pending: true });
-    expect(sent).toHaveLength(1);
+    expect(sent).toHaveLength(2);
+    expect(sent.every((m) => m.to === "ann@example.com")).toBe(true);
+    await signUp("bob@example.com");
+    const before = sent.length;
+    const verified = await post("/api/auth/register", { email: "bob@example.com", password: PASSWORD }); // verified: same answer, no mail
+    expect(verified.raw).toBe(first.raw);
+    expect(sent).toHaveLength(before);
     expect(sent[0]!.to).toBe("ann@example.com");
     expect(sent[0]!.subject).toMatch(/verify/i);
     expect(sent[0]!.text).toContain("https://mockdata.example.com/api/auth/verify-email?token=");
@@ -78,7 +84,7 @@ describe("accounts: sign up, verify, sign in", () => {
     expect(login.status).toBe(200);
     expect(login.json.user).toMatchObject({ email: "ann@example.com", displayName: "ann" });
     expect(login.json.user.dirId).toBeUndefined(); // the private folder name never leaves the server
-    const setCookie = login.headers.getSetCookie().find((c) => c.startsWith("mockdata_session="))!;
+    const setCookie = login.headers.getSetCookie().find((c) => /^(__Host-)?mockdata_session=/.test(c))!;
     expect(setCookie).toMatch(/HttpOnly/);
     expect(setCookie).toMatch(/SameSite=Lax/);
     expect(setCookie).toMatch(/Secure/);
@@ -88,7 +94,7 @@ describe("accounts: sign up, verify, sign in", () => {
     expect((await get("/api/auth/me")).json.user).toBeNull();
     const out = await as(cookie).post("/api/auth/logout", {});
     expect(out.status).toBe(200);
-    expect(out.headers.getSetCookie().join()).toMatch(/mockdata_session=;.*Max-Age=0/);
+    expect(out.headers.getSetCookie().join()).toMatch(/__Host-mockdata_session=;.*Max-Age=0/);
     expect((await as(cookie).get("/api/auth/me")).json.user).toBeNull(); // the session is gone server-side
     void call;
   });
@@ -97,7 +103,7 @@ describe("accounts: sign up, verify, sign in", () => {
     const { post, signUp } = await bootAccounts({ publicUrl: "http://localhost:4747" });
     await signUp("ann@example.com");
     const login = await post("/api/auth/login", { email: "ann@example.com", password: PASSWORD });
-    expect(login.headers.getSetCookie().find((c) => c.startsWith("mockdata_session="))).not.toMatch(/Secure/);
+    expect(login.headers.getSetCookie().find((c) => /^(__Host-)?mockdata_session=/.test(c))).not.toMatch(/Secure/);
   });
 
   it("refuses sign-up when no email can be sent", async () => {
@@ -128,7 +134,7 @@ describe("accounts: the session is the only gate", () => {
 
   it("ignores a forged or garbage session cookie", async () => {
     const { call } = await bootAccounts();
-    for (const cookie of ["mockdata_session=", "mockdata_session=abc", `mockdata_session=${"A".repeat(43)}`, "mockdata_token=whatever"]) {
+    for (const cookie of ["__Host-mockdata_session=", "__Host-mockdata_session=abc", `__Host-mockdata_session=${"A".repeat(43)}`, "mockdata_session=abc", "mockdata_token=whatever"]) {
       expect((await call("GET", "/api/files", undefined, { cookie })).status, cookie).toBe(401);
     }
   });
@@ -171,7 +177,7 @@ describe("accounts: rate limits", () => {
   });
 
   it("uses the last X-Forwarded-For entry only when told to trust the proxy, and only from loopback", async () => {
-    const off = await bootAccounts();
+    const off = await bootAccounts({ trustProxy: false });
     for (let i = 0; i < 6; i++) await off.call("POST", "/api/auth/register", { email: `a${i}@example.com`, password: PASSWORD }, { "x-forwarded-for": `203.0.113.${i}` });
     expect((await off.call("POST", "/api/auth/register", { email: "z@example.com", password: PASSWORD }, { "x-forwarded-for": "203.0.113.99" })).status).toBe(429); // header ignored: one client
     const on = await bootAccounts({ trustProxy: true });
@@ -193,14 +199,14 @@ describe("accounts: passwords", () => {
     expect(known.json).toEqual({ ok: true });
     expect(sent.length - before).toBe(1);
     expect(sent.at(-1)!.to).toBe("ann@example.com");
-    expect(sent.at(-1)!.text).toMatch(/\/\?reset_token=/);
+    expect(sent.at(-1)!.text).toMatch(/\/#reset_token=/); // a fragment never reaches a proxy log or a Referer header
   });
 
   it("resets a password with the emailed token: signs out everywhere, signs in fresh, token works once", async () => {
     const { post, signUp, as, sent, cookieOf } = await bootAccounts();
     const oldCookie = await signUp("ann@example.com");
     await post("/api/auth/forgot-password", { email: "ann@example.com" });
-    const token = new URL(sent.at(-1)!.text!.match(/https?:\/\/[^\s]+/)![0]).searchParams.get("reset_token")!;
+    const token = new URL(sent.at(-1)!.text!.match(/https?:\/\/[^\s]+/)![0]).hash.replace("#reset_token=", "");
     const reset = await post("/api/auth/reset-password", { token, password: "N3w$ecretPassw0rd!" });
     expect(reset.status).toBe(200);
     expect(reset.json.user.email).toBe("ann@example.com");
@@ -217,7 +223,7 @@ describe("accounts: passwords", () => {
     const { post, signUp, sent } = await bootAccounts();
     await signUp("ann@example.com");
     await post("/api/auth/forgot-password", { email: "ann@example.com" });
-    const token = new URL(sent.at(-1)!.text!.match(/https?:\/\/[^\s]+/)![0]).searchParams.get("reset_token")!;
+    const token = new URL(sent.at(-1)!.text!.match(/https?:\/\/[^\s]+/)![0]).hash.replace("#reset_token=", "");
     expect((await post("/api/auth/reset-password", { token, password: "weak" })).status).toBe(400);
     expect((await post("/api/auth/reset-password", { token, password: "N3w$ecretPassw0rd!" })).status).toBe(200);
   });
@@ -227,7 +233,7 @@ describe("accounts: passwords", () => {
     const first = await signUp("ann@example.com");
     const second = (await post("/api/auth/login", { email: "ann@example.com", password: PASSWORD })).headers
       .getSetCookie()
-      .find((c) => c.startsWith("mockdata_session="))!
+      .find((c) => /^(__Host-)?mockdata_session=/.test(c))!
       .split(";")[0]!;
     expect((await post("/api/auth/change-password", { currentPassword: PASSWORD, newPassword: "N3w$ecretPassw0rd!" })).status).toBe(401); // needs a session
     expect((await as(first).post("/api/auth/change-password", { currentPassword: "Wr0ng$ecretPassw0rd", newPassword: "N3w$ecretPassw0rd!" })).status).toBe(400);

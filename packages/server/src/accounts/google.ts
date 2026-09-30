@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { OAUTH_COOKIE, clearCookie, parseCookies, serializeCookie } from "@mockdata/accounts";
+import { clearCookie, oauthCookieName, parseCookies, serializeCookie } from "@mockdata/accounts";
 import { HttpError } from "../http.js";
 import type { AuthHandler } from "../routes/auth.js";
 import { appendSetCookie, startSession } from "./session.js";
@@ -16,12 +16,17 @@ const callbackUrl = (origin: string): string => `${origin}/api/auth/google/callb
  * verifier, and bound to this browser by a nonce in a short-lived cookie, so a return from any other browser
  * (login CSRF) is refused. Google sees only the PKCE challenge.
  */
-export const googleStart: AuthHandler = async (acc, _caller, _req, res) => {
+export const googleStart: AuthHandler = async (acc, _caller, req, res) => {
   if (!acc.google) throw new HttpError(501, "Google sign-in is not configured on this server");
+  const ip = acc.clientIp(req);
+  if (!acc.limiters.oauthIp.hit(ip)) {
+    res.setHeader("retry-after", String(Math.max(1, acc.limiters.oauthIp.retryAfterSeconds(ip))));
+    throw new HttpError(429, "Too many attempts. Try again later.");
+  }
   const verifier = randomBytes(32).toString("base64url");
   const challenge = createHash("sha256").update(verifier).digest("base64url");
   const { state, nonce } = await acc.oauth.create(verifier);
-  appendSetCookie(res, serializeCookie(OAUTH_COOKIE, nonce, { maxAgeSeconds: 600, secure: acc.config.publicUrl.secure }));
+  appendSetCookie(res, serializeCookie(oauthCookieName(acc.config.publicUrl.secure), nonce, { maxAgeSeconds: 600, secure: acc.config.publicUrl.secure }));
   const params = new URLSearchParams({
     client_id: acc.google.clientId,
     redirect_uri: callbackUrl(acc.config.publicUrl.origin),
@@ -81,13 +86,13 @@ export const googleCallback: AuthHandler = async (acc, _caller, req, res, url) =
   if (!acc.google) throw new HttpError(501, "Google sign-in is not configured on this server");
   const fail = (why: string): void => {
     process.stderr.write(`google sign-in refused (${why})\n`);
-    appendSetCookie(res, clearCookie(OAUTH_COOKIE, acc.config.publicUrl.secure));
+    appendSetCookie(res, clearCookie(oauthCookieName(acc.config.publicUrl.secure), acc.config.publicUrl.secure));
     res.writeHead(302, { location: "/?error=google_failed", "referrer-policy": "no-referrer", "cache-control": "no-store" });
     res.end();
   };
   const state = url.searchParams.get("state");
   const code = url.searchParams.get("code");
-  const nonce = parseCookies(req.headers.cookie)[OAUTH_COOKIE];
+  const nonce = parseCookies(req.headers.cookie)[oauthCookieName(acc.config.publicUrl.secure)];
   if (url.searchParams.has("error") || !state || !code || !nonce) return fail("denied or incomplete");
   const verifier = await acc.oauth.consume(state, nonce);
   if (!verifier) return fail("state");
@@ -98,9 +103,11 @@ export const googleCallback: AuthHandler = async (acc, _caller, req, res, url) =
     return fail("google request failed");
   }
   if (!profile) return fail("profile");
-  const user = await acc.auth.upsertOAuthUser({ provider: "google", providerUserId: profile.sub, email: profile.email, displayName: profile.displayName, avatarUrl: profile.avatarUrl });
+  const input = { provider: "google", providerUserId: profile.sub, email: profile.email, displayName: profile.displayName, avatarUrl: profile.avatarUrl };
+  // Two callbacks for a brand-new Google user can race to create the account; the loser just finds it on a second try.
+  const user = await acc.auth.upsertOAuthUser(input).catch(() => acc.auth.upsertOAuthUser(input));
   await startSession(acc, res, user.id);
-  appendSetCookie(res, clearCookie(OAUTH_COOKIE, acc.config.publicUrl.secure));
+  appendSetCookie(res, clearCookie(oauthCookieName(acc.config.publicUrl.secure), acc.config.publicUrl.secure));
   res.writeHead(302, { location: "/", "referrer-policy": "no-referrer", "cache-control": "no-store" });
   res.end();
 };

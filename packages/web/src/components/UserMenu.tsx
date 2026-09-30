@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { changePassword, logout, type AuthUser } from "../api";
+import { changePassword, logout, logoutAll, type AuthUser } from "../api";
 import { messageOf } from "../hooks";
 import Modal from "./Modal";
 
@@ -49,6 +49,15 @@ export default function UserMenu({ user, onSignedOut }: { user: AuthUser; onSign
         }
       >
         Sign out
+      </button>
+      <button
+        onClick={() =>
+          void logoutAll()
+            .catch(() => undefined)
+            .then(onSignedOut)
+        }
+      >
+        Sign out everywhere
       </button>
       {open && (
         <Modal title="Change password" onClose={close}>

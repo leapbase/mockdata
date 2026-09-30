@@ -89,6 +89,8 @@ export async function bootAccounts(
     fetch?: typeof fetch;
     llm?: AppOptions["llm"];
     trustProxy?: boolean;
+    /** Replace the mailer's send (default: capture into `sent`). */
+    mail?: (m: MailerMessage) => Promise<void>;
   } = {},
 ) {
   const dataDir = tmpRoot();
@@ -98,7 +100,7 @@ export async function bootAccounts(
   const mailer: Mailer = {
     isConfigured: () => emailEnabled,
     verifyConnection: async () => undefined,
-    send: async (m) => void sent.push(m),
+    send: opts.mail ?? (async (m) => void sent.push(m)),
     isAuthError: () => false,
     formatError: (e) => String((e as Error)?.message ?? e),
   };
@@ -125,7 +127,7 @@ export async function bootAccounts(
     put: (p: string, b: unknown) => app.call("PUT", p, b, { cookie }),
   });
   const cookieOf = (headers: Headers): string => {
-    const set = headers.getSetCookie().find((c) => c.startsWith("mockdata_session=") && !/Max-Age=0/.test(c));
+    const set = headers.getSetCookie().find((c) => /^(__Host-)?mockdata_session=/.test(c) && !/Max-Age=0/.test(c));
     return set ? set.split(";")[0]! : "";
   };
   const linkIn = (m: MailerMessage): string => /https?:\/\/[^\s"<]+/.exec(m.text ?? "")![0]!.replace(/&amp;/g, "&");

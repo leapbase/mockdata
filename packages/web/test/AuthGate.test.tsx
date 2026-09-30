@@ -173,8 +173,8 @@ describe("sign-up and email flows", () => {
     expect(calls.find((c) => c.key === "POST /api/auth/forgot-password")!.body).toEqual({ email: "anyone@example.com" });
   });
 
-  it("opens the reset form from ?reset_token=, removes the token from the address bar, and signs in on success", async () => {
-    window.history.replaceState({}, "", "/?reset_token=tok123");
+  it("opens the reset form from #reset_token=, removes the token from the address bar, and signs in on success", async () => {
+    window.history.replaceState({}, "", "/#reset_token=tok123");
     let signedIn = false;
     const calls = stubApi({
       "GET /api/auth/me": () => me(signedIn ? USER : null),
@@ -185,7 +185,8 @@ describe("sign-up and email flows", () => {
     });
     render(app());
     expect(await screen.findByRole("heading", { name: /choose a new password/i })).toBeTruthy();
-    expect(window.location.search).toBe(""); // the token no longer sits in the URL or history
+    expect(window.location.hash).toBe(""); // the token no longer sits in the URL or history
+    expect(window.location.search).toBe("");
     await userEvent.type(screen.getByLabelText("New password"), "N3w$ecretPassw0rd!");
     await userEvent.click(screen.getByRole("button", { name: "Set password" }));
     expect(await screen.findByText("the app")).toBeTruthy();
@@ -216,6 +217,21 @@ describe("sign-up and email flows", () => {
 });
 
 describe("account menu", () => {
+  it("signs out of every device and returns to sign-in", async () => {
+    let signedIn = true;
+    const calls = stubApi({
+      "GET /api/auth/me": () => me(signedIn ? USER : null),
+      "POST /api/auth/logout-all": () => {
+        signedIn = false;
+        return { ok: true };
+      },
+    });
+    render(app());
+    await userEvent.click(await screen.findByRole("button", { name: "Sign out everywhere" }));
+    expect(await screen.findByLabelText("Email")).toBeTruthy();
+    expect(calls.map((c) => c.key)).toContain("POST /api/auth/logout-all");
+  });
+
   it("changes the password with the current one and reports the result", async () => {
     const calls = stubApi({ "GET /api/auth/me": () => me(USER), "POST /api/auth/change-password": () => ({ ok: true }) });
     render(app());

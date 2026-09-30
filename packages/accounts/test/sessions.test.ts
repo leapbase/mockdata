@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { AccountsDb, OAuthStates, SessionStore, SqliteAuthAdapter, clearCookie, parseCookies, serializeCookie } from "../src/index.js";
+import { AccountsDb, OAuthStates, SessionStore, SqliteAuthAdapter, clearCookie, oauthCookieName, parseCookies, serializeCookie, sessionCookieName } from "../src/index.js";
 
 async function setup(now = { t: 1_000_000 }) {
   const accounts = await AccountsDb.open(":memory:");
@@ -66,5 +66,41 @@ describe("cookies", () => {
     expect(serializeCookie("x", "y", { maxAgeSeconds: 5, secure: false })).not.toMatch(/Secure/);
     expect(clearCookie("mockdata_session", true)).toMatch(/Max-Age=0.*Secure/);
     expect(() => serializeCookie("bad name", "v", { maxAgeSeconds: 1, secure: false })).toThrow();
+  });
+});
+
+describe("session lifetime and cookie names", () => {
+  it("ends a session at an absolute age even if it is used constantly", async () => {
+    const now = { t: 1_000_000 };
+    const accounts = await AccountsDb.open(":memory:");
+    const adapter = new SqliteAuthAdapter(accounts);
+    const user = await adapter.createUserWithPasswordIdentity({ normalizedEmail: "a@example.com", passwordHash: "h", displayName: "a" });
+    const sessions = new SessionStore(accounts, { ttlSeconds: 1000, slideAfterSeconds: 10, absoluteSeconds: 3000, now: () => now.t });
+    const s = await sessions.create(user.id);
+    for (let i = 0; i < 5; i++) {
+      now.t += 500; // used every 500 s, so the sliding expiry never lapses
+      expect(await sessions.lookup(s.id)).not.toBeNull();
+    }
+    now.t += 600; // 3100 s after creation: past the absolute limit
+    expect(await sessions.lookup(s.id)).toBeNull();
+  });
+
+  it("uses the __Host- prefix when cookies are Secure (a sibling subdomain cannot plant them)", () => {
+    expect(sessionCookieName(true)).toBe("__Host-mockdata_session");
+    expect(sessionCookieName(false)).toBe("mockdata_session");
+    expect(oauthCookieName(true)).toBe("__Host-mockdata_oauth");
+    expect(oauthCookieName(false)).toBe("mockdata_oauth");
+    expect(serializeCookie(sessionCookieName(true), "v", { maxAgeSeconds: 1, secure: true })).toMatch(/^__Host-mockdata_session=v; .*Path=\/.*Secure/);
+  });
+
+  it("purges expired OAuth states when a new one is created, so the table cannot grow forever", async () => {
+    const now = { t: 1000 };
+    const accounts = await AccountsDb.open(":memory:");
+    const states = new OAuthStates(accounts, { ttlSeconds: 600, now: () => now.t });
+    for (let i = 0; i < 20; i++) await states.create("v");
+    now.t += 601;
+    await states.create("v");
+    const { n } = (await accounts.gated(() => accounts.raw.prepare("select count(*) as n from oauth_states").get())) as { n: number };
+    expect(n).toBe(1);
   });
 });

@@ -1,7 +1,7 @@
 import { lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { isIP } from "node:net";
 import path from "node:path";
-import { AccountsDb, OAuthStates, RateLimiter, RunGate, SessionStore, SqliteAuthAdapter, UsageStore, limitsFromEnv, mailerFromEnv, type AccountUser, type Limits } from "@mockdata/accounts";
+import { AccountsDb, BusyError, OAuthStates, RateLimiter, RunGate, Semaphore, SessionStore, SqliteAuthAdapter, UsageStore, limitsFromEnv, mailerFromEnv, type AccountUser, type Limits } from "@mockdata/accounts";
 import { AuthService, getGoogleOAuthConfigFromEnv, isGoogleClientConfigured, type Mailer } from "@mockdata/auth-kit";
 import { isLoopback, loadEnv, NetworkConfigError, parsePublicUrl, type PublicUrl } from "@mockdata/cli";
 import type { IncomingMessage } from "node:http";
@@ -20,7 +20,7 @@ export interface AccountsConfig {
   /** For Google requests (tests). */
   fetch?: typeof fetch;
   limits?: Partial<Limits>;
-  /** Read the client address from the last X-Forwarded-For entry when the peer is loopback (a reverse proxy). */
+  /** Read the client address from the last X-Forwarded-For entry when the peer is loopback (a reverse proxy). Default: on for an https address, off for plain-http localhost. */
   trustProxy?: boolean;
   enumerationTimingFloorMs?: number;
 }
@@ -39,16 +39,30 @@ export interface AccountsRuntime {
   readonly emailEnabled: boolean;
   readonly google?: { clientId: string; clientSecret: string };
   readonly limiters: {
+    /** Every sign-in attempt per address, counted before the password is hashed so a parallel burst is cut off. */
+    loginIp: RateLimiter;
+    /** Any unauthenticated auth request per address (a coarse ceiling). */
+    authIp: RateLimiter;
     /** Failed sign-ins per address. */
     ipFail: RateLimiter;
-    /** Failed sign-ins per mailbox. */
+    /** Failed sign-ins per mailbox from one address (an attacker's failures do not lock the owner out elsewhere). */
+    emailIpFail: RateLimiter;
+    /** Failed sign-ins per mailbox from anywhere, at a much higher threshold. */
     emailFail: RateLimiter;
     /** Sign-up attempts per address. */
     signupIp: RateLimiter;
     /** Emails requested (verification, reset) per address and per mailbox. */
     mailIp: RateLimiter;
     mailEmail: RateLimiter;
+    /** Starts of the Google flow per address. */
+    oauthIp: RateLimiter;
+    /** Expensive requests (generate, run, export, infer) per signed-in user. */
+    runUser: RateLimiter;
   };
+  /** Run password hashing through this: at most two at once, a short queue, then `BusyError`. */
+  readonly hashing: Semaphore;
+  /** Send an email after the response, never awaited by it (slow SMTP must not show in response times). */
+  queueMail(job: () => Promise<void>): void;
   /** The user's private folder, created on first use. */
   userRoot(user: AccountUser): string;
   clientIp(req: IncomingMessage): string;
@@ -69,8 +83,15 @@ export async function createAccounts(config: AccountsConfig): Promise<AccountsRu
   const google = config.google ?? googleFromEnv(config.env);
   const limits: Limits = { ...limitsFromEnv(config.env), ...config.limits };
 
-  const sweep = setInterval(() => void sessions.purgeExpired().catch(() => undefined), 60 * MINUTE);
+  const sweep = setInterval(() => {
+    void sessions.purgeExpired().catch(() => undefined);
+    db.secure(); // the -wal/-shm files appear after the first write
+  }, 60 * MINUTE);
   sweep.unref();
+  const mailQueue = new Semaphore(4, 100);
+  // A reverse proxy must be in front of an https address (Node does not terminate TLS), so its forwarded address is
+  // trusted by default; behind a plain http development address it is not. MOCKDATA_TRUST_PROXY=0 or 1 overrides.
+  const trustProxy = config.trustProxy ?? config.publicUrl.secure;
 
   return {
     config: { publicUrl: config.publicUrl, dataDir, configRoot: config.configRoot, fetch: config.fetch },
@@ -86,11 +107,22 @@ export async function createAccounts(config: AccountsConfig): Promise<AccountsRu
     emailEnabled: mailer.isConfigured(),
     google,
     limiters: {
+      loginIp: new RateLimiter({ max: 30, windowMs: 15 * MINUTE }),
+      authIp: new RateLimiter({ max: 120, windowMs: 15 * MINUTE }),
       ipFail: new RateLimiter({ max: 20, windowMs: 15 * MINUTE }),
-      emailFail: new RateLimiter({ max: 10, windowMs: 15 * MINUTE }),
+      emailIpFail: new RateLimiter({ max: 10, windowMs: 15 * MINUTE }),
+      emailFail: new RateLimiter({ max: 100, windowMs: 15 * MINUTE }),
       signupIp: new RateLimiter({ max: 5, windowMs: 60 * MINUTE }),
       mailIp: new RateLimiter({ max: 20, windowMs: 60 * MINUTE }),
       mailEmail: new RateLimiter({ max: 5, windowMs: 60 * MINUTE }),
+      oauthIp: new RateLimiter({ max: 30, windowMs: 15 * MINUTE }),
+      runUser: new RateLimiter({ max: 30, windowMs: MINUTE }),
+    },
+    hashing: new Semaphore(2, 16),
+    queueMail(job) {
+      mailQueue.run(job).catch((e) => {
+        if (e instanceof BusyError) process.stderr.write("mail: queue full, message dropped\n");
+      });
     },
     userRoot(user) {
       const dir = path.join(usersDir, user.dirId);
@@ -104,17 +136,32 @@ export async function createAccounts(config: AccountsConfig): Promise<AccountsRu
     },
     clientIp(req) {
       const peer = req.socket.remoteAddress ?? "unknown";
-      if (config.trustProxy && isLoopback(peer)) {
+      if (trustProxy && isLoopback(peer)) {
         const last = [req.headers["x-forwarded-for"]].flat()[0]?.split(",").at(-1)?.trim();
-        if (last && isIP(last)) return last;
+        if (last && isIP(last)) return rateLimitKey(last);
       }
-      return peer;
+      return rateLimitKey(peer);
     },
     close() {
       clearInterval(sweep);
       db.close();
     },
   };
+}
+
+/**
+ * The key a client is rate limited under: IPv4-mapped IPv6 becomes the IPv4 address, and an IPv6 address becomes its
+ * /64 (one customer commonly holds a whole /64, so per-address limits would otherwise never bind).
+ */
+function rateLimitKey(address: string): string {
+  const v4 = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address);
+  if (v4) return v4[1]!;
+  if (isIP(address) !== 6) return address;
+  const [head = "", tail = ""] = address.toLowerCase().split("%")[0]!.split("::");
+  const left = head ? head.split(":") : [];
+  const right = tail ? tail.split(":") : [];
+  const groups = address.includes("::") ? [...left, ...Array(8 - left.length - right.length).fill("0"), ...right] : left;
+  return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, "")).join(":")}::/64`;
 }
 
 function googleFromEnv(env: Record<string, string | undefined>): { clientId: string; clientSecret: string } | undefined {
@@ -137,5 +184,5 @@ export async function accountsFromEnv(baseEnv: Record<string, string | undefined
     throw new NetworkConfigError("Accounts need a way to sign up: set SMTP_HOST and SMTP_FROM (email) and/or GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (Google sign-in)");
   }
   const dataDir = path.resolve(opts.cwd ?? process.cwd(), opts.dataDir ?? env.MOCKDATA_DATA_DIR?.trim() ?? "mockdata-data");
-  return createAccounts({ publicUrl, dataDir, configRoot: opts.configRoot, env, mailer, google, trustProxy: env.MOCKDATA_TRUST_PROXY === "1" });
+  return createAccounts({ publicUrl, dataDir, configRoot: opts.configRoot, env, mailer, google, trustProxy: env.MOCKDATA_TRUST_PROXY === "1" ? true : env.MOCKDATA_TRUST_PROXY === "0" ? false : undefined });
 }

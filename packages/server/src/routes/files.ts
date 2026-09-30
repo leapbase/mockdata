@@ -57,7 +57,10 @@ export const writeFile: Handler = async (ctx, req, res) => {
   if (ctx.accounts) {
     const bytes = Buffer.byteLength(text);
     if (bytes > MAX_ACCOUNT_FILE_BYTES) throw new HttpError(413, "Schema files are limited to 1 MB");
-    assertWithinDiskQuota(ctx.root, Math.max(0, bytes - (existsSync(file) ? lstatSync(file).size : 0)), ctx.accounts.limits.userQuotaBytes);
+    assertWithinDiskQuota(ctx.root, Math.max(0, bytes - (existsSync(file) ? lstatSync(file).size : 0)), ctx.accounts.limits.userQuotaBytes, {
+      newFiles: existsSync(file) ? 0 : 1,
+      maxFiles: ctx.accounts.limits.maxFiles,
+    });
   }
   writeFileConfined(ctx.root, file, text, { overwrite: !create });
   sendJson(res, 200, { path: rel });

@@ -16,7 +16,8 @@ const NOTICES: Record<string, { text: string; error: boolean }> = {
 /** Read what the page was opened with (an emailed link, or a return from Google), then clean the address bar. */
 function readLanding(): { notice?: { text: string; error: boolean }; resetToken?: string } {
   const params = new URLSearchParams(window.location.search);
-  const resetToken = params.get("reset_token") ?? undefined;
+  // The emailed reset link carries its token in the fragment, which is never sent to a server or written to a proxy log.
+  const resetToken = new URLSearchParams(window.location.hash.slice(1)).get("reset_token") ?? undefined;
   const key = params.has("verified") ? `verified=${params.get("verified")}` : params.has("error") ? `error=${params.get("error")}` : "";
   return { notice: NOTICES[key], resetToken };
 }
@@ -32,7 +33,7 @@ export default function Login({ auth, onSignedIn }: { auth: Me["auth"]; onSigned
 
   useEffect(() => {
     // The token and any notice are read once; keep neither in the address bar or history.
-    if (window.location.search) window.history.replaceState({}, "", window.location.pathname);
+    if (window.location.search || window.location.hash) window.history.replaceState({}, "", window.location.pathname);
   }, []);
 
   const go = (next: Mode) => {

@@ -1,7 +1,8 @@
 import { assertRowBudget, parseSchemaText, UserError } from "@mockdata/cli";
 import { CycleError, generate, llmColumns, parseSchema, planGeneration, SchemaError, type DataSchemaT } from "@mockdata/core";
 import { LlmCancelledError, generateWithLlm } from "@mockdata/llm";
-import { beginRun } from "../accounts/guards.js";
+import { assertSchemaShape, beginRun, throttleRun } from "../accounts/guards.js";
+import { publicMessage, statusFor } from "../errors.js";
 import { llmStatus } from "./config.js";
 import { optInt, optStringArray, readJson, reqString, sendJson, type Handler } from "../http.js";
 import { applyRowOverride, buildPreview } from "../preview.js";
@@ -26,6 +27,7 @@ export const validateRoute: Handler = async (ctx, req, res) => {
   const text = reqString(body, "text");
   try {
     const schema = parseSchema(parseText(text));
+    assertSchemaShape(ctx, schema);
     const plan = planGeneration(schema);
     sendJson(res, 200, {
       ok: true,
@@ -67,6 +69,8 @@ export function readRunParams(body: Record<string, unknown>): RunParams {
 
 export const generateRoute: Handler = async (ctx, req, res) => {
   const { schema, seed, previewRows, tables } = readRunParams(await readJson(req));
+  throttleRun(ctx);
+  assertSchemaShape(ctx, schema);
   if (ctx.accounts) assertRowBudget(schema, ctx.accounts.limits.maxRows);
   // llm columns stay pending here; the stream route fills them.
   const data = generate(schema, { seed, deferLlm: true });
@@ -104,7 +108,7 @@ export const streamRoute: Handler = async (ctx, req, res) => {
     send("done", { ...buildPreview(schema, data, { seed, rows: previewRows, tables }), report });
   } catch (e) {
     // A cancelled run has no listener left; anything else is reported (messages name variables, never values).
-    if (!(e instanceof LlmCancelledError)) send("error", { name: (e as Error).name, message: (e as Error).message });
+    if (!(e instanceof LlmCancelledError)) send("error", { name: statusFor(e) === 500 && ctx.accounts ? "Error" : (e as Error).name, message: publicMessage(e, !!ctx.accounts) });
   } finally {
     run.done();
     res.end();

@@ -60,15 +60,19 @@ export class RateLimiter {
     return this.hits.size;
   }
 
+  /**
+   * Stay under maxKeys without letting a flood of throw-away keys lift anyone's lockout: expired keys go first,
+   * then keys that are not over the limit (quietest first), and a limited key only as a last resort.
+   */
   private trim(): void {
     if (this.hits.size <= this.maxKeys) return;
-    for (const key of this.hits.keys()) {
-      this.recent(key); // drops keys whose events have all expired
+    for (const key of [...this.hits.keys()]) this.recent(key); // drops keys whose events have all expired
+    if (this.hits.size <= this.maxKeys) return;
+    const entries = [...this.hits].map(([key, list]) => ({ key, limited: list.length >= this.opts.max, last: list[list.length - 1] ?? 0 }));
+    entries.sort((a, b) => Number(a.limited) - Number(b.limited) || a.last - b.last);
+    for (const { key } of entries) {
       if (this.hits.size <= this.maxKeys) return;
-    }
-    for (const key of this.hits.keys()) {
-      this.hits.delete(key); // still too many live keys: forget the oldest inserted
-      if (this.hits.size <= this.maxKeys) return;
+      this.hits.delete(key);
     }
   }
 }

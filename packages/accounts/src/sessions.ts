@@ -2,9 +2,15 @@ import { createHash, randomBytes } from "node:crypto";
 import type { AccountsDb } from "./db.js";
 import { rowToUser, sessionKey, type AccountUser, type UserRow } from "./sqliteAdapter.js";
 
-export const SESSION_COOKIE = "mockdata_session";
-export const OAUTH_COOKIE = "mockdata_oauth";
+/**
+ * Over https the `__Host-` prefix makes browsers refuse a cookie that is not Secure, scoped to "/" and set by this
+ * exact host, so a sibling subdomain cannot plant a session or OAuth nonce here.
+ */
+export const sessionCookieName = (secure: boolean): string => (secure ? "__Host-mockdata_session" : "mockdata_session");
+export const oauthCookieName = (secure: boolean): string => (secure ? "__Host-mockdata_oauth" : "mockdata_oauth");
 export const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+/** No session lives longer than this, however often it is used. */
+export const SESSION_MAX_AGE_SECONDS = 90 * 24 * 60 * 60;
 const DEFAULT_SLIDE_AFTER_SECONDS = 60 * 60;
 
 interface Clock {
@@ -19,12 +25,14 @@ const epoch = (c: Clock): number => c.now?.() ?? Math.floor(Date.now() / 1000);
 export class SessionStore {
   private readonly ttl: number;
   private readonly slideAfter: number;
+  private readonly absolute: number;
   constructor(
     private readonly accounts: AccountsDb,
-    private readonly opts: Clock & { ttlSeconds?: number; slideAfterSeconds?: number } = {},
+    private readonly opts: Clock & { ttlSeconds?: number; slideAfterSeconds?: number; absoluteSeconds?: number } = {},
   ) {
     this.ttl = opts.ttlSeconds ?? SESSION_TTL_SECONDS;
     this.slideAfter = opts.slideAfterSeconds ?? DEFAULT_SLIDE_AFTER_SECONDS;
+    this.absolute = opts.absoluteSeconds ?? SESSION_MAX_AGE_SECONDS;
   }
 
   create(userId: number): Promise<{ id: string; expiresAt: number }> {
@@ -45,8 +53,8 @@ export class SessionStore {
       const db = this.accounts.raw;
       const key = sessionKey(rawId);
       const r = db
-        .prepare("select u.*, s.last_seen_at from sessions s join users u on u.id = s.user_id where s.id_hash = ? and s.expires_at > ?")
-        .get(key, now) as (UserRow & { last_seen_at: number }) | undefined;
+        .prepare("select u.*, s.last_seen_at from sessions s join users u on u.id = s.user_id where s.id_hash = ? and s.expires_at > ? and s.created_at > ?")
+        .get(key, now, now - this.absolute) as (UserRow & { last_seen_at: number }) | undefined;
       if (!r) return null;
       if (now - r.last_seen_at >= this.slideAfter) db.prepare("update sessions set last_seen_at = ?, expires_at = ? where id_hash = ?").run(now, now + this.ttl, key);
       return rowToUser(r);
@@ -63,7 +71,7 @@ export class SessionStore {
   /** Delete expired sessions; returns how many. */
   purgeExpired(): Promise<number> {
     const now = epoch(this.opts);
-    return this.accounts.gated(() => Number(this.accounts.raw.prepare("delete from sessions where expires_at <= ?").run(now).changes));
+    return this.accounts.gated(() => Number(this.accounts.raw.prepare("delete from sessions where expires_at <= ? or created_at <= ?").run(now, now - this.absolute).changes));
   }
 }
 
@@ -86,8 +94,10 @@ export class OAuthStates {
   create(codeVerifier: string): Promise<{ state: string; nonce: string }> {
     const state = randomBytes(24).toString("base64url");
     const nonce = randomBytes(24).toString("base64url");
-    const expires = epoch(this.opts) + this.ttl;
+    const now = epoch(this.opts);
+    const expires = now + this.ttl;
     return this.accounts.gated(() => {
+      this.accounts.raw.prepare("delete from oauth_states where expires_at <= ?").run(now); // the start route is unauthenticated: keep the table from growing
       this.accounts.raw.prepare("insert into oauth_states (state_hash, nonce_hash, code_verifier, expires_at) values (?, ?, ?, ?)").run(sha256(state), sha256(nonce), codeVerifier, expires);
       return { state, nonce };
     });

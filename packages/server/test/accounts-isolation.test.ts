@@ -199,3 +199,37 @@ describe("accounts: quotas protect the shared model key and the server", () => {
     expect(existsSync(join(dataDir, "users", dir!, "out"))).toBe(false);
   });
 });
+
+describe("accounts: model spend cannot be multiplied by tuning the schema or by making more accounts", () => {
+  it("stops the operator's overall daily model budget from being exceeded across users", async () => {
+    const model = fakeModel();
+    const { signUp, as } = await bootAccounts({ env: OLLAMA_ENV, limits: { llmDailyRows: 100, llmGlobalDailyRows: 10 }, llm: { fetch: model.fetchFn } });
+    const ann = as(await signUp("ann@example.com"));
+    const bob = as(await signUp("bob@example.com"));
+    expect((await ann.post("/api/generate/stream", { text: LLM_YAML(6) })).status).toBe(200);
+    const over = await bob.post("/api/generate/stream", { text: LLM_YAML(6) }); // each user is well under their own limit
+    expect(over.status).toBe(429);
+    expect(over.json.error.message).toMatch(/server/i);
+    expect((await bob.post("/api/generate/stream", { text: LLM_YAML(4) })).status).toBe(200); // 6 + 4 fits the overall 10
+  });
+
+  it("refuses a huge per-column instruction, which would be re-sent with every batch", async () => {
+    const { signUp, as } = await bootAccounts({ env: OLLAMA_ENV });
+    const ann = as(await signUp("ann@example.com"));
+    const long = `tables:\n  t:\n    rows: 3\n    columns:\n      id: { type: integer, primaryKey: true }\n      note: { type: string, llm: { prompt: "${"x".repeat(501)}" } }\n`;
+    const r = await ann.post("/api/generate/stream", { text: long });
+    expect(r.status).toBe(400);
+    expect(r.json.error.message).toMatch(/500/);
+    const ok = long.replace("x".repeat(501), "x".repeat(500));
+    expect((await ann.post("/api/validate", { text: ok })).status).toBe(200);
+  });
+
+  it("does not let a schema shrink batches to one row per request", async () => {
+    const model = fakeModel();
+    const { signUp, as } = await bootAccounts({ env: OLLAMA_ENV, limits: { llmDailyRows: 1000 }, llm: { fetch: model.fetchFn } });
+    const ann = as(await signUp("ann@example.com"));
+    const r = await ann.post("/api/generate/stream", { text: `llm: { batchSize: 1 }\n${LLM_YAML(25)}` });
+    expect(r.status).toBe(200);
+    expect(model.calls.length).toBeLessThanOrEqual(3); // 25 rows in batches of at least 10, not 25 requests
+  });
+});

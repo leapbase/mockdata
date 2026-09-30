@@ -69,7 +69,10 @@ export const exportRoute: Handler = async (ctx, req, res) => {
     // Refuse before writing anything if the files would not fit in this user's storage (replacing a file frees its old size).
     const incoming = [...texts.values()].reduce((n, t) => n + Buffer.byteLength(t), 0);
     const replaced = targets.reduce((n, { file }) => n + (existsSync(file) ? lstatSync(file).size : 0), 0);
-    assertWithinDiskQuota(ctx.root, Math.max(0, incoming - replaced), ctx.accounts.limits.userQuotaBytes);
+    assertWithinDiskQuota(ctx.root, Math.max(0, incoming - replaced), ctx.accounts.limits.userQuotaBytes, {
+      newFiles: targets.filter(({ file }) => !existsSync(file)).length,
+      maxFiles: ctx.accounts.limits.maxFiles,
+    });
   }
 
   const files: string[] = [];

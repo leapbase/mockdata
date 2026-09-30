@@ -39,7 +39,7 @@ const b64url = (buf: Buffer) => buf.toString("base64url");
 async function begin(app: Awaited<ReturnType<typeof bootAccounts>>) {
   const r = await fetch(`${app.url}/api/auth/google`, { redirect: "manual" });
   const location = new URL(r.headers.get("location")!);
-  const oauthCookie = r.headers.getSetCookie().find((c) => c.startsWith("mockdata_oauth="))!;
+  const oauthCookie = r.headers.getSetCookie().find((c) => c.startsWith("__Host-mockdata_oauth="))!;
   return { response: r, location, state: location.searchParams.get("state")!, challenge: location.searchParams.get("code_challenge")!, cookie: oauthCookie.split(";")[0]!, setCookie: oauthCookie };
 }
 
@@ -48,7 +48,7 @@ async function callback(app: Awaited<ReturnType<typeof bootAccounts>>, params: R
   return fetch(`${app.url}/api/auth/google/callback?${qs}`, { redirect: "manual", headers: cookie ? { cookie } : {} });
 }
 
-const sessionCookieOf = (r: Response) => r.headers.getSetCookie().find((c) => c.startsWith("mockdata_session=") && !/Max-Age=0/.test(c));
+const sessionCookieOf = (r: Response) => r.headers.getSetCookie().find((c) => /^(__Host-)?mockdata_session=/.test(c) && !/Max-Age=0/.test(c));
 
 describe("Google sign-in: starting", () => {
   it("redirects to Google with PKCE, a state, the right redirect address, and a short-lived nonce cookie", async () => {
@@ -91,7 +91,7 @@ describe("Google sign-in: coming back", () => {
     const session = sessionCookieOf(r)!;
     expect(session).toMatch(/HttpOnly/);
     expect(session).toMatch(/SameSite=Lax/);
-    expect(r.headers.getSetCookie().join()).toMatch(/mockdata_oauth=;.*Max-Age=0/); // the nonce cookie is spent
+    expect(r.headers.getSetCookie().join()).toMatch(/__Host-mockdata_oauth=;.*Max-Age=0/); // the nonce cookie is spent
 
     expect(google.tokenCalls).toHaveLength(1);
     const form = google.tokenCalls[0]!;
@@ -139,7 +139,7 @@ describe("Google sign-in: coming back", () => {
     };
     await expectRefused(await callback(app, { code: "c", state: "not-the-state" }, s.cookie)); // unknown state
     await expectRefused(await callback(app, { code: "c", state: s.state })); // no nonce cookie (another browser)
-    await expectRefused(await callback(app, { code: "c", state: s.state }, "mockdata_oauth=wrong-nonce")); // someone else's nonce
+    await expectRefused(await callback(app, { code: "c", state: s.state }, "__Host-mockdata_oauth=wrong-nonce")); // someone else's nonce
     await expectRefused(await callback(app, { state: s.state }, s.cookie)); // no code
     await expectRefused(await callback(app, { error: "access_denied", state: s.state }, s.cookie)); // the user said no
     expect(google.all).toEqual([]); // none of that reached Google
@@ -172,7 +172,7 @@ describe("Google sign-in: coming back", () => {
     const app = await bootAccounts({ google: GOOGLE, fetch: google.fetchFn });
     const s = await begin(app);
     const r = await callback(app, { code: "super-secret-code", state: s.state }, s.cookie);
-    const seen = [r.headers.get("location"), ...r.headers.getSetCookie().filter((c) => c.startsWith("mockdata_oauth"))].join(" ");
+    const seen = [r.headers.get("location"), ...r.headers.getSetCookie().filter((c) => c.startsWith("__Host-mockdata_oauth"))].join(" ");
     expect(seen).not.toMatch(/super-secret-code|ya29|client-secret-xyz/);
     const me = await app.as(sessionCookieOf(r)!.split(";")[0]!).get("/api/auth/me");
     expect(me.json.user.avatarUrl).toBeNull(); // only https pictures are kept

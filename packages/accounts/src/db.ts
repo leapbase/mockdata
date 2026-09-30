@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
@@ -79,7 +79,10 @@ const VERSION = 1;
 export class AccountsDb {
   private tail: Promise<void> = Promise.resolve();
 
-  private constructor(readonly raw: DatabaseSync) {}
+  private constructor(
+    readonly raw: DatabaseSync,
+    private readonly file: string,
+  ) {}
 
   /** Open (creating if needed) the database file, or ":memory:" for tests. Needs Node 22.13+. */
   static async open(file: string): Promise<AccountsDb> {
@@ -107,7 +110,20 @@ export class AccountsDb {
       raw.close();
       throw new Error(`The account database was made by a newer mockdata (schema ${user_version}, this build knows ${VERSION})`);
     }
-    return new AccountsDb(raw);
+    const accounts = new AccountsDb(raw, file);
+    accounts.secure();
+    return accounts;
+  }
+
+  /**
+   * Keep the database (password hashes, emails), its -wal/-shm journal files and its folder readable by this user only,
+   * even when the folder already existed with looser permissions. Call again after the first write, when the journal
+   * files appear.
+   */
+  secure(): void {
+    if (this.file === ":memory:") return;
+    chmodSync(path.dirname(this.file), 0o700);
+    for (const suffix of ["", "-wal", "-shm"]) if (existsSync(this.file + suffix)) chmodSync(this.file + suffix, 0o600);
   }
 
   /** Run `fn` with exclusive use of the connection. */
