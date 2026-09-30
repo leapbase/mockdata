@@ -180,8 +180,8 @@ describe("llm columns", () => {
     tables: { reviews: { rows: 5, columns: { id: { type: "integer", primaryKey: true }, body: col } } },
   });
 
-  it("requires the top-level llm config", () => {
-    expect(() => parseSchema(llmSchema(undefined, null))).toThrow(/no top-level "llm" config/);
+  it("does not require the top-level llm config (the environment can supply it)", () => {
+    expect(() => parseSchema(llmSchema(undefined, null))).not.toThrow();
   });
 
   it("rejects llm on non-strings and combined with deterministic generators", () => {
@@ -189,8 +189,9 @@ describe("llm columns", () => {
     expect(() => parseSchema(llmSchema({ type: "string", llm: true, pattern: "a" }))).toThrow(/cannot be combined with "pattern"/);
   });
 
-  it("openai-compatible needs a baseUrl", () => {
-    expect(() => parseSchema(llmSchema(undefined, { provider: "openai-compatible", model: "m" }))).toThrow(/requires "baseUrl"/);
+  it("accepts ollama as a provider name and rejects unknown ones", () => {
+    expect(() => parseSchema(llmSchema(undefined, { provider: "ollama" }))).not.toThrow();
+    expect(() => parseSchema(llmSchema(undefined, { provider: "mystery" }))).toThrow(SchemaError);
   });
 
   it("plain generate() refuses llm columns; deferLlm leaves them pending", () => {

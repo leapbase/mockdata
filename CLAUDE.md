@@ -41,12 +41,17 @@ Schema DSL points that are easy to miss:
 
 ## LLM layer (`packages/llm/src`)
 
-Only columns marked `llm` (string type, needs a top-level `llm` config with provider/model) go to a model; everything else stays deterministic.
+Only columns marked `llm` (string type) go to a model; everything else stays deterministic.
+
+**Provider settings come from `.env`** (git-ignored; `.env.example` lists the names). The CLI merges `./.env` under the real environment (real env wins) and passes it to `resolveLlmConfig` (`config.ts`), where the schema's optional top-level `llm: {provider, model, baseUrl, batchSize, maxRetries, apiKeyEnv}` block wins over the environment:
+- provider <- `AI_PROVIDER` (anthropic | openai | ollama | openai-compatible); model <- `ANTHROPIC_MODEL` / `OPENAI_MODEL` / `OLLAMA_MODEL` by provider (no default on purpose).
+- `ollama` uses the OpenAI chat format at `OLLAMA_BASE_URL` (host only; `/v1` is appended; default localhost:11434), no key. Keys: `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`.
+- Errors name variables, never values. Never print or commit `.env`; to inspect it list variable names only.
 
 - Core support: `generate(schema, {deferLlm: true})` leaves llm cells `undefined` (pending; `null` means intentionally null via `nullable`/`nullRate`) and skips validating them. Plain `generate()` throws on llm columns so they are never silently empty.
 - `generateWithLlm` (`fill.ts`) = deferred generate, `fillLlmColumns`, then full `validate`. Columns fill one at a time in schema order, in batches (default 20 rows), each row prompted with its other column values. Replies must be a JSON array of exactly N strings; bad replies, 429s and 5xx are retried with backoff (default 3 retries), 4xx auth errors are not. `unique` columns re-ask for duplicates (max 3 rounds) with an "avoid" list.
-- `provider.ts`: raw `fetch` to Anthropic Messages and OpenAI chat completions (openai-compatible = same wire format + `baseUrl`, key optional). API keys come only from env vars (`apiKeyEnv`, defaults ANTHROPIC_API_KEY / OPENAI_API_KEY), never the schema. `model` has no default on purpose.
-- Tests use fake `fetch`/providers only; nothing has been run against a live API. LLM output is not reproducible by seed (only the deterministic columns are).
+- `provider.ts`: raw `fetch` to Anthropic Messages and OpenAI chat completions (ollama / openai-compatible = same wire format + base URL, key optional). Requests time out after 120s (retryable) so an unreachable host cannot hang the CLI.
+- Tests use fake `fetch`/providers only (CLI tests use an empty temp cwd so a real `.env` never leaks in). A live run against Ollama has been verified manually; Anthropic/OpenAI request shapes are not yet verified live. LLM output is not reproducible by seed (only the deterministic columns are).
 - Known limits: no parent-row context in prompts yet, no cost estimate (tokens only), calls are sequential.
 
 ## Conventions

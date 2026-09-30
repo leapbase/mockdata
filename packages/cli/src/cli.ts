@@ -1,6 +1,6 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
-import { parseArgs } from "node:util";
+import { parseArgs, parseEnv } from "node:util";
 import { parse as parseYaml } from "yaml";
 import { parseSchema, type Dataset, type Row } from "@mockdata/core";
 import { generateWithLlm, type GenerateWithLlmOptions, type LlmReport } from "@mockdata/llm";
@@ -10,6 +10,8 @@ export interface IO {
   err: (s: string) => void;
   /** Overrides for the LLM layer (tests inject a fake provider). */
   llm?: Pick<GenerateWithLlmOptions, "provider" | "fetch" | "env" | "sleep">;
+  /** Where to look for .env (default: process.cwd()). */
+  cwd?: string;
 }
 
 const HELP = `mockdata - synthetic data generator
@@ -48,6 +50,16 @@ export function serialize(rows: Row[], columns: string[], format: Format): strin
     case "csv":
       return [columns.join(","), ...rows.map((r) => columns.map((c) => csvCell(r[c])).join(","))].join("\n") + "\n";
   }
+}
+
+/**
+ * Environment for the LLM layer: variables from ./.env, overridden by the real
+ * environment (io.llm.env in tests). Returns names only in errors, never values.
+ */
+export function loadEnv(cwd: string, base: Record<string, string | undefined>): Record<string, string | undefined> {
+  const file = join(cwd, ".env");
+  const dotenv = existsSync(file) ? parseEnv(readFileSync(file, "utf8")) : {};
+  return { ...dotenv, ...base };
 }
 
 function describeUsage(r: LlmReport): string {
@@ -118,7 +130,11 @@ export async function run(argv: string[], io: IO): Promise<number> {
     }
 
     const schema = parseSchema(raw);
-    const { data, report } = await generateWithLlm(schema, { seed, ...io.llm });
+    const { data, report } = await generateWithLlm(schema, {
+      seed,
+      ...io.llm,
+      env: loadEnv(io.cwd ?? process.cwd(), io.llm?.env ?? process.env),
+    });
     if (report.calls > 0) io.err(describeUsage(report));
     if (!values.out) {
       if (format !== "json") {

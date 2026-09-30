@@ -46,20 +46,26 @@ export const ColumnSchema = z
     /**
      * String columns only: fill with an LLM instead of a deterministic
      * generator. `true` uses the column name and row context; an object can
-     * add an instruction. Requires the top-level `llm` config.
+     * add an instruction. The provider comes from the top-level `llm` config
+     * and/or the environment (AI_PROVIDER, ...).
      */
     llm: z.union([z.literal(true), z.object({ prompt: z.string().optional() }).strict()]).optional(),
   })
   .strict();
 
-export const LLM_PROVIDERS = ["anthropic", "openai", "openai-compatible"] as const;
+export const LLM_PROVIDERS = ["anthropic", "openai", "ollama", "openai-compatible"] as const;
 
-/** Non-secret LLM settings. API keys are read from the environment, never from the schema. */
+/**
+ * Non-secret LLM settings. Every field is optional here: whatever the schema
+ * leaves out is filled from the environment / .env (see @mockdata/llm
+ * resolveLlmConfig), which also enforces that provider and model end up set.
+ * API keys are read from the environment, never from the schema.
+ */
 export const LlmConfigSchema = z
   .object({
-    provider: z.enum(LLM_PROVIDERS),
-    model: z.string().min(1),
-    /** Required for openai-compatible (e.g. http://localhost:11434/v1); optional override otherwise. */
+    provider: z.enum(LLM_PROVIDERS).optional(),
+    model: z.string().min(1).optional(),
+    /** Required for openai-compatible; ollama defaults to OLLAMA_BASE_URL or localhost. */
     baseUrl: z.string().url().optional(),
     /** Env var holding the API key (defaults: ANTHROPIC_API_KEY / OPENAI_API_KEY). */
     apiKeyEnv: z.string().optional(),
@@ -115,10 +121,6 @@ export function parseSchema(input: unknown): DataSchemaT {
         if (col.type !== "string") throw new SchemaError(`${where}: "llm" only applies to string columns`);
         const clash = (["ref", "enum", "pattern", "faker", "after", "primaryKey"] as const).find((k) => col[k]);
         if (clash) throw new SchemaError(`${where}: "llm" cannot be combined with "${clash}"`);
-        if (!schema.llm) throw new SchemaError(`${where}: uses "llm" but the schema has no top-level "llm" config`);
-        if (schema.llm.provider === "openai-compatible" && !schema.llm.baseUrl) {
-          throw new SchemaError(`llm: provider "openai-compatible" requires "baseUrl"`);
-        }
       }
       if (col.pattern !== undefined) {
         if (col.type !== "string") throw new SchemaError(`${where}: "pattern" only applies to string columns`);

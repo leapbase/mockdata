@@ -60,3 +60,15 @@ describe("providers", () => {
     expect(err.retryable).toBe(true);
   });
 });
+
+describe("timeouts", () => {
+  it("a hung server becomes a retryable network error instead of hanging forever", async () => {
+    const hang = ((_: string, init: RequestInit) =>
+      new Promise((_res, rej) => init.signal!.addEventListener("abort", () => rej(init.signal!.reason)))) as unknown as typeof fetch;
+    const p = createProvider({ provider: "ollama", model: "m" }, { fetch: hang, env: {}, timeoutMs: 20 });
+    const err = await p.complete({ system: "s", user: "u", maxTokens: 5 }).catch((e) => e);
+    expect(err).toBeInstanceOf(LlmHttpError);
+    expect(err.message).toMatch(/timed out after 20 ms/);
+    expect(err.retryable).toBe(true);
+  });
+});

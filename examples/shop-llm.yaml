@@ -1,9 +1,9 @@
 # Same shape as shop.yaml, but review text is written by an LLM.
-# Needs ANTHROPIC_API_KEY (or change the provider/model below).
+# The provider, model and keys come from .env (see .env.example): AI_PROVIDER,
+# <PROVIDER>_MODEL, OLLAMA_BASE_URL, ANTHROPIC_API_KEY, OPENAI_API_KEY.
+# To pin them in this file instead, add e.g.:
+#   llm: { provider: anthropic, model: <model id> }
 seed: 42
-llm:
-  provider: anthropic
-  model: claude-haiku-4-5
 tables:
   products:
     rows: 5

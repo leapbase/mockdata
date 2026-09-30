@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -7,13 +7,17 @@ import { run, type IO } from "../src/cli.js";
 const example = join(__dirname, "../../../examples/shop.yaml");
 const llmExample = join(__dirname, "../../../examples/shop-llm.yaml");
 
-async function execWith(llm: IO["llm"], ...argv: string[]) {
+/** Empty directory so a developer's real .env can never leak into a test. */
+const emptyDir = mkdtempSync(join(tmpdir(), "mockdata-cwd-"));
+
+async function execIn(cwd: string, llm: IO["llm"], ...argv: string[]) {
   let out = "";
   let err = "";
-  const code = await run(argv, { out: (s) => (out += s), err: (s) => (err += s), llm });
+  const code = await run(argv, { out: (s) => (out += s), err: (s) => (err += s), llm, cwd });
   return { code, out, err };
 }
-const exec = (...argv: string[]) => execWith(undefined, ...argv);
+const execWith = (llm: IO["llm"], ...argv: string[]) => execIn(emptyDir, llm, ...argv);
+const exec = (...argv: string[]) => execWith({ env: {} }, ...argv);
 
 describe("cli", () => {
   it("validates a schema", async () => {
@@ -75,9 +79,56 @@ describe("cli with llm columns", () => {
     expect(err).toMatch(/llm: 1 call, 100 input \/ 40 output tokens; filled reviews\.body \(12 rows\)/);
   });
 
-  it("generate names the missing environment variable instead of crashing", async () => {
+  it("generate says which variable is missing instead of crashing", async () => {
     const { code, err } = await execWith({ env: {} }, "generate", llmExample);
     expect(code).toBe(1);
-    expect(err).toMatch(/LlmConfigError: Missing API key: set the ANTHROPIC_API_KEY/);
+    expect(err).toMatch(/LlmConfigError: No LLM provider: .*AI_PROVIDER/);
+    const noKey = await execWith({ env: { AI_PROVIDER: "anthropic", ANTHROPIC_MODEL: "m" } }, "generate", llmExample);
+    expect(noKey.err).toMatch(/Missing API key: set ANTHROPIC_API_KEY/);
+  });
+
+  describe("reads provider settings from .env", () => {
+    const fakeFetch = (seen: { url?: string; auth?: string | null; body?: any }) =>
+      (async (url: string, init: RequestInit) => {
+        seen.url = url;
+        seen.auth = (init.headers as Record<string, string>).authorization ?? null;
+        seen.body = JSON.parse(init.body as string);
+        const n = Number(/exactly (\d+) strings/.exec(seen.body.messages[1].content)![1]);
+        const text = JSON.stringify(Array.from({ length: n }, (_, i) => `note ${i}`));
+        return new Response(JSON.stringify({ choices: [{ message: { content: text } }], usage: { prompt_tokens: 3, completion_tokens: 2 } }));
+      }) as unknown as typeof fetch;
+
+    it("ollama: provider, model and host come from .env; no key needed; /v1 is added", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "mockdata-env-"));
+      writeFileSync(join(dir, ".env"), "# comment\nAI_PROVIDER=ollama\nOLLAMA_BASE_URL=http://10.0.0.5:11434\nOLLAMA_MODEL=llama3\n");
+      const seen: { url?: string; auth?: string | null; body?: any } = {};
+      const { code, out, err } = await execIn(dir, { env: {}, fetch: fakeFetch(seen), sleep: async () => {} }, "generate", llmExample);
+      expect(err).not.toMatch(/Error/);
+      expect(code).toBe(0);
+      expect(seen.url).toBe("http://10.0.0.5:11434/v1/chat/completions");
+      expect(seen.auth).toBeNull();
+      expect(seen.body.model).toBe("llama3");
+      expect(JSON.parse(out).reviews[0].body).toBe("note 0");
+    });
+
+    it("the real environment overrides .env", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "mockdata-env-"));
+      writeFileSync(join(dir, ".env"), "AI_PROVIDER=ollama\nOLLAMA_MODEL=from-dotenv\nOPENAI_MODEL=from-dotenv\n");
+      const seen: { url?: string; auth?: string | null; body?: any } = {};
+      const env = { AI_PROVIDER: "openai", OPENAI_API_KEY: "sk-real" };
+      const { code } = await execIn(dir, { env, fetch: fakeFetch(seen), sleep: async () => {} }, "generate", llmExample);
+      expect(code).toBe(0);
+      expect(seen.url).toBe("https://api.openai.com/v1/chat/completions");
+      expect(seen.auth).toBe("Bearer sk-real");
+      expect(seen.body.model).toBe("from-dotenv");
+    });
+
+    it("never echoes secret values in errors", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "mockdata-env-"));
+      writeFileSync(join(dir, ".env"), "AI_PROVIDER=mystery\nOPENAI_API_KEY=sk-super-secret\n");
+      const { err } = await execIn(dir, { env: {} }, "generate", llmExample);
+      expect(err).toMatch(/Unknown LLM provider "mystery"/);
+      expect(err).not.toContain("sk-super-secret");
+    });
   });
 });

@@ -7,6 +7,7 @@ import {
   type GenerateOptions,
   type Row,
 } from "@mockdata/core";
+import { resolveLlmConfig } from "./config.js";
 import { createProvider, LlmHttpError, type LlmProvider, type ProviderDeps } from "./provider.js";
 
 export class LlmFillError extends Error {
@@ -180,7 +181,8 @@ export async function generateWithLlm(
   if (llmColumns(schema).length === 0) {
     return { data, report: { calls: 0, inputTokens: 0, outputTokens: 0, columns: {} } };
   }
-  const provider = opts.provider ?? createProvider(schema.llm!, { fetch: opts.fetch, env: opts.env });
+  const env = opts.env ?? process.env;
+  const provider = opts.provider ?? createProvider(resolveLlmConfig(schema.llm, env), { fetch: opts.fetch, env });
   const report = await fillLlmColumns(schema, data, { provider, sleep: opts.sleep });
   validate(schema, data);
   return { data, report };
