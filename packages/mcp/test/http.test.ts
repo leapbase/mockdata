@@ -128,6 +128,19 @@ describe("mcp over http", () => {
     await expect(startMcpHttp({ env: {}, port: 0, host: "0.0.0.0" })).rejects.toThrow(NetworkConfigError);
   });
 
+  it("requires a Bearer token from non-loopback peers when one is set, and accepts it", async () => {
+    const TOKEN = "s3cret-token-0123456789";
+    const { url } = await boot({ allow: parseAllow("100.100.1.x"), localHosts: [], token: TOKEN, trustLoopback: false });
+    const headers = { "content-type": "application/json", accept: "application/json, text/event-stream" };
+    const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "x", version: "0" } } });
+    const r = await raw(url, "/mcp", { method: "POST", headers, body });
+    expect(r.status).toBe(401);
+    expect(r.body).not.toContain(TOKEN);
+    expect((await raw(url, "/mcp", { method: "POST", headers: { ...headers, authorization: "Bearer wrong-token-0123456789" }, body })).status).toBe(401);
+    expect((await raw(url, "/mcp", { method: "POST", headers: { ...headers, cookie: `mockdata_token=${TOKEN}` }, body })).status).toBe(401); // header only
+    expect((await raw(url, "/mcp", { method: "POST", headers: { ...headers, authorization: `Bearer ${TOKEN}` }, body })).status).toBe(200);
+  });
+
   it("answers bad requests with clear errors, not crashes", async () => {
     const { url } = await boot();
     const json = { "content-type": "application/json", accept: "application/json, text/event-stream" };

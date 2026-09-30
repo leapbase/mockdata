@@ -242,9 +242,15 @@ npm run ui -- <folder> --allow 100.100.1.x
 MOCKDATA_ROOT=<folder> node packages/mcp/dist/bin.js --http --allow 100.100.1.x
 ```
 
-`--allow` takes a comma-separated list of `100.100.1.x` (a /24), CIDRs such as `192.168.0.0/16`, or single IPs. Only private ranges are accepted (10/8, 172.16/12, 192.168/16 and 100.64/10, which covers Tailscale), each at most a /16 wide; anything else is refused at startup. With `--allow` the server binds 0.0.0.0, drops connections from outside the list, and accepts requests addressed to one of this machine's IP addresses or to an allowed IP (never a host name, which DNS could re-point). Localhost keeps working. `--host <address>` binds one address instead, and binding beyond loopback without `--allow` is refused. On start it prints the addresses to browse to.
+`--allow` takes a comma-separated list of `100.100.1.x` (a /24), CIDRs such as `192.168.0.0/16`, or single IPs. Only private ranges are accepted (10/8, 172.16/12, 192.168/16 and 100.64/10, which covers Tailscale), each at most a /16 wide; anything else is refused at startup. With `--allow` the server binds 0.0.0.0, drops connections from outside the list, requires a token (below), and accepts requests addressed to one of this machine's IP addresses or to an allowed IP (never a host name, which DNS could re-point). Localhost keeps working. `--host <address>` binds one address instead, and binding beyond loopback without `--allow` is refused. On start it prints the addresses to browse to.
 
-There is no login. Anyone in an allowed range can read and write schema files under the root and spend your LLM credits, and the MCP endpoint exposes the same tools. Allow only networks you trust, and keep sensitive files out of the root.
+Everyone outside this machine also needs a shared secret token. Set `MOCKDATA_TOKEN` (16 or more characters from `A-Z a-z 0-9 . _ ~ -`, in the environment or `.env`; `.env` is never served) or let the server generate one and print it at start. There is deliberately no `--token` flag, since command lines show up in process lists.
+
+- **Browser:** open `http://<address>:4747/?token=<token>` once. The server swaps it for an `HttpOnly`, `SameSite=Strict` cookie and redirects to a clean URL, so the token does not stay in the address bar or history.
+- **Scripts and MCP clients:** send `Authorization: Bearer <token>`, for example `claude mcp add --transport http mockdata http://<address>:4748/mcp --header "Authorization: Bearer <token>"`. The MCP endpoint accepts the header only, never a cookie or query string.
+- **Localhost** needs no token.
+
+Traffic is plain http, so the token can be read by anyone who can see the network path. Use a network you trust, such as a Tailscale tailnet (already encrypted). Anyone holding the token can read and write schema files under the root, spend your LLM credits and use every MCP tool, so treat it like a password and keep sensitive files out of the root. Rotate it by changing `MOCKDATA_TOKEN` and restarting.
 
 ## Use it as a library
 

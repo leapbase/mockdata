@@ -1,7 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { loadEnv, remoteAllowed, UserError, type NetworkAccess } from "@mockdata/cli";
+import { loadEnv, needsToken, presentedToken, remoteAllowed, TOKEN_COOKIE, tokensEqual, UserError, type NetworkAccess } from "@mockdata/cli";
 import { CycleError, GenerationError, SchemaError, ValidationError } from "@mockdata/core";
 import { LlmConfigError, LlmFillError, LlmHttpError } from "@mockdata/llm";
 import { assertLocal, HttpError, sendJson, type Ctx, type Handler } from "./http.js";
@@ -74,6 +74,22 @@ export function createApp(opts: AppOptions = {}): (req: IncomingMessage, res: Se
     assertLocal(req, opts.access);
     if (opts.access && !remoteAllowed(req.socket.remoteAddress, opts.access.allow)) throw new HttpError(403, "Address not allowed");
     const url = new URL(req.url ?? "/", "http://localhost");
+    if (needsToken(opts.access, req.socket.remoteAddress) && !tokensEqual(presentedToken(req.headers), opts.access!.token)) {
+      // A browser arrives once with ?token=: trade it for a cookie and a URL that no longer carries it.
+      if (req.method === "GET" && !url.pathname.startsWith("/api/") && tokensEqual(url.searchParams.get("token") ?? undefined, opts.access!.token)) {
+        url.searchParams.delete("token");
+        res.writeHead(302, {
+          location: url.pathname + url.search,
+          "set-cookie": `${TOKEN_COOKIE}=${opts.access!.token}; HttpOnly; SameSite=Strict; Path=/`,
+          "referrer-policy": "no-referrer",
+          "cache-control": "no-store",
+        });
+        res.end();
+        return;
+      }
+      res.setHeader("www-authenticate", 'Bearer realm="mockdata"');
+      throw new HttpError(401, "A token is required: send Authorization: Bearer <token>, or open the UI once with ?token=<token>");
+    }
     if (url.pathname.startsWith("/api/")) {
       const route = ROUTES[`${req.method} ${url.pathname}`];
       if (!route) throw new HttpError(404, "No such API route");

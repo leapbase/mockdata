@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
-import { localAddresses, parseAllow, type Cidr } from "@mockdata/cli";
+import { loadEnv, localAddresses, parseAllow, tokenFromEnv, type Cidr } from "@mockdata/cli";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { startMcpHttp } from "./http.js";
 import { createServer } from "./server.js";
@@ -18,8 +18,10 @@ Usage:
                                most a /16 wide.
   --host <addr>                address to bind (default 127.0.0.1, or 0.0.0.0 with --allow)
 
-There is no login: anyone in an allowed range can use every tool (read and write files under
-the root, spend LLM credits). Only allow networks you trust.
+Machines other than this one must send "Authorization: Bearer <token>": set MOCKDATA_TOKEN
+(16+ characters, in the environment or .env) or one is generated and printed at start.
+Anyone holding the token can use every tool (read and write files under the root, spend LLM
+credits). Traffic is plain http, so use a network you trust (for example a Tailscale tailnet).
 
 Both read MOCKDATA_ROOT (default: current directory): schemas and output stay inside it.
 `;
@@ -40,12 +42,14 @@ if (values.help) {
   } else {
     try {
       const allow: Cidr[] | undefined = values.allow === undefined ? undefined : parseAllow(values.allow);
-      const { url, server } = await startMcpHttp({ root, port, allow, host: values.host });
+      const token = allow ? tokenFromEnv(loadEnv(root, process.env)) : undefined;
+      const { url, server, token: active, tokenGenerated } = await startMcpHttp({ root, port, allow, host: values.host, token });
       process.stderr.write(`mockdata-mcp on ${url}/mcp (root: ${root})\n`);
       if (allow) {
         const listening = (server.address() as { port: number }).port;
         process.stderr.write(`Also open to ${allow.map((c) => c.text).join(", ")}: ${localAddresses().map((a) => `http://${a}:${listening}/mcp`).join("  ")}\n`);
-        process.stderr.write("There is no login. Only allow networks you trust.\n");
+        process.stderr.write(`${tokenGenerated ? `Generated token (set MOCKDATA_TOKEN to keep one): ${active}` : "Token: from MOCKDATA_TOKEN"}\n`);
+        process.stderr.write("Clients send: Authorization: Bearer <token>. Plain http: use a network you trust.\n");
       }
     } catch (e) {
       const err = e as NodeJS.ErrnoException;

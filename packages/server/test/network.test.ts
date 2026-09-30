@@ -33,3 +33,50 @@ describe("opening the UI beyond localhost", () => {
     }
   });
 });
+
+describe("shared secret token", () => {
+  const allow = parseAllow("100.100.1.x");
+  const TOKEN = "s3cret-token-0123456789";
+  const open = () => boot({ allow, localHosts: [], token: TOKEN, trustLoopback: false });
+
+  it("rejects requests without the token, and with a wrong one", async () => {
+    const { get, call } = await open();
+    const none = await get("/api/config");
+    expect(none.status).toBe(401);
+    expect(none.headers.get("www-authenticate")).toMatch(/Bearer/);
+    expect((await call("GET", "/api/config", undefined, { authorization: "Bearer wrong-token-0123456789" })).status).toBe(401);
+    expect((await call("GET", "/", undefined, {})).status).toBe(401);
+  });
+
+  it("accepts a Bearer header", async () => {
+    const { call } = await open();
+    expect((await call("GET", "/api/config", undefined, { authorization: `Bearer ${TOKEN}` })).status).toBe(200);
+  });
+
+  it("turns ?token= into an HttpOnly SameSite=Strict cookie and a clean redirect, which then works", async () => {
+    const { url } = await open();
+    const r = await fetch(`${url}/?token=${TOKEN}&x=1`, { redirect: "manual" });
+    expect(r.status).toBe(302);
+    expect(r.headers.get("location")).toBe("/?x=1"); // the token is gone from the URL
+    expect(r.headers.get("referrer-policy")).toBe("no-referrer");
+    const cookie = r.headers.get("set-cookie")!;
+    expect(cookie).toMatch(/^mockdata_token=/);
+    expect(cookie).toMatch(/HttpOnly/i);
+    expect(cookie).toMatch(/SameSite=Strict/i);
+    const again = await fetch(`${url}/api/config`, { headers: { cookie: cookie.split(";")[0]! } });
+    expect(again.status).toBe(200);
+  });
+
+  it("does not accept ?token= on API calls, or a wrong token on the redirect", async () => {
+    const { url } = await open();
+    expect((await fetch(`${url}/api/config?token=${TOKEN}`, { redirect: "manual" })).status).toBe(401);
+    expect((await fetch(`${url}/?token=wrong-token-0123456789`, { redirect: "manual" })).status).toBe(401);
+  });
+
+  it("is not required from localhost by default, and never echoes the token", async () => {
+    const trusting = await boot({ allow, localHosts: [], token: TOKEN });
+    expect((await trusting.get("/api/config")).status).toBe(200);
+    const { get } = await open();
+    expect((await get("/api/config")).raw).not.toContain(TOKEN);
+  });
+});

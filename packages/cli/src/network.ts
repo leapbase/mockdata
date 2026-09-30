@@ -1,3 +1,4 @@
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { networkInterfaces } from "node:os";
 
 /** Thrown for bad user input; the same class confined.ts uses (re-exported there). */
@@ -15,6 +16,10 @@ export interface NetworkAccess {
   allow: Cidr[];
   /** This machine's own IPv4 addresses: accepted as a Host header (an IP literal cannot be DNS-rebound). */
   hosts: Set<string>;
+  /** Shared secret: required of every peer that is not exempt (see needsToken). */
+  token?: string;
+  /** Localhost peers skip the token (default true). Tests turn this off to exercise it over loopback. */
+  trustLoopback: boolean;
 }
 
 /** Private ranges a caller may be allowed from. There is no authentication, so public ranges are refused. */
@@ -85,8 +90,60 @@ export function localAddresses(): string[] {
     .map((i) => i.address);
 }
 
-export function networkAccess(allow: Cidr[], hosts: string[] = localAddresses()): NetworkAccess {
-  return { allow, hosts: new Set(hosts) };
+export function networkAccess(allow: Cidr[], hosts: string[] = localAddresses(), token?: string, trustLoopback = true): NetworkAccess {
+  return { allow, hosts: new Set(hosts), token, trustLoopback };
+}
+
+export const TOKEN_COOKIE = "mockdata_token";
+const MIN_TOKEN_LENGTH = 16;
+
+/** A fresh 192-bit token, URL- and cookie-safe. */
+export function generateToken(): string {
+  return randomBytes(24).toString("base64url");
+}
+
+/**
+ * MOCKDATA_TOKEN from the environment (or .env): undefined when unset. It must be at
+ * least 16 characters of [A-Za-z0-9._~-] so it is safe in a cookie and a URL. Errors name
+ * the variable, never its value.
+ */
+export function tokenFromEnv(env: Record<string, string | undefined>): string | undefined {
+  const value = env.MOCKDATA_TOKEN?.trim();
+  if (!value) return undefined;
+  if (value.length < MIN_TOKEN_LENGTH || !/^[A-Za-z0-9._~-]+$/.test(value)) {
+    throw new NetworkConfigError(`MOCKDATA_TOKEN must be at least ${MIN_TOKEN_LENGTH} characters from A-Z a-z 0-9 . _ ~ - (leave it unset to get a generated one)`);
+  }
+  return value;
+}
+
+/** Constant-time comparison (hashing first, so length does not leak either). */
+export function tokensEqual(a: string | undefined, b: string | undefined): boolean {
+  if (!a || !b) return false;
+  return timingSafeEqual(createHash("sha256").update(a).digest(), createHash("sha256").update(b).digest());
+}
+
+interface TokenHeaders {
+  authorization?: string | string[];
+  cookie?: string | string[];
+}
+
+/** The token a request carries: a Bearer header first, then (unless `cookie: false`) the cookie. */
+export function presentedToken(headers: TokenHeaders, opts: { cookie?: boolean } = {}): string | undefined {
+  const auth = [headers.authorization].flat()[0];
+  const bearer = auth ? /^bearer\s+(\S+)\s*$/i.exec(auth.trim())?.[1] : undefined;
+  if (bearer) return bearer;
+  if (opts.cookie === false) return undefined;
+  for (const part of ([headers.cookie].flat()[0] ?? "").split(";")) {
+    const [name, ...rest] = part.trim().split("=");
+    if (name === TOKEN_COOKIE) return rest.join("=");
+  }
+  return undefined;
+}
+
+/** Must this peer prove it knows the token? Every non-loopback peer, and loopback too when `trustLoopback` is off. */
+export function needsToken(access: NetworkAccess | undefined, remoteAddress: string | undefined): boolean {
+  if (!access?.token) return false;
+  return !(access.trustLoopback && remoteAddress !== undefined && isLoopback(remoteAddress));
 }
 
 /** May this Host-header hostname (no port, no brackets) be served? Used for Host and for Origin. */
@@ -105,24 +162,31 @@ export interface ListenOptions {
   allow?: Cidr[];
   /** Override this machine's addresses (tests). */
   localHosts?: string[];
+  /** Shared secret for peers beyond localhost (default: a generated one, see tokenFromEnv). */
+  token?: string;
+  /** Tests only: also demand the token from localhost peers. */
+  trustLoopback?: boolean;
 }
 
 /**
  * Where to bind and who to serve. Default: 127.0.0.1, localhost only. With an
  * allow list the default becomes 0.0.0.0 (connections from outside the list are
- * dropped, see dropForeignConnections). Binding beyond loopback without an allow
+ * dropped, see dropForeignConnections) and a shared secret is required of those peers: the
+ * given one, or a generated one (`tokenGenerated`). Binding beyond loopback without an allow
  * list is refused rather than silently opening the server to everyone.
  */
-export function listenPlan(opts: ListenOptions): { host: string; access?: NetworkAccess } {
+export function listenPlan(opts: ListenOptions): { host: string; access?: NetworkAccess; tokenGenerated: boolean } {
   const allow = opts.allow ?? [];
   const host = opts.host ?? (allow.length > 0 ? "0.0.0.0" : "127.0.0.1");
   if (allow.length === 0) {
     if (host !== "localhost" && !isLoopback(host)) {
       throw new NetworkConfigError(`Listening on "${host}" needs --allow (e.g. --allow 100.100.1.x): this server has no login, so you must say who may connect`);
     }
-    return { host };
+    return { host, tokenGenerated: false };
   }
-  return { host, access: networkAccess(allow, opts.localHosts) };
+  if (opts.token !== undefined) tokenFromEnv({ MOCKDATA_TOKEN: opts.token }); // same rules as the environment variable
+  const token = opts.token ?? generateToken();
+  return { host, access: networkAccess(allow, opts.localHosts, token, opts.trustLoopback ?? true), tokenGenerated: opts.token === undefined };
 }
 
 /** Close connections from addresses outside the allow list before any HTTP is read. */

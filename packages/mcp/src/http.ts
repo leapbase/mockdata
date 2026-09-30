@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { dropForeignConnections, listenPlan, localRequestProblem, remoteAllowed, type ListenOptions } from "@mockdata/cli";
+import { dropForeignConnections, listenPlan, localRequestProblem, needsToken, presentedToken, remoteAllowed, tokensEqual, type ListenOptions } from "@mockdata/cli";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createServer, type ServerOptions } from "./server.js";
@@ -44,8 +44,8 @@ async function readBody(req: IncomingMessage): Promise<string | undefined> {
  * write files and can spend LLM credits, so it is not for exposing to a network.
  * Each client session gets its own server, so `get_run_report` is per client.
  */
-export async function startMcpHttp(opts: McpHttpOptions = {}): Promise<{ server: http.Server; url: string }> {
-  const { host, access } = listenPlan(opts);
+export async function startMcpHttp(opts: McpHttpOptions = {}): Promise<{ server: http.Server; url: string; token?: string; tokenGenerated: boolean }> {
+  const { host, access, tokenGenerated } = listenPlan(opts);
   const maxSessions = opts.maxSessions ?? 20;
   const sessionIdleMs = opts.sessionIdleMs ?? 30 * 60_000;
   const sessions = new Map<string, StreamableHTTPServerTransport>();
@@ -61,6 +61,10 @@ export async function startMcpHttp(opts: McpHttpOptions = {}): Promise<{ server:
     const problem = localRequestProblem(req.headers.host, req.headers.origin, access);
     if (problem) return reply(res, 403, problem);
     if (access && !remoteAllowed(req.socket.remoteAddress, access.allow)) return reply(res, 403, "Address not allowed");
+    if (needsToken(access, req.socket.remoteAddress) && !tokensEqual(presentedToken(req.headers, { cookie: false }), access!.token)) {
+      res.setHeader("www-authenticate", 'Bearer realm="mockdata"');
+      return reply(res, 401, "A token is required: send Authorization: Bearer <token>");
+    }
     if (new URL(req.url ?? "/", "http://localhost").pathname !== MCP_PATH) return reply(res, 404, `Not found: MCP is served at ${MCP_PATH}`);
 
     const header = req.headers["mcp-session-id"];
@@ -120,5 +124,5 @@ export async function startMcpHttp(opts: McpHttpOptions = {}): Promise<{ server:
     server.once("error", reject);
     server.listen(opts.port ?? 4748, host, () => resolve());
   });
-  return { server, url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };
+  return { server, url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, token: access?.token, tokenGenerated };
 }

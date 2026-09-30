@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
-import { localAddresses, parseAllow, type Cidr } from "@mockdata/cli";
+import { loadEnv, localAddresses, parseAllow, tokenFromEnv, type Cidr } from "@mockdata/cli";
 import { startServer } from "./listen.js";
 
 const HELP = `mockdata-ui - local web UI for mockdata
@@ -17,8 +17,11 @@ Usage:
   --host <addr>   address to bind (default 127.0.0.1, or 0.0.0.0 with --allow)
   -h, --help
 
-There is no login: anyone in an allowed range can read and write schema files under root
-and use your LLM keys. Only allow networks you trust.
+Machines other than this one must present a shared secret: set MOCKDATA_TOKEN (16+ characters,
+in the environment or .env) or one is generated and printed at start. Open the UI once with
+http://<address>:<port>/?token=<token> (it sets a cookie); scripts send "Authorization: Bearer <token>".
+Anyone holding the token can read and write schema files under root and use your LLM keys.
+Traffic is plain http, so use a network you trust (for example a Tailscale tailnet).
 `;
 
 const { values, positionals } = parseArgs({
@@ -40,12 +43,16 @@ if (values.help) {
     try {
       const root = positionals[0] ?? process.cwd();
       const allow: Cidr[] | undefined = values.allow === undefined ? undefined : parseAllow(values.allow);
-      const { url, server } = await startServer({ root, port, allow, host: values.host });
+      const token = allow ? tokenFromEnv(loadEnv(root, process.env)) : undefined;
+      const { url, server, token: active, tokenGenerated } = await startServer({ root, port, allow, host: values.host, token });
       const listening = (server.address() as { port: number }).port;
       process.stdout.write(`mockdata UI on ${url}  (root: ${root})\n`);
       if (allow) {
         process.stdout.write(`Also open to ${allow.map((c) => c.text).join(", ")}: ${localAddresses().map((a) => `http://${a}:${listening}`).join("  ")}\n`);
-        process.stdout.write("There is no login. Only allow networks you trust.\n");
+        const shown = tokenGenerated ? active : "<your MOCKDATA_TOKEN>";
+        process.stdout.write(`${tokenGenerated ? "Generated token (set MOCKDATA_TOKEN to keep one): " : "Token: from MOCKDATA_TOKEN. "}${tokenGenerated ? active : ""}\n`);
+        process.stdout.write(`Open once from another machine: http://<address>:${listening}/?token=${shown}\n`);
+        process.stdout.write("Plain http: use a network you trust.\n");
       }
       process.stdout.write("Press Ctrl+C to stop.\n");
     } catch (e) {

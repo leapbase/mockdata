@@ -113,7 +113,8 @@ describe("sqlite", () => {
   });
 });
 
-describe("postgres (real engine via pglite)", () => {
+// pglite boots Postgres as WASM on first use, which can exceed the 5 s default when test files run in parallel.
+describe("postgres (real engine via pglite)", { timeout: 30_000 }, () => {
   const pg = new PGlite();
   afterAll(() => pg.close());
   const query = async (sql: string, params?: unknown[]) => (await pg.query(sql, params)).rows as Record<string, unknown>[];
