@@ -22,6 +22,7 @@ npm run build                              # tsc core then cli (cli imports core
 node packages/cli/dist/bin.js generate examples/shop.yaml -o out -f csv
 MOCKDATA_ROOT=$PWD node packages/mcp/dist/bin.js   # MCP server on stdio
 MOCKDATA_ROOT=$PWD/examples node packages/mcp/dist/bin.js --http   # MCP over HTTP, http://127.0.0.1:4748/mcp
+npm run loadtest                           # dev-only capacity test of accounts mode (apps/loadtest; vendored load-test-kit from itravelmap)
 npm run ui -- examples                     # web UI, http://127.0.0.1:4747 (needs npm run build first)
 npm run dev -w packages/web                # Vite dev server for the UI; proxies /api to a running mockdata-ui
 ```

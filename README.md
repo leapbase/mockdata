@@ -326,6 +326,7 @@ const data = generate(schemaObjectOrYamlParsed, { seed: 1 });   // { customers: 
 ```
 npm test              # everything (vitest); no network, no API keys, no database servers needed
 npm run build         # tsc for each package, in dependency order
+npm run loadtest      # dev-only: ramps sign-ins, page loads and generation against a real accounts-mode server (apps/loadtest)
 ```
 
 A live MySQL test runs when `MOCKDATA_TEST_MYSQL_URL` is set. See `CLAUDE.md` for the architecture notes.
