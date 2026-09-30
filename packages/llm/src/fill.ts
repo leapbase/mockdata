@@ -19,6 +19,24 @@ export class LlmFillError extends Error {
   }
 }
 
+export class LlmCancelledError extends Error {
+  constructor() {
+    super("LLM generation was cancelled");
+    this.name = "LlmCancelledError";
+  }
+}
+
+export interface LlmProgress {
+  /** "table.column" */
+  column: string;
+  /** Rows of that column filled so far, and how many it needs. */
+  done: number;
+  total: number;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export interface FillOptions {
   provider: LlmProvider;
   batchSize?: number;
@@ -27,6 +45,10 @@ export interface FillOptions {
   contextDepth?: number;
   /** Injectable for tests; defaults to setTimeout. */
   sleep?: (ms: number) => Promise<void>;
+  /** Called after each batch is stored. */
+  onProgress?: (e: LlmProgress) => void;
+  /** Checked before each request; once aborted the run stops with LlmCancelledError (a request already in flight finishes). */
+  signal?: AbortSignal;
 }
 
 export interface LlmReport {
@@ -176,6 +198,8 @@ export async function fillLlmColumns(input: unknown, data: Dataset, opts: FillOp
     const taken = new Set<string>();
     let pending = rows.map((_, i) => i).filter((i) => rows[i]![column] === undefined);
     report.columns[where] = pending.length;
+    const total = pending.length;
+    let filled = 0;
 
     for (let round = 0; pending.length > 0; round++) {
       if (round >= MAX_UNIQUE_ROUNDS) {
@@ -183,6 +207,7 @@ export async function fillLlmColumns(input: unknown, data: Dataset, opts: FillOp
       }
       const rejected: number[] = [];
       for (let i = 0; i < pending.length; i += batchSize) {
+        if (opts.signal?.aborted) throw new LlmCancelledError();
         const idxs = pending.slice(i, i + batchSize);
         const avoid = unique ? [...taken].slice(-AVOID_LIST_SIZE) : [];
         const values = await ask(
@@ -207,6 +232,15 @@ export async function fillLlmColumns(input: unknown, data: Dataset, opts: FillOp
           }
           taken.add(v);
           rows[n]![column] = v;
+          filled++;
+        });
+        opts.onProgress?.({
+          column: where,
+          done: filled,
+          total,
+          calls: report.calls,
+          inputTokens: report.inputTokens,
+          outputTokens: report.outputTokens,
         });
       }
       pending = rejected;
@@ -223,6 +257,8 @@ export interface GenerateWithLlmOptions extends GenerateOptions, ProviderDeps {
   /** Supply a provider directly (tests, custom backends); otherwise built from schema.llm. */
   provider?: LlmProvider;
   sleep?: (ms: number) => Promise<void>;
+  onProgress?: FillOptions["onProgress"];
+  signal?: AbortSignal;
 }
 
 /** Deterministic generation, then LLM fill of `llm` columns, then full validation. */
@@ -237,7 +273,7 @@ export async function generateWithLlm(
   }
   const env = opts.env ?? process.env;
   const provider = opts.provider ?? createProvider(resolveLlmConfig(schema.llm, env), { fetch: opts.fetch, env });
-  const report = await fillLlmColumns(schema, data, { provider, sleep: opts.sleep });
+  const report = await fillLlmColumns(schema, data, { provider, sleep: opts.sleep, onProgress: opts.onProgress, signal: opts.signal });
   validate(schema, data);
   return { data, report };
 }
