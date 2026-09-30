@@ -20,6 +20,40 @@ export interface NetworkAccess {
   token?: string;
   /** Localhost peers skip the token (default true). Tests turn this off to exercise it over loopback. */
   trustLoopback: boolean;
+  /**
+   * Accounts mode: the public host name (from MOCKDATA_PUBLIC_URL). The server is open to any peer, because
+   * a login session is the gate; there is no allow list or token, and loopback is never trusted (a
+   * TLS-terminating reverse proxy connects from loopback on behalf of the whole internet).
+   */
+  publicHost?: string;
+}
+
+export interface PublicUrl {
+  /** scheme://host[:port], no trailing slash. */
+  origin: string;
+  /** Lower-case host name without the port. */
+  host: string;
+  /** https: cookies get the Secure flag and HSTS is sent. */
+  secure: boolean;
+}
+
+/**
+ * MOCKDATA_PUBLIC_URL: the address people type. https, or plain http only on localhost (development and
+ * tests); an origin, nothing more. Errors name the variable, never its value.
+ */
+export function parsePublicUrl(text: string | undefined): PublicUrl {
+  const fail = () =>
+    new NetworkConfigError("MOCKDATA_PUBLIC_URL must be an https origin such as https://your-domain.example (plain http is only accepted for localhost), with no path, query or credentials");
+  let url: URL;
+  try {
+    url = new URL(text ?? "");
+  } catch {
+    throw fail();
+  }
+  const local = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
+  const okScheme = url.protocol === "https:" || (url.protocol === "http:" && local);
+  if (!okScheme || url.pathname !== "/" || url.search || url.hash || url.username || url.password) throw fail();
+  return { origin: url.origin, host: url.hostname.toLowerCase(), secure: url.protocol === "https:" };
 }
 
 /** Private ranges a caller may be allowed from. There is no authentication, so public ranges are refused. */
@@ -72,6 +106,12 @@ function plainAddress(addr: string): string {
 export function isLoopback(addr: string): boolean {
   const a = plainAddress(addr);
   return a === "::1" || a.startsWith("127.");
+}
+
+/** Is this peer served at all? Accounts mode serves everyone (sessions gate it); otherwise see remoteAllowed. No access object means local mode, which only listens on loopback. */
+export function peerAllowed(access: NetworkAccess | undefined, addr: string | undefined): boolean {
+  if (!access || access.publicHost !== undefined) return true;
+  return remoteAllowed(addr, access.allow);
 }
 
 /** Is this peer address one we serve? Loopback always; otherwise it must be inside the allow list. */
@@ -151,6 +191,7 @@ export function hostnameAllowed(hostname: string, access?: NetworkAccess): boole
   const h = hostname.toLowerCase();
   if (h === "localhost" || h === "127.0.0.1" || h === "::1") return true;
   if (!access) return false;
+  if (access.publicHost !== undefined && h === access.publicHost) return true;
   const ip = ipv4(h);
   if (ip === undefined) return false; // names can be re-pointed by DNS; only IP literals are accepted
   return access.hosts.has(h) || access.allow.some((c) => ((ip & c.mask) >>> 0) === c.base);
@@ -166,6 +207,8 @@ export interface ListenOptions {
   token?: string;
   /** Tests only: also demand the token from localhost peers. */
   trustLoopback?: boolean;
+  /** Accounts mode (MOCKDATA_PUBLIC_URL): sessions are the gate instead of an allow list and token. */
+  publicUrl?: PublicUrl;
 }
 
 /**
@@ -176,6 +219,11 @@ export interface ListenOptions {
  * list is refused rather than silently opening the server to everyone.
  */
 export function listenPlan(opts: ListenOptions): { host: string; access?: NetworkAccess; tokenGenerated: boolean } {
+  if (opts.publicUrl) {
+    if ((opts.allow ?? []).length > 0) throw new NetworkConfigError("--allow cannot be combined with MOCKDATA_PUBLIC_URL: accounts mode is open to any visitor and gates them by login");
+    const access: NetworkAccess = { allow: [], hosts: new Set(), trustLoopback: false, publicHost: opts.publicUrl.host };
+    return { host: opts.host ?? "127.0.0.1", access, tokenGenerated: false };
+  }
   const allow = opts.allow ?? [];
   const host = opts.host ?? (allow.length > 0 ? "0.0.0.0" : "127.0.0.1");
   if (allow.length === 0) {
@@ -193,6 +241,6 @@ export function listenPlan(opts: ListenOptions): { host: string; access?: Networ
 export function dropForeignConnections(server: { on(event: "connection", cb: (s: { remoteAddress?: string; destroy(): void }) => void): unknown }, access?: NetworkAccess): void {
   if (!access) return;
   server.on("connection", (socket) => {
-    if (!remoteAllowed(socket.remoteAddress, access.allow)) socket.destroy();
+    if (!peerAllowed(access, socket.remoteAddress)) socket.destroy();
   });
 }
