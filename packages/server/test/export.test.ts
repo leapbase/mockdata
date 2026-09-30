@@ -92,3 +92,57 @@ describe("POST /api/export", () => {
     expect(readdirSync(root)).toEqual([]);
   });
 });
+
+import { symlinkSync } from "node:fs";
+
+describe("export symlink escapes", () => {
+  it("never writes through a symlinked target file, even with overwrite", async () => {
+    const root = tmpRoot();
+    const outside = tmpRoot();
+    mkdirSync(join(root, "out"));
+    writeFileSync(join(outside, "victim.txt"), "keep");
+    symlinkSync(join(outside, "victim.txt"), join(root, "out/customers.csv"));
+    const { post } = await boot({ root });
+    const r = await post("/api/export", { text: SHOP_YAML, format: "csv", outputDir: "out", overwrite: true });
+    expect(r.status).toBe(400);
+    expect(readFileSync(join(outside, "victim.txt"), "utf8")).toBe("keep");
+  });
+
+  it("never writes through a dangling symlink", async () => {
+    const root = tmpRoot();
+    const outside = tmpRoot();
+    mkdirSync(join(root, "out"));
+    symlinkSync(join(outside, "new.csv"), join(root, "out/customers.csv"));
+    const { post } = await boot({ root });
+    const r = await post("/api/export", { text: SHOP_YAML, format: "csv", outputDir: "out" });
+    expect(r.status).toBe(400);
+    expect(existsSync(join(outside, "new.csv"))).toBe(false);
+  });
+
+  it("stops calling the model when the client disconnects during an LLM export", async () => {
+    let calls = 0;
+    let started!: () => void;
+    const first = new Promise<void>((r) => (started = r));
+    const provider: LlmProvider = {
+      name: "slow",
+      async complete(req) {
+        calls++;
+        if (calls === 1) started();
+        await new Promise((r) => setTimeout(r, 150));
+        const n = Number(/exactly (\d+) strings/.exec(req.user)![1]);
+        return { text: JSON.stringify(Array.from({ length: n }, () => "t")), usage: { inputTokens: 1, outputTokens: 1 } };
+      },
+    };
+    const root = tmpRoot();
+    const { url } = await boot({ root, llm: { provider } });
+    const text = "llm: { provider: openai, model: m, batchSize: 2 }\ntables:\n  notes:\n    rows: 6\n    columns:\n      id: { type: integer, primaryKey: true }\n      b: { type: string, llm: true }\n";
+    const ac = new AbortController();
+    const pending = fetch(`${url}/api/export`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text, outputDir: "out" }), signal: ac.signal }).catch(() => {});
+    await first;
+    ac.abort();
+    await pending;
+    await new Promise((r) => setTimeout(r, 500));
+    expect(calls).toBe(1);
+    expect(existsSync(join(root, "out"))).toBe(false);
+  });
+});

@@ -9,6 +9,8 @@ export interface ValidateResult {
   deferred?: string[];
   llmColumns?: string[];
   errors?: { message: string; line?: number }[];
+  /** Whether LLM columns can run for this schema (its own llm block wins over the environment). */
+  llm?: { ok: true; provider: string } | { ok: false; reason: string };
 }
 export interface PreviewTable {
   columns: string[];

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { checkSchemaPath, inferConfined, loadEnv, parseSchemaText, resolveInside, serialize, UserError } from "@mockdata/cli";
+import { assertNotEnv, assertNotSymlink, checkSchemaPath, inferConfined, loadEnv, parseSchemaText, resolveInside, serialize, UserError } from "@mockdata/cli";
 import { llmColumns, parseSchema, type Dataset } from "@mockdata/core";
 import { generateWithLlm, type GenerateWithLlmOptions, type LlmReport } from "@mockdata/llm";
 import { SCHEMA_REFERENCE } from "./reference.js";
@@ -68,6 +68,7 @@ export function createServer(opts: ServerOptions = {}): McpServer {
     const ext = checkSchemaPath(args.schemaPath!);
     const file = resolveInside(root, args.schemaPath!);
     if (!existsSync(file)) throw new UserError(`No such file: ${args.schemaPath}`);
+    assertNotEnv(file);
     const content = readFileSync(file, "utf8");
     return ext === ".json" ? JSON.parse(content) : parseSchemaText(content);
   }
@@ -160,6 +161,7 @@ export function createServer(opts: ServerOptions = {}): McpServer {
         if (args.outputDir !== undefined) {
           outDir = resolveInside(root, args.outputDir);
           targets = Object.keys(schema.tables).map((table) => ({ table, file: path.join(outDir!, `${table}.${args.format}`) }));
+          for (const t of targets) assertNotSymlink(t.file);
           const clashes = targets.filter((t) => existsSync(t.file));
           if (clashes.length > 0 && !args.overwrite) {
             throw new UserError(

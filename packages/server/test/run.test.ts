@@ -136,3 +136,38 @@ describe("POST /api/generate", () => {
     expect((await post("/api/generate", { text: SHOP_YAML, tables: "orders" })).status).toBe(400);
   });
 });
+
+describe("hostile editor text", () => {
+  it("turns an unresolved YAML alias into an error, not a 500, for validate and generate", async () => {
+    const { post } = await boot();
+    const text = "a: &x 1\nb: *y\n";
+    const v = await post("/api/validate", { text });
+    expect(v.status).toBe(200);
+    expect(v.json.ok).toBe(false);
+    expect((await post("/api/generate", { text })).status).toBe(400);
+  });
+});
+
+describe("llm availability follows the schema's own llm block", () => {
+  it("validate reports the provider from the schema even when the environment has none", async () => {
+    const text = `llm: { provider: ollama, model: llama3 }
+tables:
+  notes:
+    rows: 2
+    columns:
+      id: { type: integer, primaryKey: true }
+      b: { type: string, llm: true }
+`;
+    const { post } = await boot();
+    const r = await post("/api/validate", { text });
+    expect(r.json.ok).toBe(true);
+    expect(r.json.llm).toEqual({ ok: true, provider: "ollama:llama3" });
+  });
+  it("validate says why when neither the schema nor the environment configures a provider", async () => {
+    const text = "tables:\n  n:\n    rows: 1\n    columns:\n      id: { type: integer, primaryKey: true }\n      b: { type: string, llm: true }\n";
+    const { post } = await boot();
+    const r = await post("/api/validate", { text });
+    expect(r.json.llm.ok).toBe(false);
+    expect(r.json.llm.reason).toMatch(/AI_PROVIDER/);
+  });
+});

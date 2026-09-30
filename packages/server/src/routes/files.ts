@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { checkSchemaPath, isEnvFile, resolveInside, SCHEMA_EXT, UserError } from "@mockdata/cli";
+import { assertNotEnv, assertNotSymlink, checkSchemaPath, isEnvFile, resolveInside, SCHEMA_EXT, UserError } from "@mockdata/cli";
 import { optBool, readJson, reqString, sendJson, type Handler } from "../http.js";
 
 const SKIP_DIRS = new Set(["node_modules", "dist", "out"]);
@@ -37,6 +37,7 @@ export const readFile: Handler = async (ctx, _req, res, url) => {
   checkSchemaPath(rel, "path");
   const file = resolveInside(ctx.root, rel);
   if (!existsSync(file)) throw new UserError(`No such file: ${rel}`);
+  assertNotEnv(file);
   sendJson(res, 200, { path: rel, text: readFileSync(file, "utf8") });
 };
 
@@ -46,6 +47,7 @@ export const writeFile: Handler = async (ctx, req, res) => {
   const text = reqString(body, "text");
   checkSchemaPath(rel, "path");
   const file = resolveInside(ctx.root, rel);
+  assertNotSymlink(file);
   if (optBool(body, "create") && existsSync(file)) throw new UserError(`${rel} already exists`);
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, text);

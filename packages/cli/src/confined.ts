@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import {
@@ -43,7 +43,48 @@ export function resolveInside(root: string, rel: string): string {
   let probe = target;
   while (!existsSync(probe)) probe = path.dirname(probe);
   if (!within(target) || !within(realpathSync(probe))) throw new UserError(`Path "${rel}" is outside the server root`);
+  // existsSync is false for a dangling symlink, so the probe above would skip it: walk the path and inspect every link.
+  let current = rootReal;
+  for (const segment of path.relative(rootReal, target).split(path.sep).filter(Boolean)) {
+    current = path.join(current, segment);
+    let stat;
+    try {
+      stat = lstatSync(current);
+    } catch {
+      break; // this part does not exist yet, so nothing below it can be a link
+    }
+    if (!stat.isSymbolicLink()) continue;
+    let real: string;
+    try {
+      real = realpathSync(current);
+    } catch {
+      throw new UserError(`Path "${rel}" goes through a link that points nowhere`);
+    }
+    if (!within(real)) throw new UserError(`Path "${rel}" is outside the server root`);
+  }
   return target;
+}
+
+/** Refuse a file that is, or links to, a .env file (the name check on the requested path alone is not enough). */
+export function assertNotEnv(file: string): void {
+  let real = file;
+  try {
+    real = realpathSync(file);
+  } catch {
+    /* does not exist (yet): the requested name was already checked */
+  }
+  if (isEnvFile(real)) throw new UserError("Refusing to read .env files");
+}
+
+/** Refuse to write to a symlink, live or dangling: a write would land wherever it points. */
+export function assertNotSymlink(file: string): void {
+  let stat;
+  try {
+    stat = lstatSync(file);
+  } catch {
+    return;
+  }
+  if (stat.isSymbolicLink()) throw new UserError(`${path.basename(file)} is a symbolic link; refusing to write through it`);
 }
 
 /** Throws unless `rel` names a schema file we may read or write; returns its lower-case extension. */
@@ -109,6 +150,7 @@ export async function inferConfined(root: string, baseEnv: Record<string, string
   if (isEnvFile(args.path!)) throw new UserError("Refusing to read .env files");
   const target = resolveInside(root, args.path!);
   if (!existsSync(target)) throw new UserError(`No such file or folder: ${args.path}`);
+  assertNotEnv(target);
   if (args.kind === "database" && !detectDatabase(target)) throw new UserError("kind database with a path needs a SQLite file (.db, .sqlite, .sqlite3)");
   return inferFromSource(target, opts);
 }

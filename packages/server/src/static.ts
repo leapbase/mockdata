@@ -15,7 +15,7 @@ const TYPES: Record<string, string> = {
 };
 
 /** Scripts and connections only from this origin: text from an LLM or a schema can never run code in the page. */
-const CSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'";
+const CSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'";
 
 export function serveStatic(dir: string, pathname: string, res: ServerResponse): void {
   if (!existsSync(dir)) throw new HttpError(404, "The web UI has not been built yet (run npm run build)");
@@ -35,6 +35,7 @@ export function serveStatic(dir: string, pathname: string, res: ServerResponse):
     "cache-control": "no-cache",
     "x-content-type-options": "nosniff",
     "content-security-policy": CSP,
+    "x-frame-options": "DENY",
   });
   createReadStream(file).pipe(res);
 }

@@ -49,3 +49,35 @@ describe("progress and cancellation", () => {
     expect(calls()).toBe(0);
   });
 });
+
+describe("cancellation during retries", () => {
+  it("does not retry after the signal is aborted mid-batch", async () => {
+    const ac = new AbortController();
+    let calls = 0;
+    const provider: LlmProvider = {
+      name: "flaky",
+      async complete() {
+        calls++;
+        ac.abort();
+        return { text: "not json", usage: { inputTokens: 1, outputTokens: 1 } };
+      },
+    };
+    await expect(generateWithLlm(schema, { provider, signal: ac.signal, sleep: async () => {} })).rejects.toBeInstanceOf(LlmCancelledError);
+    expect(calls).toBe(1);
+  });
+
+  it("wakes from a backoff sleep as soon as the signal is aborted", async () => {
+    const ac = new AbortController();
+    const provider: LlmProvider = {
+      name: "flaky",
+      async complete() {
+        return { text: "not json", usage: { inputTokens: 1, outputTokens: 1 } };
+      },
+    };
+    const started = Date.now();
+    const run = generateWithLlm(schema, { provider, signal: ac.signal, sleep: () => new Promise((r) => setTimeout(r, 5000)) });
+    setTimeout(() => ac.abort(), 50);
+    await expect(run).rejects.toBeInstanceOf(LlmCancelledError);
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+});

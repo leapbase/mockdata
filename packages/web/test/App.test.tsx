@@ -319,3 +319,39 @@ describe("export", () => {
     expect(await screen.findByText(/model calls/i)).toBeTruthy();
   });
 });
+
+describe("review fixes", () => {
+  const files = { "GET /api/config": () => CONFIG_NO_LLM, "GET /api/files": () => ({ files: ["a.yaml", "b.yaml"] }), "POST /api/validate": () => OK };
+
+  it("enables the LLM toggle when the schema's own llm block is usable, even though the environment has no provider", async () => {
+    stubApi({ ...files, "POST /api/validate": () => ({ ...OK, llmColumns: ["a.b"], llm: { ok: true, provider: "ollama:llama3" } }) });
+    render(<App debounceMs={0} />);
+    const box = (await screen.findByLabelText(/Fill LLM columns/)) as HTMLInputElement;
+    await waitFor(() => expect(box.disabled).toBe(false));
+  });
+
+  it("asks before replacing unsaved edits when opening another file, and keeps them on Cancel", async () => {
+    stubApi({ ...files, "GET /api/file": (_b, url) => ({ path: url.searchParams.get("path"), text: `text of ${url.searchParams.get("path")}` }) });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<App debounceMs={0} />);
+    await userEvent.type(await screen.findByLabelText("schema"), "!");
+    await userEvent.click(screen.getByRole("button", { name: "b.yaml" }));
+    expect(confirm).toHaveBeenCalled();
+    expect((screen.getByLabelText("schema") as HTMLTextAreaElement).value.endsWith("!")).toBe(true);
+    confirm.mockReturnValue(true);
+    await userEvent.click(screen.getByRole("button", { name: "b.yaml" }));
+    await waitFor(() => expect((screen.getByLabelText("schema") as HTMLTextAreaElement).value).toBe("text of b.yaml"));
+    confirm.mockRestore();
+  });
+
+  it("does not ask when there is nothing unsaved", async () => {
+    stubApi({ ...files, "GET /api/file": () => ({ path: "a.yaml", text: "saved" }) });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<App debounceMs={0} />);
+    await userEvent.click(await screen.findByRole("button", { name: "a.yaml" }));
+    await waitFor(() => expect((screen.getByLabelText("schema") as HTMLTextAreaElement).value).toBe("saved"));
+    await userEvent.click(screen.getByRole("button", { name: "b.yaml" }));
+    expect(confirm).not.toHaveBeenCalled();
+    confirm.mockRestore();
+  });
+});

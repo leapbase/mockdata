@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { resolveInside, serialize, UserError } from "@mockdata/cli";
-import { generateWithLlm } from "@mockdata/llm";
+import { assertNotSymlink, resolveInside, serialize, UserError } from "@mockdata/cli";
+import { LlmCancelledError, generateWithLlm } from "@mockdata/llm";
 import { HttpError, optBool, optEnum, optInt, optString, readJson, sendJson, type Handler } from "../http.js";
 import { zip } from "../zip.js";
 import { parseSchemaBody } from "./run.js";
@@ -24,13 +24,24 @@ export const exportRoute: Handler = async (ctx, req, res) => {
   if (outputDir !== undefined) {
     const dir = resolveInside(ctx.root, outputDir);
     targets = Object.keys(schema.tables).map((table) => ({ table, file: path.join(dir, `${table}.${format}`) }));
+    for (const t of targets) assertNotSymlink(t.file);
     const clashes = targets.filter((t) => existsSync(t.file));
     if (clashes.length > 0 && !overwrite) {
       throw new UserError(`Refusing to overwrite existing files: ${clashes.map((t) => path.relative(ctx.root, t.file).split(path.sep).join("/")).join(", ")} (tick "Overwrite" to replace them)`);
     }
   }
 
-  const { data, report } = await generateWithLlm(schema, { seed, ...ctx.llm, env: ctx.env() });
+  // A closed connection (dialog or tab closed) stops the model calls and writes nothing.
+  const abort = new AbortController();
+  res.on("close", () => abort.abort());
+  let generated;
+  try {
+    generated = await generateWithLlm(schema, { seed, ...ctx.llm, env: ctx.env(), signal: abort.signal });
+  } catch (e) {
+    if (e instanceof LlmCancelledError) return;
+    throw e;
+  }
+  const { data, report } = generated;
   const text = (table: string) => serialize(data[table]!, Object.keys(schema.tables[table]!.columns), format);
 
   if (wantZip) {

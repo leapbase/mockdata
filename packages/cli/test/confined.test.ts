@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { checkSchemaPath, dbEnvNames, inferConfined, isEnvFile, resolveInside, toYaml, UserError } from "../src/cli.js";
+import { assertNotEnv, assertNotSymlink, checkSchemaPath, dbEnvNames, inferConfined, isEnvFile, resolveInside, toYaml, UserError } from "../src/cli.js";
 
 const tmp = () => realpathSync(mkdtempSync(join(tmpdir(), "mockdata-confined-")));
 
@@ -75,5 +75,36 @@ describe("inferConfined", () => {
 describe("toYaml", () => {
   it("quotes date-like strings so other YAML parsers keep them strings", () => {
     expect(toYaml({ d: "2024-01-01" })).toContain('"2024-01-01"');
+  });
+});
+
+describe("symlink safety", () => {
+  it("resolveInside rejects a dangling symlink and a symlinked directory that leads outside", () => {
+    const root = tmp();
+    const outside = tmp();
+    symlinkSync(join(outside, "missing.yaml"), join(root, "evil.yaml"));
+    expect(() => resolveInside(root, "evil.yaml")).toThrow(UserError);
+    mkdirSync(join(root, "real"));
+    symlinkSync(join(root, "real"), join(root, "alias"));
+    expect(resolveInside(root, "alias/x.yaml")).toContain("alias");
+  });
+  it("assertNotEnv refuses a file that is (or links to) a .env file", () => {
+    const root = tmp();
+    writeFileSync(join(root, ".env"), "SECRET=1");
+    symlinkSync(join(root, ".env"), join(root, "cfg.yaml"));
+    writeFileSync(join(root, "ok.yaml"), "tables: {}");
+    expect(() => assertNotEnv(join(root, "cfg.yaml"))).toThrow(/\.env/);
+    expect(() => assertNotEnv(join(root, "ok.yaml"))).not.toThrow();
+    expect(() => assertNotEnv(join(root, "missing.yaml"))).not.toThrow();
+  });
+  it("assertNotSymlink refuses any existing symlink, live or dangling", () => {
+    const root = tmp();
+    writeFileSync(join(root, "a.yaml"), "x");
+    symlinkSync(join(root, "a.yaml"), join(root, "live.yaml"));
+    symlinkSync(join(root, "nope"), join(root, "dangling.yaml"));
+    expect(() => assertNotSymlink(join(root, "live.yaml"))).toThrow(UserError);
+    expect(() => assertNotSymlink(join(root, "dangling.yaml"))).toThrow(UserError);
+    expect(() => assertNotSymlink(join(root, "a.yaml"))).not.toThrow();
+    expect(() => assertNotSymlink(join(root, "absent.yaml"))).not.toThrow();
   });
 });

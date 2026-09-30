@@ -27,7 +27,7 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
   const [files, setFiles] = useState<string[]>([]);
   const [path, setPath] = useState<string | null>(null);
   const [text, setText] = useState(STARTER);
-  const [savedText, setSavedText] = useState("");
+  const [savedText, setSavedText] = useState(STARTER);
   const [check, setCheck] = useState<api.ValidateResult | null>(null);
   const [config, setConfig] = useState<api.Config | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +63,19 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
 
   const dirty = text !== savedText;
 
+  /** Replacing the editor text would lose unsaved edits: ask first. */
+  const okToDiscard = () => !dirty || window.confirm("Discard your unsaved changes?");
+
+  // Closing the tab with unsaved edits asks too.
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+
   async function open(p: string) {
+    if (!okToDiscard()) return;
     try {
       const t = await api.getFile(p);
       setPath(p);
@@ -126,6 +138,9 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
     }
   }
 
+  // The schema's own llm block wins over the environment, so prefer the validation result.
+  const llmState = check?.ok && check.llm ? check.llm : config?.llm;
+
   const errors = check && !check.ok ? (check.errors ?? []) : [];
 
   return (
@@ -185,9 +200,9 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
           onGenerate={() => void generate()}
           running={running}
           llm={{
-            available: config?.llm.ok === true,
-            reason: config && !config.llm.ok ? config.llm.reason : undefined,
-            provider: config?.llm.ok ? config.llm.provider : undefined,
+            available: llmState?.ok === true,
+            reason: llmState && !llmState.ok ? llmState.reason : undefined,
+            provider: llmState?.ok ? llmState.provider : undefined,
             on: llmOn,
             onToggle: setLlmOn,
           }}
@@ -201,6 +216,7 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
           dbEnv={config?.dbEnv ?? []}
           onClose={() => setDialog(null)}
           onResult={(r) => {
+            if (!okToDiscard()) return;
             setPath(null);
             setText(r.schemaText);
             setSavedText("");

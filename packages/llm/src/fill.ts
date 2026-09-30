@@ -149,12 +149,30 @@ export async function fillLlmColumns(input: unknown, data: Dataset, opts: FillOp
     .map((c, i) => ({ ...c, order: i }))
     .sort((a, b) => level.get(a.table)! - level.get(b.table)! || a.order - b.order);
 
+  /** Backoff that wakes as soon as the run is cancelled. */
+  async function sleepUnlessAborted(ms: number): Promise<void> {
+    const signal = opts.signal;
+    if (!signal) return sleep(ms);
+    let onAbort!: () => void;
+    const aborted = new Promise<void>((resolve) => {
+      onAbort = resolve;
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      await Promise.race([sleep(ms), aborted]);
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+    }
+  }
+
   /** One request with retries; returns exactly `expected` strings or throws. */
   async function ask(where: string, prompt: string, expected: number): Promise<string[]> {
     let lastError = "no attempts made";
     let maxTokens = Math.min(MAX_OUTPUT_TOKENS, 256 + expected * TOKENS_PER_VALUE);
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      if (attempt > 0) await sleep(Math.min(500 * 2 ** (attempt - 1), 8000));
+      if (attempt > 0) await sleepUnlessAborted(Math.min(500 * 2 ** (attempt - 1), 8000));
+      // Retries are model requests too: a cancelled run must not make (or pay for) another one.
+      if (opts.signal?.aborted) throw new LlmCancelledError();
       try {
         report.calls++;
         const res = await opts.provider.complete({ system: SYSTEM, user: prompt, maxTokens });

@@ -78,6 +78,8 @@ describe("static files", () => {
     expect(home.status).toBe(200);
     expect(home.raw).toContain("hi");
     expect(home.headers.get("content-security-policy")).toContain("default-src 'self'");
+    expect(home.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(home.headers.get("x-frame-options")).toBe("DENY");
     expect((await get("/assets/a.js")).headers.get("content-type")).toContain("javascript");
     expect((await rawRequest(url, "/%2e%2e/mockdata-secret.txt", {})).status).toBe(404);
     expect((await rawRequest(url, "/..%2fmockdata-secret.txt", {})).status).toBe(404);

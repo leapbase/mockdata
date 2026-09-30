@@ -111,3 +111,34 @@ describe("PUT /api/file", () => {
     expect(res.status).toBe(415);
   });
 });
+
+describe("symlink escapes", () => {
+  it("does not read .env through a schema-named symlink", async () => {
+    const root = tmpRoot();
+    writeFileSync(join(root, ".env"), "SECRET_KEY=abc123\n");
+    symlinkSync(join(root, ".env"), join(root, "cfg.yaml"));
+    const { get } = await boot({ root });
+    const r = await get("/api/file?path=cfg.yaml");
+    expect(r.status).toBe(400);
+    expect(r.raw).not.toContain("abc123");
+  });
+
+  it("does not write through a dangling symlink that points outside the root", async () => {
+    const root = tmpRoot();
+    const outside = tmpRoot();
+    symlinkSync(join(outside, "pwned.yaml"), join(root, "evil.yaml"));
+    const { put } = await boot({ root });
+    const r = await put("/api/file", { path: "evil.yaml", text: "x", create: true });
+    expect(r.status).toBe(400);
+    expect(existsSync(join(outside, "pwned.yaml"))).toBe(false);
+  });
+
+  it("does not overwrite a live symlinked schema either", async () => {
+    const root = tmpRoot();
+    writeFileSync(join(root, "real.yaml"), "keep");
+    symlinkSync(join(root, "real.yaml"), join(root, "link.yaml"));
+    const { put } = await boot({ root });
+    expect((await put("/api/file", { path: "link.yaml", text: "x" })).status).toBe(400);
+    expect(readFileSync(join(root, "real.yaml"), "utf8")).toBe("keep");
+  });
+});
