@@ -21,6 +21,9 @@ npx vitest run packages/core/test/generate.test.ts -t "orphan"   # single file /
 npm run build                              # tsc core then cli (cli imports core's dist; typecheck is an alias)
 node packages/cli/dist/bin.js generate examples/shop.yaml -o out -f csv
 MOCKDATA_ROOT=$PWD node packages/mcp/dist/bin.js   # MCP server on stdio
+MOCKDATA_ROOT=$PWD/examples node packages/mcp/dist/bin.js --http   # MCP over HTTP, http://127.0.0.1:4748/mcp
+npm run ui -- examples                     # web UI, http://127.0.0.1:4747 (needs npm run build first)
+npm run dev -w packages/web                # Vite dev server for the UI; proxies /api to a running mockdata-ui
 ```
 
 Build order is core, llm, inputs, cli, mcp, server, then web via Vite (each imports the earlier ones' `dist`). Each package sets its own `outDir` (a base-config `outDir` resolves relative to the repo root, not the package). Vitest aliases `@mockdata/core` to its source (`vitest.config.ts`), so tests need no build.

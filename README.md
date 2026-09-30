@@ -28,6 +28,18 @@ npx mockdata generate examples/shop.yaml -s 123               # same seed = same
 npx mockdata validate examples/shop.yaml                      # check a schema without generating
 ```
 
+### Run the servers
+
+Run `npm run build` first (and again after code changes). Both servers listen on 127.0.0.1 only.
+
+| What | Command | Address |
+|---|---|---|
+| Web UI | `npm run ui -- <folder>` (`--port n` to change) | http://127.0.0.1:4747 |
+| MCP server over HTTP | `MOCKDATA_ROOT=<folder> node packages/mcp/dist/bin.js --http` (`--port n`) | http://127.0.0.1:4748/mcp |
+| MCP server over stdio | started by the client: `claude mcp add mockdata -e MOCKDATA_ROOT=<folder> -- node <repo>/packages/mcp/dist/bin.js` | (none) |
+
+`<folder>` holds your schema files and `.env`; nothing outside it is read or written. Details: [Use it from an AI agent (MCP)](#use-it-from-an-ai-agent-mcp) and [Web UI](#web-ui).
+
 `examples/shop.yaml`:
 
 ```yaml
