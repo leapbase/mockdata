@@ -252,6 +252,19 @@ Everyone outside this machine also needs a shared secret token. Set `MOCKDATA_TO
 
 Traffic is plain http, so the token can be read by anyone who can see the network path. Use a network you trust, such as a Tailscale tailnet (already encrypted). Anyone holding the token can read and write schema files under the root, spend your LLM credits and use every MCP tool, so treat it like a password and keep sensitive files out of the root. Rotate it by changing `MOCKDATA_TOKEN` and restarting.
 
+## Generation runs in worker threads
+
+The web UI generates data (previews, runs with model-written columns, exports) in worker threads, so a big run no longer freezes the page, sign-ins or anyone else's requests. With 20,000 rows x 6 columns, a trivial request that waited up to 3.2 s behind ten concurrent generations on the main thread waits 2-5 ms with the pool, and preview throughput went from 4 to 11 requests a second (`npm run loadtest` measures this on your machine).
+
+| Variable | Meaning |
+|---|---|
+| `MOCKDATA_WORKERS` | threads (default: up to 4, always leaving a core for the server); `0` generates on the main thread as before |
+| `MOCKDATA_WORKER_QUEUE` | jobs allowed to wait for a free thread (16); more are refused with 503 "busy" |
+| `MOCKDATA_JOB_TIMEOUT_SECS` | a job running longer is stopped and answered with 504 (120); the clock starts once the thread has loaded, not while it starts |
+| `MOCKDATA_WORKER_HEAP_MB` | each thread's memory limit (2048), so one pathological schema cannot take the server down |
+
+Threads start when first needed and are reused. A worker that crashes or overruns costs only that job and one replacement thread. Closing the browser tab cancels a queued job and stops a model run before its next request. The same seed gives byte-identical output with or without the pool. Worker threads run the compiled code, so `npm run build` is needed (as it already is for `npm run ui`). The CLI and the MCP server still generate on their own thread.
+
 ## Accounts and going public
 
 For a site other people sign in to, set `MOCKDATA_PUBLIC_URL` and start the UI as usual. Accounts are an opt-in mode; without that variable nothing here applies.

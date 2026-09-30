@@ -4,16 +4,17 @@ import path from "node:path";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { parseArgs } from "node:util";
 import { parsePublicUrl } from "@mockdata/cli";
-import { createAccounts, startServer } from "@mockdata/server";
+import { createAccounts, poolSettingsFromEnv, startServer } from "@mockdata/server";
 import type { Mailer } from "@mockdata/auth-kit";
 import { runLoadTest, type RampOptions, type RequestRecord, type StepStats } from "./kit/index.js";
 
 const { values } = parseArgs({
   options: {
-    scenarios: { type: "string", default: "session,login,generate" },
+    scenarios: { type: "string", default: "session,login,generate,export" },
     users: { type: "string", default: "60" },
     "step-secs": { type: "string", default: "4" },
     rows: { type: "string", default: "20000" },
+    workers: { type: "string" },
   },
 });
 const scenarios = new Set(values.scenarios!.split(","));
@@ -21,6 +22,8 @@ const userCount = Number(values.users);
 const stepSecs = Number(values["step-secs"]);
 const rows = Number(values.rows);
 const PASSWORD = "L0ad$testPassw0rd";
+// Worker threads for generation: --workers N (0 = on the main thread, the old behaviour), else MOCKDATA_WORKERS / the default.
+const poolSettings = poolSettingsFromEnv(values.workers === undefined ? process.env : { ...process.env, MOCKDATA_WORKERS: values.workers });
 
 const mailer: Mailer = { isConfigured: () => true, verifyConnection: async () => undefined, send: async () => undefined, isAuthError: () => false, formatError: String };
 
@@ -40,9 +43,10 @@ for (const limiter of Object.values(accounts.limiters)) {
   limiter.hit = () => true;
   limiter.isLimited = () => false;
 }
-const { server, url } = await startServer({ accounts, root: dir, port: 0, env: {} });
+const { server, url } = await startServer({ accounts, root: dir, port: 0, env: {}, workers: poolSettings });
 
 console.log(`mockdata load test against ${url} (real SQLite file, real password hashing, ${userCount} seeded users, ${process.version})`);
+console.log(poolSettings.size > 0 ? `generation: ${poolSettings.size} worker thread(s), queue ${poolSettings.maxQueue}` : "generation: on the main thread (no workers)");
 const seedStart = Date.now();
 const cookies: string[] = [];
 const emails: string[] = [];
@@ -125,10 +129,20 @@ const all: Record<string, Scenario> = {
     ramp: { startConcurrency: 1, stepSize: 1, maxConcurrency: 10 },
     probe: true,
   },
+  export: {
+    label: `Scenario: zip export (POST /api/export, ${rows} rows x 6 columns, CSV)`,
+    note: "Generate, serialize and zip: the heaviest request. The probe shows how long a trivial request waits meanwhile.",
+    request: () => {
+      const cookie = cookies[nextUser()]!;
+      return timed(() => fetch(`${url}/api/export`, { method: "POST", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ text: SCHEMA(rows), zip: true, format: "csv" }) }));
+    },
+    ramp: { startConcurrency: 1, stepSize: 1, maxConcurrency: 6 },
+    probe: true,
+  },
 };
 
 const summary: string[] = [];
-for (const name of ["session", "login", "generate"]) {
+for (const name of ["session", "login", "generate", "export"]) {
   const s = all[name]!;
   if (!scenarios.has(name)) continue;
   const delay = monitorEventLoopDelay({ resolution: 5 });
@@ -150,7 +164,7 @@ for (const name of ["session", "login", "generate"]) {
     ...s.ramp,
     stepDurationSecs: stepSecs,
     maxErrorRate: 1,
-    maxP95Ms: name === "generate" ? 5000 : 1500,
+    maxP95Ms: name === "generate" || name === "export" ? 5000 : 1500,
     onStep: (step: StepStats) => {
       if (!s.probe) return;
       console.log(`               probe (GET /api/auth/me during this step): P50 ${Math.round(pct(probeRecords, 0.5))}ms  P95 ${Math.round(pct(probeRecords, 0.95))}ms  worst ${Math.round(Math.max(0, ...probeRecords))}ms  (${step.concurrency} generating)`);
@@ -169,5 +183,6 @@ for (const name of ["session", "login", "generate"]) {
 console.log("\nSummary\n" + summary.join("\n"));
 server.closeAllConnections();
 await new Promise((r) => server.close(r));
+await new Promise((r) => setTimeout(r, 200)); // the pool stops its threads on close
 accounts.close();
 rmSync(dir, { recursive: true, force: true });
