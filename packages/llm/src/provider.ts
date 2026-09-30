@@ -15,6 +15,8 @@ export interface Usage {
 export interface Completion {
   text: string;
   usage: Usage;
+  /** The provider stopped because it hit the token limit, so `text` is cut off. */
+  truncated?: boolean;
 }
 
 /** Minimal provider contract: one prompt in, text and token usage out. */
@@ -102,7 +104,11 @@ export function createProvider(config: ResolvedLlmConfig, deps: ProviderDeps = {
           timeoutMs,
         );
         const text = (json.content ?? []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
-        return { text, usage: { inputTokens: json.usage?.input_tokens ?? 0, outputTokens: json.usage?.output_tokens ?? 0 } };
+        return {
+          text,
+          usage: { inputTokens: json.usage?.input_tokens ?? 0, outputTokens: json.usage?.output_tokens ?? 0 },
+          truncated: json.stop_reason === "max_tokens",
+        };
       },
     };
   }
@@ -129,7 +135,11 @@ export function createProvider(config: ResolvedLlmConfig, deps: ProviderDeps = {
         timeoutMs,
       );
       const text = json.choices?.[0]?.message?.content ?? "";
-      return { text, usage: { inputTokens: json.usage?.prompt_tokens ?? 0, outputTokens: json.usage?.completion_tokens ?? 0 } };
+      return {
+        text,
+        usage: { inputTokens: json.usage?.prompt_tokens ?? 0, outputTokens: json.usage?.completion_tokens ?? 0 },
+        truncated: json.choices?.[0]?.finish_reason === "length",
+      };
     },
   };
 }

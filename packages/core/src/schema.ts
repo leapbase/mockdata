@@ -73,6 +73,11 @@ export const LlmConfigSchema = z
     batchSize: z.number().int().positive().max(200).optional(),
     /** Retries per request on rate limits, server errors, or unusable replies (default 3). */
     maxRetries: z.number().int().min(0).max(10).optional(),
+    /**
+     * How many foreign-key hops of parent rows to show the model with each row
+     * (default 1; 0 = only the row itself; max 2). Deeper context costs tokens.
+     */
+    contextDepth: z.number().int().min(0).max(2).optional(),
   })
   .strict();
 

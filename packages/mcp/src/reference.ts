@@ -34,7 +34,9 @@ Cross-column rules
 LLM columns (semantic free text)
   type: string
   llm: true                     or  llm: { prompt: "what to write" }
-  The model sees the row's other values. Not combinable with ref/enum/pattern/faker/after/primaryKey.
+  The model sees the row's other values and, through foreign keys, the parent rows it belongs to (llm.contextDepth: 0-2,
+  default 1), so a review can be written about the actual product. Parent tables are filled first, so children also
+  see the text the model wrote for their parents. Not combinable with ref/enum/pattern/faker/after/primaryKey.
   Provider settings come from the server's environment/.env (AI_PROVIDER, <PROVIDER>_MODEL, OLLAMA_BASE_URL, API keys),
   or from a top-level  llm: { provider: anthropic|openai|ollama|openai-compatible, model: ..., baseUrl: ... }.
 

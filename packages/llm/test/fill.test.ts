@@ -133,3 +133,50 @@ describe("parseStringArray", () => {
     expect(parseStringArray('Sure! ["a","b"] Enjoy')).toEqual(["a", "b"]);
   });
 });
+
+describe("truncated replies", () => {
+  const rowsOf = (n: number) => JSON.stringify(Array.from({ length: n }, (_, i) => `value ${i}`));
+
+  /** Fake model that cuts its answer off (like hitting max_tokens) while the token limit is below `needs`. */
+  function limited(needs: number, flag: boolean) {
+    const limits: number[] = [];
+    const provider: LlmProvider = {
+      name: "fake",
+      async complete(req) {
+        limits.push(req.maxTokens);
+        const n = Number(/exactly (\d+) strings/.exec(req.user)![1]);
+        const full = rowsOf(n);
+        if (req.maxTokens >= needs) return { text: full, usage: { inputTokens: 1, outputTokens: 1 } };
+        return { text: full.slice(0, Math.floor(full.length / 2)), usage: { inputTokens: 1, outputTokens: 1 }, ...(flag ? { truncated: true } : {}) };
+      },
+    };
+    return { provider, limits };
+  }
+
+  it("gives a generous starting budget per row", async () => {
+    const { provider, limits } = limited(0, true);
+    await generateWithLlm(schema(12), { provider, sleep: noSleep });
+    expect(limits).toEqual([256 + 12 * 150]);
+  });
+
+  it("doubles the token limit after a cut-off reply instead of repeating the same request", async () => {
+    const { provider, limits } = limited(3000, true);
+    const { data, report } = await generateWithLlm(schema(12), { provider, sleep: noSleep });
+    expect(limits).toEqual([2056, 4112]);
+    expect(report.calls).toBe(2);
+    expect(data.reviews!.every((r) => typeof r.body === "string")).toBe(true);
+  });
+
+  it("notices truncation even when the provider does not report a stop reason", async () => {
+    const { provider, limits } = limited(3000, false);
+    await generateWithLlm(schema(12), { provider, sleep: noSleep });
+    expect(limits).toEqual([2056, 4112]);
+  });
+
+  it("stops with advice to lower batchSize when even the maximum is not enough", async () => {
+    const { provider, limits } = limited(1e9, true);
+    await expect(generateWithLlm(schema(12), { provider, sleep: noSleep })).rejects.toThrow(/lower "llm\.batchSize"/);
+    expect(limits[limits.length - 1]).toBe(8192);
+    expect(limits.length).toBeLessThanOrEqual(4);
+  });
+});
