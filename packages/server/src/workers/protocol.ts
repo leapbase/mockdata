@@ -7,6 +7,8 @@ export type ToWorker = { type: "job"; id: number; job: Job } | { type: "abort"; 
 
 /** Messages from a worker to the main thread. `id` names the job they answer, so a late message cannot reach the wrong one. */
 export type FromWorker =
+  /** Sent once when the worker's code has loaded and it can take a job. */
+  | { type: "ready" }
   | { type: "progress"; id: number; progress: LlmProgress }
   | { type: "result"; id: number; result: JobResults[Job["kind"]] }
   | { type: "error"; id: number; error: WireError };

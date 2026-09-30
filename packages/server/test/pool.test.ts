@@ -12,6 +12,10 @@ import type { FromWorker, ToWorker, WorkerLike } from "../src/workers/protocol.j
 class FakeWorker extends EventEmitter implements WorkerLike {
   sent: ToWorker[] = [];
   terminated = false;
+  constructor(announceReady = true) {
+    super();
+    if (announceReady) queueMicrotask(() => this.say({ type: "ready" })); // a real worker says this once its code has loaded
+  }
   postMessage(msg: ToWorker): void {
     this.sent.push(msg);
   }
@@ -37,7 +41,7 @@ class FakeWorker extends EventEmitter implements WorkerLike {
 const job: PreviewJob = { kind: "preview", schema: { tables: {} } as never, previewRows: 5 };
 const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));
 
-function makePool(opts: { size?: number; queue?: number; timeoutMs?: number; graceMs?: number } = {}) {
+function makePool(opts: { size?: number; queue?: number; timeoutMs?: number; graceMs?: number; announceReady?: boolean } = {}) {
   const workers: FakeWorker[] = [];
   const pool = new WorkerPool({
     size: opts.size ?? 2,
@@ -45,7 +49,7 @@ function makePool(opts: { size?: number; queue?: number; timeoutMs?: number; gra
     jobTimeoutMs: opts.timeoutMs ?? 10_000,
     abortGraceMs: opts.graceMs ?? 10_000,
     createWorker: () => {
-      const w = new FakeWorker();
+      const w = new FakeWorker(opts.announceReady ?? true);
       workers.push(w);
       return w;
     },
@@ -157,6 +161,28 @@ describe("WorkerPool: a job that runs too long or a worker that dies", () => {
     expect(workers).toHaveLength(2);
     workers[1]!.finish({ preview: { ok: "after" } });
     await expect(next).resolves.toEqual({ preview: { ok: "after" } });
+  });
+
+  it("does not count a worker's start-up against the job's time limit", async () => {
+    const { pool, workers } = makePool({ size: 1, timeoutMs: 30, announceReady: false }); // loading the code is slow
+    let outcome = "pending";
+    const a = pool.run(job).catch((e) => (outcome = e instanceof JobTimeoutError ? "timeout" : "other"));
+    await tick(120); // four times the limit, and the worker has still not loaded
+    expect(outcome).toBe("pending");
+    workers[0]!.say({ type: "ready" }); // now the job really starts, and the clock with it
+    await a;
+    expect(outcome).toBe("timeout");
+    expect(workers[0]!.terminated).toBe(true);
+  });
+
+  it("lets a job that starts promptly finish within its limit even when the worker was slow to load", async () => {
+    const { pool, workers } = makePool({ size: 1, timeoutMs: 200, announceReady: false });
+    const a = pool.run(job);
+    await tick(250);
+    workers[0]!.say({ type: "ready" });
+    await tick();
+    workers[0]!.finish({ preview: { done: true } });
+    await expect(a).resolves.toEqual({ preview: { done: true } });
   });
 
   it("rejects the running job if its worker crashes, and replaces the worker", async () => {

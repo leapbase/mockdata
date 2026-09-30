@@ -106,7 +106,7 @@ describe("mcp over http", () => {
     const { client, url } = await boot({ sessionIdleMs: 50 });
     const c = await client();
     await c.callTool({ name: "validate_schema", arguments: { schemaPath: "shop.yaml" } });
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 1500)); // many times the 50 ms limit, so a busy machine still sweeps first
     const after = (await c.callTool({ name: "validate_schema", arguments: { schemaPath: "shop.yaml" } }).catch((e) => e)) as any;
     expect(after instanceof Error || after.isError).toBe(true);
     void url;

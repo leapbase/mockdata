@@ -13,6 +13,8 @@ if (!port) throw new Error("worker.ts must run in a worker thread");
 const post = (msg: FromWorker, transfer: ArrayBuffer[] = []) => port.postMessage(msg, transfer);
 let current: { id: number; abort: AbortController } | undefined;
 
+post({ type: "ready" });
+
 port.on("message", async (msg: ToWorker) => {
   if (msg.type === "abort") {
     if (current?.id === msg.id) current.abort.abort();

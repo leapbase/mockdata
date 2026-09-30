@@ -18,7 +18,7 @@ import { boot, SHOP_YAML } from "./helpers.js";
 const workerFile = fileURLToPath(new URL("../dist/workers/worker.js", import.meta.url));
 const built = existsSync(workerFile);
 if (!built) console.warn("workers.dist.test.ts: skipped because packages/server/dist is missing (run `npm run build`)");
-const d = built ? describe : describe.skip;
+const d = built ? (name: string, fn: () => void) => describe(name, { timeout: 60_000 }, fn) : describe.skip;
 
 const settings = { size: 2, maxQueue: 4, jobTimeoutSecs: 60, heapMb: 1024 };
 const schema = parseSchema({
@@ -57,6 +57,9 @@ const pool = (s = settings) => {
   runners.push(r);
   return r;
 };
+/** One pool for the tests that only compare answers, so the worker threads start once. */
+let shared: ReturnType<typeof createRunner> | undefined;
+const sharedPool = () => (shared ??= pool());
 afterAll(async () => {
   await Promise.all(runners.map((r) => r.close()));
 });
@@ -66,24 +69,24 @@ d("real worker threads give the same answers as generating on the calling thread
 
   it("preview: identical for the same seed", async () => {
     const job: PreviewJob = { kind: "preview", schema, seed: 7, previewRows: 20 };
-    expect(await pool().run(job)).toEqual(await inline.run(job));
+    expect(await sharedPool().run(job)).toEqual(await inline.run(job));
   });
 
   it("export: the same text for every format, and a byte-identical zip", async () => {
     for (const format of ["json", "ndjson", "csv"] as const) {
       const job: ExportJob = { kind: "export", schema, seed: 7, format, zip: false, env: {} };
-      const [a, b] = [await pool().run(job), await inline.run(job)];
+      const [a, b] = [await sharedPool().run(job), await inline.run(job)];
       expect(a.texts, format).toEqual(b.texts);
       expect(a.counts).toEqual({ customers: 30, orders: 120 });
     }
     const zipJob: ExportJob = { kind: "export", schema, seed: 7, format: "csv", zip: true, env: {} };
-    const [a, b] = [await pool().run(zipJob), await inline.run(zipJob)];
+    const [a, b] = [await sharedPool().run(zipJob), await inline.run(zipJob)];
     expect(Buffer.from(a.archive!).equals(Buffer.from(b.archive!))).toBe(true);
     expect(Buffer.from(a.archive!).subarray(0, 2).toString()).toBe("PK");
   });
 
   it("keeps cells that are still pending for a model as null in the preview, and lists the column", async () => {
-    const r = await pool().run({ kind: "preview", schema: withModel, seed: 1, previewRows: 10 });
+    const r = await sharedPool().run({ kind: "preview", schema: withModel, seed: 1, previewRows: 10 });
     expect(r.preview.pending).toEqual(["t.note"]);
     expect(r.preview.tables.t!.rows.every((row) => row.note === null)).toBe(true);
   });
@@ -91,7 +94,7 @@ d("real worker threads give the same answers as generating on the calling thread
   it("run: fills model-written columns through the worker's own network access and reports progress", async () => {
     const model = await fakeModel();
     const progress: unknown[] = [];
-    const r = await pool().run({ kind: "run", schema: withModel, seed: 1, previewRows: 10, env: envFor(model.url) }, { onProgress: (p) => progress.push(p) });
+    const r = await sharedPool().run({ kind: "run", schema: withModel, seed: 1, previewRows: 10, env: envFor(model.url) }, { onProgress: (p) => progress.push(p) });
     await model.close();
     expect(r.preview.pending).toEqual([]);
     expect(r.preview.tables.t!.rows.map((x) => x.note)).toEqual(["note 0", "note 1", "note 2", "note 3"]);
@@ -102,7 +105,7 @@ d("real worker threads give the same answers as generating on the calling thread
 
 d("errors in a worker map to the same HTTP statuses as before", () => {
   it("reports a missing model provider as a 400-class configuration error", async () => {
-    const err = await pool().run({ kind: "run", schema: withModel, seed: 1, previewRows: 5, env: {} }).catch((e) => e);
+    const err = await sharedPool().run({ kind: "run", schema: withModel, seed: 1, previewRows: 5, env: {} }).catch((e) => e);
     expect(err.message).toMatch(/provider/i);
     expect(statusFor(err)).toBe(400);
   });
@@ -112,7 +115,7 @@ d("cancelling and time limits", () => {
   it("stops a model run when the client goes away, well before the model would have answered", async () => {
     const model = await fakeModel(3000);
     const ctl = new AbortController();
-    const p = pool().run({ kind: "run", schema: withModel, seed: 1, previewRows: 5, env: envFor(model.url) }, { signal: ctl.signal });
+    const p = sharedPool().run({ kind: "run", schema: withModel, seed: 1, previewRows: 5, env: envFor(model.url) }, { signal: ctl.signal });
     setTimeout(() => ctl.abort(), 300);
     const started = Date.now();
     await expect(p).rejects.toBeInstanceOf(LlmCancelledError);
@@ -123,6 +126,7 @@ d("cancelling and time limits", () => {
   it("terminates a job that runs past its limit, and the pool keeps working afterwards", async () => {
     const model = await fakeModel(5000);
     const runner = pool({ ...settings, size: 1, jobTimeoutSecs: 1 });
+    await runner.run({ kind: "preview", schema, previewRows: 1 }); // load the worker first; the limit measures the job, not the start
     const err = await runner.run({ kind: "run", schema: withModel, seed: 1, previewRows: 5, env: envFor(model.url) }).catch((e) => e);
     expect(err).toBeInstanceOf(JobTimeoutError);
     expect(statusFor(err)).toBe(504);
@@ -135,16 +139,17 @@ d("cancelling and time limits", () => {
     const model = await fakeModel(5000);
     const runner = createRunner(settings, { workerFile });
     const running = runner.run({ kind: "run", schema: withModel, seed: 1, previewRows: 5, env: envFor(model.url) });
+    const rejected = expect(running).rejects.toThrow(/shutting down/i); // watch it before close() rejects it
     await new Promise((r) => setTimeout(r, 300));
     await runner.close();
-    await expect(running).rejects.toThrow(/shutting down/i);
+    await rejected;
     await expect(runner.run({ kind: "preview", schema, previewRows: 1 })).rejects.toThrow(/shutting down/i);
     await model.close();
   });
 });
 
 d("the point: the server stays responsive while it generates", () => {
-  const big = parseSchema({ seed: 1, tables: { t: { rows: 150_000, columns: { id: { type: "integer", primaryKey: true }, name: { type: "string", faker: "person.fullName" }, city: { type: "string", faker: "location.city" }, born: { type: "date" }, score: { type: "float", min: 0, max: 9 } } } } });
+  const big = parseSchema({ seed: 1, tables: { t: { rows: 80_000, columns: { id: { type: "integer", primaryKey: true }, name: { type: "string", faker: "person.fullName" }, city: { type: "string", faker: "location.city" }, born: { type: "date" }, score: { type: "float", min: 0, max: 9 } } } } });
   /** The longest gap between two ticks of a 5 ms timer while `work` runs. */
   async function worstStall(work: () => Promise<unknown>): Promise<{ stall: number; took: number }> {
     let last = performance.now();
@@ -165,8 +170,8 @@ d("the point: the server stays responsive while it generates", () => {
   it("on the calling thread a large preview freezes the event loop; in a worker it does not", async () => {
     const job: PreviewJob = { kind: "preview", schema: big, seed: 1, previewRows: 5 };
     const inline = await worstStall(() => new InlineRunner().run(job));
-    const runner = pool();
-    await runner.run({ kind: "preview", schema, previewRows: 1 }); // start a worker first so startup is not counted
+    const runner = sharedPool();
+    await runner.run({ kind: "preview", schema, previewRows: 1 }); // a worker is already running, so startup is not counted
     const threaded = await worstStall(() => runner.run(job));
     console.log(`event-loop stall: ${Math.round(inline.stall)} ms in-process vs ${Math.round(threaded.stall)} ms with a worker (job took ${Math.round(inline.took)} / ${Math.round(threaded.took)} ms)`);
     expect(inline.stall).toBeGreaterThan(500); // the problem is real

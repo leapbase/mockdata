@@ -22,13 +22,16 @@ interface Active {
   resolve: (result: never) => void;
   reject: (error: Error) => void;
   onProgress?: (p: LlmProgress) => void;
-  timeout: NodeJS.Timeout;
+  /** Armed once the worker is ready, so loading the code does not count against the job. */
+  timeout?: NodeJS.Timeout;
   grace?: NodeJS.Timeout;
   detach: () => void;
 }
 
 interface Slot {
   worker: WorkerLike;
+  /** The worker has loaded its code and said so. */
+  ready: boolean;
   active?: Active;
 }
 
@@ -86,7 +89,7 @@ export class WorkerPool implements Runner {
   private spawn(): Slot {
     const worker = this.opts.createWorker();
     worker.unref(); // an idle worker must not keep a process alive
-    const slot: Slot = { worker };
+    const slot: Slot = { worker, ready: false };
     this.slots.push(slot);
     worker.on("message", (msg: FromWorker) => this.onMessage(slot, msg));
     // A crash, or an exit nobody asked for: fail the job that was running and forget this thread.
@@ -117,13 +120,24 @@ export class WorkerPool implements Runner {
       resolve: waiting.resolve,
       reject: waiting.reject,
       onProgress: hooks.onProgress,
-      timeout: setTimeout(() => this.lose(slot, new JobTimeoutError(Math.round(this.opts.jobTimeoutMs / 1000)), true), this.opts.jobTimeoutMs),
       detach: () => hooks.signal?.removeEventListener("abort", onAbort),
     };
+    if (slot.ready) this.armTimeout(slot);
     slot.worker.postMessage({ type: "job", id, job });
   }
 
+  private armTimeout(slot: Slot): void {
+    const active = slot.active;
+    if (!active || active.timeout) return;
+    active.timeout = setTimeout(() => this.lose(slot, new JobTimeoutError(Math.round(this.opts.jobTimeoutMs / 1000)), true), this.opts.jobTimeoutMs);
+  }
+
   private onMessage(slot: Slot, msg: FromWorker): void {
+    if (msg.type === "ready") {
+      slot.ready = true;
+      this.armTimeout(slot); // a job already waiting on this worker starts its clock now
+      return;
+    }
     const active = slot.active;
     if (!active || active.id !== msg.id) return; // late or stray: that job is already over
     if (msg.type === "progress") return void active.onProgress?.(msg.progress);
@@ -137,7 +151,7 @@ export class WorkerPool implements Runner {
   private finish(slot: Slot): Active | undefined {
     const active = slot.active;
     if (!active) return undefined;
-    clearTimeout(active.timeout);
+    if (active.timeout) clearTimeout(active.timeout);
     if (active.grace) clearTimeout(active.grace);
     active.detach();
     slot.active = undefined;
