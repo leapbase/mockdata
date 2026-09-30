@@ -1,11 +1,11 @@
 import { assertRowBudget, parseSchemaText, UserError } from "@mockdata/cli";
-import { CycleError, generate, llmColumns, parseSchema, planGeneration, SchemaError, type DataSchemaT } from "@mockdata/core";
-import { LlmCancelledError, generateWithLlm } from "@mockdata/llm";
+import { CycleError, llmColumns, parseSchema, planGeneration, SchemaError, type DataSchemaT } from "@mockdata/core";
+import { LlmCancelledError } from "@mockdata/llm";
 import { assertSchemaShape, beginRun, throttleRun, throttleValidate } from "../accounts/guards.js";
 import { publicMessage, statusFor } from "../errors.js";
 import { llmStatus } from "./config.js";
-import { optInt, optStringArray, readJson, reqString, sendJson, type Handler } from "../http.js";
-import { applyRowOverride, buildPreview } from "../preview.js";
+import { abortOnClose, optInt, optStringArray, readJson, reqString, sendJson, type Handler } from "../http.js";
+import { applyRowOverride } from "../preview.js";
 
 /** Schema text from the editor. YAML is a superset of JSON, so one parser handles both. */
 export function parseSchemaBody(body: Record<string, unknown>): DataSchemaT {
@@ -74,8 +74,8 @@ export const generateRoute: Handler = async (ctx, req, res) => {
   assertSchemaShape(ctx, schema);
   if (ctx.accounts) assertRowBudget(schema, ctx.accounts.limits.maxRows);
   // llm columns stay pending here; the stream route fills them.
-  const data = generate(schema, { seed, deferLlm: true });
-  sendJson(res, 200, buildPreview(schema, data, { seed, rows: previewRows, tables }));
+  const { preview } = await ctx.runner.run({ kind: "preview", schema, seed, previewRows, tables }, { signal: abortOnClose(res) });
+  sendJson(res, 200, preview);
 };
 
 /**
@@ -93,20 +93,13 @@ export const streamRoute: Handler = async (ctx, req, res) => {
     "cache-control": "no-store",
     "x-content-type-options": "nosniff",
   });
-  const abort = new AbortController();
-  res.on("close", () => abort.abort());
+  const signal = abortOnClose(res);
   const send = (event: string, data: unknown) => {
     if (!res.writableEnded && !res.destroyed) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
   try {
-    const { data, report } = await generateWithLlm(schema, {
-      seed,
-      ...ctx.llm,
-      env: ctx.env(),
-      signal: abort.signal,
-      onProgress: (p) => send("progress", p),
-    });
-    send("done", { ...buildPreview(schema, data, { seed, rows: previewRows, tables }), report });
+    const { preview, report } = await ctx.runner.run({ kind: "run", schema, seed, previewRows, tables, env: ctx.env() }, { signal, onProgress: (p) => send("progress", p) });
+    send("done", { ...preview, report });
   } catch (e) {
     // A cancelled run has no listener left; anything else is reported (messages name variables, never values).
     if (!(e instanceof LlmCancelledError)) send("error", { name: statusFor(e) >= 500 && ctx.accounts ? "Error" : (e as Error).name, message: publicMessage(e, !!ctx.accounts) });

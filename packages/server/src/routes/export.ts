@@ -1,11 +1,10 @@
 import { existsSync, lstatSync } from "node:fs";
 import path from "node:path";
 import { assertWithinDiskQuota } from "@mockdata/accounts";
-import { assertNotSymlink, assertRowBudget, resolveInside, serialize, UserError, writeFileConfined } from "@mockdata/cli";
-import { LlmCancelledError, generateWithLlm } from "@mockdata/llm";
+import { assertNotSymlink, assertRowBudget, resolveInside, UserError, writeFileConfined } from "@mockdata/cli";
+import { LlmCancelledError } from "@mockdata/llm";
 import { beginRun } from "../accounts/guards.js";
-import { HttpError, optBool, optEnum, optInt, optString, readJson, sendJson, type Handler } from "../http.js";
-import { zip } from "../zip.js";
+import { abortOnClose, HttpError, optBool, optEnum, optInt, optString, readJson, sendJson, type Handler } from "../http.js";
 import { parseSchemaBody } from "./run.js";
 
 const FORMATS = ["json", "ndjson", "csv"] as const;
@@ -37,23 +36,21 @@ export const exportRoute: Handler = async (ctx, req, res) => {
   const run = await beginRun(ctx, parsed); // row cap, daily LLM budget and run slot (accounts mode)
   const schema = run.schema;
 
-  // A closed connection (dialog or tab closed) stops the model calls and writes nothing.
-  const abort = new AbortController();
-  res.on("close", () => abort.abort());
-  let generated;
+  // A closed connection (dialog or tab closed) stops the model calls and writes nothing. The slot is held until
+  // generation, serializing and zipping are all done.
+  let result;
   try {
-    generated = await generateWithLlm(schema, { seed, ...ctx.llm, env: ctx.env(), signal: abort.signal });
+    result = await ctx.runner.run({ kind: "export", schema, seed, format, zip: wantZip, env: ctx.env() }, { signal: abortOnClose(res) });
   } catch (e) {
     if (e instanceof LlmCancelledError) return;
     throw e;
   } finally {
     run.done();
   }
-  const { data, report } = generated;
-  const text = (table: string) => serialize(data[table]!, Object.keys(schema.tables[table]!.columns), format);
+  const { counts, report } = result;
 
   if (wantZip) {
-    const archive = zip(Object.keys(schema.tables).map((table) => ({ name: `${table}.${format}`, data: Buffer.from(text(table)) })));
+    const archive = Buffer.from(result.archive!.buffer, result.archive!.byteOffset, result.archive!.byteLength);
     res.writeHead(200, {
       "content-type": "application/zip",
       "content-disposition": 'attachment; filename="mockdata.zip"',
@@ -64,7 +61,7 @@ export const exportRoute: Handler = async (ctx, req, res) => {
     return;
   }
 
-  const texts = new Map(targets.map(({ table }) => [table, text(table)]));
+  const texts = new Map(targets.map(({ table }) => [table, result.texts![table]!]));
   if (ctx.accounts) {
     // Refuse before writing anything if the files would not fit in this user's storage (replacing a file frees its old size).
     const incoming = [...texts.values()].reduce((n, t) => n + Buffer.byteLength(t), 0);
@@ -82,7 +79,7 @@ export const exportRoute: Handler = async (ctx, req, res) => {
   }
   sendJson(res, 200, {
     files,
-    rows: Object.fromEntries(Object.entries(data).map(([t, r]) => [t, r.length])),
+    rows: counts,
     ...(report.calls > 0 ? { llm: report } : {}),
   });
 };

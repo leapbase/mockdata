@@ -7,6 +7,8 @@ import { assertLocal, HttpError, sendJson, setBodyLimit, type Ctx, type Handler 
 import { publicMessage, statusFor } from "./errors.js";
 import { serveStatic } from "./static.js";
 import type { AccountsRuntime } from "./accounts/runtime.js";
+import { InlineRunner } from "./workers/inline.js";
+import type { Runner } from "./workers/runner.js";
 import { AUTH_ROUTES, meWithoutAccounts } from "./routes/auth.js";
 import { getConfig } from "./routes/config.js";
 import { listFiles, readFile, writeFile } from "./routes/files.js";
@@ -23,6 +25,8 @@ export interface AppOptions {
   llm?: Ctx["llm"];
   /** Set when listening beyond localhost (see startServer): who may reach the server. */
   access?: NetworkAccess;
+  /** Where heavy jobs run. Default: the calling thread for now (a worker pool replaces this). */
+  runner?: Runner;
   /** Accounts mode (see createAccounts): every API call needs a session and runs in that user's private folder. */
   accounts?: AccountsRuntime;
   /** Built web app (default: packages/web/dist next to this package). */
@@ -60,7 +64,7 @@ export function createApp(opts: AppOptions = {}): (req: IncomingMessage, res: Se
   const root = path.resolve(opts.root ?? process.cwd());
   const baseEnv = opts.env ?? process.env;
   const staticDir = opts.staticDir ?? fileURLToPath(new URL("../../web/dist", import.meta.url));
-  const ctx: Ctx = { root, env: () => loadEnv(root, baseEnv), llm: opts.llm ?? {} };
+  const ctx: Ctx = { root, env: () => loadEnv(root, baseEnv), llm: opts.llm ?? {}, runner: opts.runner ?? new InlineRunner(opts.llm) };
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     assertLocal(req, opts.access);

@@ -3,6 +3,7 @@ import { localRequestProblem, type NetworkAccess } from "@mockdata/cli";
 import type { AccountUser } from "@mockdata/accounts";
 import type { GenerateWithLlmOptions } from "@mockdata/llm";
 import type { AccountsRuntime } from "./accounts/runtime.js";
+import type { Runner } from "./workers/runner.js";
 
 export interface Ctx {
   root: string;
@@ -10,6 +11,8 @@ export interface Ctx {
   env: () => Record<string, string | undefined>;
   /** Test hooks for the LLM layer. */
   llm: Pick<GenerateWithLlmOptions, "provider" | "fetch" | "sleep">;
+  /** Where generation, filling and serializing run (a worker pool, or the calling thread in tests). */
+  runner: Runner;
   /** Accounts mode only: the account machinery and the signed-in user (`root` is then that user's private folder). */
   accounts?: AccountsRuntime;
   user?: AccountUser;
@@ -100,6 +103,13 @@ export function optStringArray(b: Body, key: string): string[] | undefined {
   if (v === undefined || v === null) return undefined;
   if (!Array.isArray(v) || !v.every((x) => typeof x === "string")) throw bad(key, "a list of strings");
   return v as string[];
+}
+
+/** A signal that fires when the client goes away, so queued work can be dropped and a model run stops. */
+export function abortOnClose(res: ServerResponse): AbortSignal {
+  const abort = new AbortController();
+  res.on("close", () => abort.abort());
+  return abort.signal;
 }
 
 export function sendJson(res: ServerResponse, status: number, body: unknown): void {
