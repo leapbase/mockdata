@@ -1,11 +1,14 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { loadEnv, needsToken, presentedToken, remoteAllowed, TOKEN_COOKIE, tokensEqual, UserError, type NetworkAccess } from "@mockdata/cli";
+import { QuotaError, SESSION_COOKIE, parseCookies } from "@mockdata/accounts";
+import { loadEnv, needsToken, peerAllowed, presentedToken, TOKEN_COOKIE, tokensEqual, UserError, type NetworkAccess } from "@mockdata/cli";
 import { CycleError, GenerationError, SchemaError, ValidationError } from "@mockdata/core";
 import { LlmConfigError, LlmFillError, LlmHttpError } from "@mockdata/llm";
 import { assertLocal, HttpError, sendJson, type Ctx, type Handler } from "./http.js";
 import { serveStatic } from "./static.js";
+import type { AccountsRuntime } from "./accounts/runtime.js";
+import { AUTH_ROUTES, meWithoutAccounts } from "./routes/auth.js";
 import { getConfig } from "./routes/config.js";
 import { listFiles, readFile, writeFile } from "./routes/files.js";
 import { exportRoute } from "./routes/export.js";
@@ -21,6 +24,8 @@ export interface AppOptions {
   llm?: Ctx["llm"];
   /** Set when listening beyond localhost (see startServer): who may reach the server. */
   access?: NetworkAccess;
+  /** Accounts mode (see createAccounts): every API call needs a session and runs in that user's private folder. */
+  accounts?: AccountsRuntime;
   /** Built web app (default: packages/web/dist next to this package). */
   staticDir?: string;
 }
@@ -35,11 +40,13 @@ const ROUTES: Record<string, Handler> = {
   "POST /api/generate/stream": streamRoute,
   "POST /api/infer": inferRoute,
   "POST /api/export": exportRoute,
+  "GET /api/auth/me": (_ctx, _req, res) => Promise.resolve(meWithoutAccounts(res)),
 };
 
 /** Errors caused by the caller's schema or input are 400; failures talking to a model are 502. */
 function statusFor(e: unknown): number {
   if (e instanceof HttpError) return e.status;
+  if (e instanceof QuotaError) return 429;
   if (e instanceof LlmFillError || e instanceof LlmHttpError) return 502;
   if (
     e instanceof UserError ||
@@ -61,7 +68,7 @@ function sendError(res: ServerResponse, e: unknown): void {
     return;
   }
   // Error messages in this codebase name variables, never values.
-  sendJson(res, statusFor(e), { error: { name: err.name, message: err.message } });
+  sendJson(res, statusFor(e), { error: { name: err.name, message: err.message, ...(e instanceof HttpError && e.code ? { code: e.code } : {}) } });
 }
 
 export function createApp(opts: AppOptions = {}): (req: IncomingMessage, res: ServerResponse) => void {
@@ -72,7 +79,10 @@ export function createApp(opts: AppOptions = {}): (req: IncomingMessage, res: Se
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     assertLocal(req, opts.access);
-    if (opts.access && !remoteAllowed(req.socket.remoteAddress, opts.access.allow)) throw new HttpError(403, "Address not allowed");
+    if (!peerAllowed(opts.access, req.socket.remoteAddress)) throw new HttpError(403, "Address not allowed");
+    const accounts = opts.accounts;
+    // A certificate is someone else's job (the reverse proxy), but once people sign in over https the browser should insist on it.
+    if (accounts?.config.publicUrl.secure) res.setHeader("strict-transport-security", "max-age=31536000");
     const url = new URL(req.url ?? "/", "http://localhost");
     if (needsToken(opts.access, req.socket.remoteAddress) && !tokensEqual(presentedToken(req.headers), opts.access!.token)) {
       // A browser arrives once with ?token=: trade it for a cookie and a URL that no longer carries it.
@@ -90,10 +100,22 @@ export function createApp(opts: AppOptions = {}): (req: IncomingMessage, res: Se
       res.setHeader("www-authenticate", 'Bearer realm="mockdata"');
       throw new HttpError(401, "A token is required: send Authorization: Bearer <token>, or open the UI once with ?token=<token>");
     }
+    if (accounts && url.pathname.startsWith("/api/auth/")) {
+      const route = AUTH_ROUTES[`${req.method} ${url.pathname}`];
+      if (!route) throw new HttpError(404, "No such API route");
+      const sessionId = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+      const user = await accounts.sessions.lookup(sessionId);
+      await route(accounts, { user, sessionId: user ? sessionId : undefined }, req, res, url);
+      return;
+    }
     if (url.pathname.startsWith("/api/")) {
       const route = ROUTES[`${req.method} ${url.pathname}`];
       if (!route) throw new HttpError(404, "No such API route");
-      await route(ctx, req, res, url);
+      if (!accounts) return route(ctx, req, res, url);
+      // Accounts mode: a session is required for everything, even from localhost (a reverse proxy connects from there).
+      const user = await accounts.sessions.lookup(parseCookies(req.headers.cookie)[SESSION_COOKIE]);
+      if (!user) throw new HttpError(401, "Sign in required");
+      await route({ ...ctx, root: accounts.userRoot(user), accounts, user }, req, res, url);
       return;
     }
     if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405, "Method not allowed");

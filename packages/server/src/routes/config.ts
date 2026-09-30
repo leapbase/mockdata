@@ -1,6 +1,7 @@
 import { dbEnvNames } from "@mockdata/cli";
 import { createProvider, resolveLlmConfig } from "@mockdata/llm";
 import type { LlmConfig } from "@mockdata/core";
+import { lockedLlmConfig } from "../accounts/guards.js";
 import { sendJson, type Ctx, type Handler } from "../http.js";
 
 export type LlmStatus = { ok: true; provider: string } | { ok: false; reason: string };
@@ -14,7 +15,8 @@ export function llmStatus(ctx: Ctx, fromSchema?: LlmConfig): LlmStatus {
   const env = ctx.env();
   try {
     // createProvider only checks configuration (including the key); it makes no request.
-    return { ok: true, provider: createProvider(resolveLlmConfig(fromSchema, env), { env }).name };
+    const config = ctx.accounts ? lockedLlmConfig(fromSchema) : fromSchema; // accounts mode: the operator's settings, whatever the schema says
+    return { ok: true, provider: createProvider(resolveLlmConfig(config, env), { env }).name };
   } catch (e) {
     // Config errors name variables, never values.
     return { ok: false, reason: (e as Error).message };
@@ -23,5 +25,5 @@ export function llmStatus(ctx: Ctx, fromSchema?: LlmConfig): LlmStatus {
 
 /** What the UI may know about the setup: names and yes/no, never a secret value. */
 export const getConfig: Handler = async (ctx, _req, res) => {
-  sendJson(res, 200, { llm: llmStatus(ctx), dbEnv: dbEnvNames(ctx.env()) });
+  sendJson(res, 200, { llm: llmStatus(ctx), dbEnv: ctx.accounts ? [] : dbEnvNames(ctx.env()) }); // accounts mode: database variables belong to the operator
 };

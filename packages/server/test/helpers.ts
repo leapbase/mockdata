@@ -3,7 +3,10 @@ import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach } from "vitest";
-import { startServer } from "../src/index.js";
+import type { Mailer, MailerMessage } from "@mockdata/auth-kit";
+import { parsePublicUrl } from "@mockdata/cli";
+import type { Limits } from "@mockdata/accounts";
+import { createAccounts, startServer } from "../src/index.js";
 
 type AppOptions = NonNullable<Parameters<typeof startServer>[0]>;
 
@@ -70,4 +73,78 @@ export function rawRequest(url: string, path: string, headers: Record<string, st
     req.on("error", reject);
     req.end();
   });
+}
+
+
+export const PASSWORD = "Sup3r$ecretPassw0rd";
+
+/** A server in accounts mode with a capturing mailer, an in-memory account database and no real network. */
+export async function bootAccounts(
+  opts: {
+    publicUrl?: string;
+    limits?: Partial<Limits>;
+    env?: Record<string, string | undefined>;
+    emailEnabled?: boolean;
+    google?: { clientId: string; clientSecret: string };
+    fetch?: typeof fetch;
+    llm?: AppOptions["llm"];
+    trustProxy?: boolean;
+  } = {},
+) {
+  const dataDir = tmpRoot();
+  const configRoot = tmpRoot();
+  const sent: MailerMessage[] = [];
+  const emailEnabled = opts.emailEnabled ?? true;
+  const mailer: Mailer = {
+    isConfigured: () => emailEnabled,
+    verifyConnection: async () => undefined,
+    send: async (m) => void sent.push(m),
+    isAuthError: () => false,
+    formatError: (e) => String((e as Error)?.message ?? e),
+  };
+  const env = opts.env ?? {};
+  const accounts = await createAccounts({
+    publicUrl: parsePublicUrl(opts.publicUrl ?? "https://mockdata.example.com"),
+    dataDir,
+    dbFile: ":memory:",
+    configRoot,
+    env,
+    mailer,
+    google: opts.google,
+    fetch: opts.fetch,
+    limits: opts.limits,
+    trustProxy: opts.trustProxy,
+    enumerationTimingFloorMs: 0,
+  });
+  const app = await boot({ root: configRoot, accounts, env, llm: opts.llm });
+
+  /** Requests carrying a session cookie. */
+  const as = (cookie: string) => ({
+    get: (p: string) => app.call("GET", p, undefined, { cookie }),
+    post: (p: string, b: unknown) => app.call("POST", p, b, { cookie }),
+    put: (p: string, b: unknown) => app.call("PUT", p, b, { cookie }),
+  });
+  const cookieOf = (headers: Headers): string => {
+    const set = headers.getSetCookie().find((c) => c.startsWith("mockdata_session=") && !/Max-Age=0/.test(c));
+    return set ? set.split(";")[0]! : "";
+  };
+  const linkIn = (m: MailerMessage): string => /https?:\/\/[^\s"<]+/.exec(m.text ?? "")![0]!.replace(/&amp;/g, "&");
+  const pathOf = (link: string) => {
+    const u = new URL(link);
+    return u.pathname + u.search;
+  };
+
+  /** Register, click the emailed link, sign in: returns the session cookie. */
+  async function signUp(email: string, password = PASSWORD): Promise<string> {
+    const before = sent.length;
+    const reg = await app.post("/api/auth/register", { email, password });
+    if (reg.status !== 202) throw new Error(`register gave ${reg.status}: ${reg.raw}`);
+    const verify = await fetch(app.url + pathOf(linkIn(sent[before]!)), { redirect: "manual" });
+    if (verify.status !== 302) throw new Error(`verify gave ${verify.status}`);
+    const login = await app.post("/api/auth/login", { email, password });
+    if (login.status !== 200) throw new Error(`login gave ${login.status}: ${login.raw}`);
+    return cookieOf(login.headers);
+  }
+
+  return { ...app, accounts, dataDir, configRoot, sent, as, cookieOf, linkIn, pathOf, signUp };
 }

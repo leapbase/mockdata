@@ -1,7 +1,9 @@
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync } from "node:fs";
 import path from "node:path";
+import { assertWithinDiskQuota } from "@mockdata/accounts";
 import { assertNotSymlink, assertRowBudget, resolveInside, serialize, UserError, writeFileConfined } from "@mockdata/cli";
 import { LlmCancelledError, generateWithLlm } from "@mockdata/llm";
+import { beginRun } from "../accounts/guards.js";
 import { HttpError, optBool, optEnum, optInt, optString, readJson, sendJson, type Handler } from "../http.js";
 import { zip } from "../zip.js";
 import { parseSchemaBody } from "./run.js";
@@ -11,8 +13,8 @@ const FORMATS = ["json", "ndjson", "csv"] as const;
 /** Generate every row (LLM columns included) and either write files under the root or return a zip. */
 export const exportRoute: Handler = async (ctx, req, res) => {
   const body = await readJson(req);
-  const schema = parseSchemaBody(body);
-  assertRowBudget(schema);
+  const parsed = parseSchemaBody(body);
+  assertRowBudget(parsed);
   const format = optEnum(body, "format", FORMATS) ?? "json";
   const outputDir = optString(body, "outputDir");
   const wantZip = optBool(body, "zip") ?? false;
@@ -24,13 +26,16 @@ export const exportRoute: Handler = async (ctx, req, res) => {
   let targets: { table: string; file: string }[] = [];
   if (outputDir !== undefined) {
     const dir = resolveInside(ctx.root, outputDir);
-    targets = Object.keys(schema.tables).map((table) => ({ table, file: path.join(dir, `${table}.${format}`) }));
+    targets = Object.keys(parsed.tables).map((table) => ({ table, file: path.join(dir, `${table}.${format}`) }));
     for (const t of targets) assertNotSymlink(t.file);
     const clashes = targets.filter((t) => existsSync(t.file));
     if (clashes.length > 0 && !overwrite) {
       throw new UserError(`Refusing to overwrite existing files: ${clashes.map((t) => path.relative(ctx.root, t.file).split(path.sep).join("/")).join(", ")} (tick "Overwrite" to replace them)`);
     }
   }
+
+  const run = await beginRun(ctx, parsed); // row cap, daily LLM budget and run slot (accounts mode)
+  const schema = run.schema;
 
   // A closed connection (dialog or tab closed) stops the model calls and writes nothing.
   const abort = new AbortController();
@@ -41,6 +46,8 @@ export const exportRoute: Handler = async (ctx, req, res) => {
   } catch (e) {
     if (e instanceof LlmCancelledError) return;
     throw e;
+  } finally {
+    run.done();
   }
   const { data, report } = generated;
   const text = (table: string) => serialize(data[table]!, Object.keys(schema.tables[table]!.columns), format);
@@ -57,9 +64,17 @@ export const exportRoute: Handler = async (ctx, req, res) => {
     return;
   }
 
+  const texts = new Map(targets.map(({ table }) => [table, text(table)]));
+  if (ctx.accounts) {
+    // Refuse before writing anything if the files would not fit in this user's storage (replacing a file frees its old size).
+    const incoming = [...texts.values()].reduce((n, t) => n + Buffer.byteLength(t), 0);
+    const replaced = targets.reduce((n, { file }) => n + (existsSync(file) ? lstatSync(file).size : 0), 0);
+    assertWithinDiskQuota(ctx.root, Math.max(0, incoming - replaced), ctx.accounts.limits.userQuotaBytes);
+  }
+
   const files: string[] = [];
   for (const { table, file } of targets) {
-    writeFileConfined(ctx.root, file, text(table), { overwrite });
+    writeFileConfined(ctx.root, file, texts.get(table)!, { overwrite });
     files.push(path.relative(ctx.root, file).split(path.sep).join("/"));
   }
   sendJson(res, 200, {

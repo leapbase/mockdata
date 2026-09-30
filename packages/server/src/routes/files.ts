@@ -1,7 +1,8 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import { assertWithinDiskQuota } from "@mockdata/accounts";
 import { assertNotEnv, assertNotSymlink, checkSchemaPath, isEnvFile, resolveInside, SCHEMA_EXT, UserError, writeFileConfined } from "@mockdata/cli";
-import { optBool, readJson, reqString, sendJson, type Handler } from "../http.js";
+import { HttpError, optBool, readJson, reqString, sendJson, type Handler } from "../http.js";
 
 const SKIP_DIRS = new Set(["node_modules", "dist", "out"]);
 const MAX_FILES = 500;
@@ -41,6 +42,9 @@ export const readFile: Handler = async (ctx, _req, res, url) => {
   sendJson(res, 200, { path: rel, text: readFileSync(file, "utf8") });
 };
 
+/** Largest schema file a signed-in user may save. */
+const MAX_ACCOUNT_FILE_BYTES = 1024 * 1024;
+
 export const writeFile: Handler = async (ctx, req, res) => {
   const body = await readJson(req);
   const rel = reqString(body, "path");
@@ -50,6 +54,11 @@ export const writeFile: Handler = async (ctx, req, res) => {
   assertNotSymlink(file);
   const create = optBool(body, "create") ?? false;
   if (create && existsSync(file)) throw new UserError(`${rel} already exists`);
+  if (ctx.accounts) {
+    const bytes = Buffer.byteLength(text);
+    if (bytes > MAX_ACCOUNT_FILE_BYTES) throw new HttpError(413, "Schema files are limited to 1 MB");
+    assertWithinDiskQuota(ctx.root, Math.max(0, bytes - (existsSync(file) ? lstatSync(file).size : 0)), ctx.accounts.limits.userQuotaBytes);
+  }
   writeFileConfined(ctx.root, file, text, { overwrite: !create });
   sendJson(res, 200, { path: rel });
 };

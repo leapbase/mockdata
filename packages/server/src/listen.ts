@@ -8,8 +8,8 @@ import { createApp, type AppOptions } from "./app.js";
  * (then on 0.0.0.0, dropping everyone else). `port: 0` picks a free port (tests).
  * The returned url is always the loopback one.
  */
-export async function startServer(opts: Omit<AppOptions, "access"> & ListenOptions & { port?: number } = {}): Promise<{ server: http.Server; url: string; token?: string; tokenGenerated: boolean }> {
-  const { host, access, tokenGenerated } = listenPlan(opts);
+export async function startServer(opts: Omit<AppOptions, "access"> & Omit<ListenOptions, "publicUrl"> & { port?: number } = {}): Promise<{ server: http.Server; url: string; token?: string; tokenGenerated: boolean }> {
+  const { host, access, tokenGenerated } = listenPlan({ ...opts, publicUrl: opts.accounts?.config.publicUrl });
   const server = http.createServer(createApp({ ...opts, access }));
   dropForeignConnections(server, access);
   // Bound how long a client may dawdle over headers or a body (slowloris); generation itself happens after the body is in.

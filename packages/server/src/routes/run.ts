@@ -1,6 +1,7 @@
-import { parseSchemaText, UserError } from "@mockdata/cli";
+import { assertRowBudget, parseSchemaText, UserError } from "@mockdata/cli";
 import { CycleError, generate, llmColumns, parseSchema, planGeneration, SchemaError, type DataSchemaT } from "@mockdata/core";
 import { LlmCancelledError, generateWithLlm } from "@mockdata/llm";
+import { beginRun } from "../accounts/guards.js";
 import { llmStatus } from "./config.js";
 import { optInt, optStringArray, readJson, reqString, sendJson, type Handler } from "../http.js";
 import { applyRowOverride, buildPreview } from "../preview.js";
@@ -64,8 +65,9 @@ export function readRunParams(body: Record<string, unknown>): RunParams {
   };
 }
 
-export const generateRoute: Handler = async (_ctx, req, res) => {
+export const generateRoute: Handler = async (ctx, req, res) => {
   const { schema, seed, previewRows, tables } = readRunParams(await readJson(req));
+  if (ctx.accounts) assertRowBudget(schema, ctx.accounts.limits.maxRows);
   // llm columns stay pending here; the stream route fills them.
   const data = generate(schema, { seed, deferLlm: true });
   sendJson(res, 200, buildPreview(schema, data, { seed, rows: previewRows, tables }));
@@ -77,7 +79,10 @@ export const generateRoute: Handler = async (_ctx, req, res) => {
  * connection aborts the run before the next model request.
  */
 export const streamRoute: Handler = async (ctx, req, res) => {
-  const { schema, seed, previewRows, tables } = readRunParams(await readJson(req));
+  const params = readRunParams(await readJson(req));
+  const { seed, previewRows, tables } = params;
+  const run = await beginRun(ctx, params.schema); // row cap, daily LLM budget and run slot (accounts mode); refused with a plain 429/400 before any stream starts
+  const schema = run.schema;
   res.writeHead(200, {
     "content-type": "text/event-stream; charset=utf-8",
     "cache-control": "no-store",
@@ -101,6 +106,7 @@ export const streamRoute: Handler = async (ctx, req, res) => {
     // A cancelled run has no listener left; anything else is reported (messages name variables, never values).
     if (!(e instanceof LlmCancelledError)) send("error", { name: (e as Error).name, message: (e as Error).message });
   } finally {
+    run.done();
     res.end();
   }
 };

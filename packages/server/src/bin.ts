@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
 import { loadEnv, localAddresses, parseAllow, tokenFromEnv, type Cidr } from "@mockdata/cli";
+import { accountsFromEnv } from "./accounts/runtime.js";
 import { startServer } from "./listen.js";
 
 const HELP = `mockdata-ui - local web UI for mockdata
 
 Usage:
-  mockdata-ui [root] [--port <n>] [--allow <ranges>] [--host <address>]
+  mockdata-ui [root] [--port <n>] [--allow <ranges>] [--host <address>] [--data-dir <dir>]
 
   root            folder holding your schema files and .env (default: current directory)
   --port <n>      port (default 4747)
@@ -15,7 +16,16 @@ Usage:
                   192.168/16 and 100.64/10 are accepted, at most a /16 wide. Without
                   --allow the UI answers on 127.0.0.1 only.
   --host <addr>   address to bind (default 127.0.0.1, or 0.0.0.0 with --allow)
+  --data-dir <d>  accounts mode: where accounts and each user's private folder live
+                  (default $MOCKDATA_DATA_DIR or ./mockdata-data)
   -h, --help
+
+Accounts mode: set MOCKDATA_PUBLIC_URL (https://your-domain, or http://localhost:<port> to try it)
+in the environment or .env. Everyone then signs in, including localhost, each user gets a private
+folder, and the operator's LLM keys are shared under per-user limits. Needs SMTP_* (email sign-up)
+and/or GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET. Put a reverse proxy that terminates https in front;
+the UI listens on 127.0.0.1. --allow and MOCKDATA_TOKEN are for private-network mode and cannot be
+combined with it. Root is then only where .env is read.
 
 Machines other than this one must present a shared secret: set MOCKDATA_TOKEN (16+ characters,
 in the environment or .env) or one is generated and printed at start. Open the UI once with
@@ -26,7 +36,7 @@ Traffic is plain http, so use a network you trust (for example a Tailscale tailn
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
-  options: { port: { type: "string" }, allow: { type: "string" }, host: { type: "string" }, help: { type: "boolean", short: "h" } },
+  options: { port: { type: "string" }, allow: { type: "string" }, host: { type: "string" }, "data-dir": { type: "string" }, help: { type: "boolean", short: "h" } },
 });
 
 if (values.help) {
@@ -43,10 +53,18 @@ if (values.help) {
     try {
       const root = positionals[0] ?? process.cwd();
       const allow: Cidr[] | undefined = values.allow === undefined ? undefined : parseAllow(values.allow);
+      const accounts = await accountsFromEnv(process.env, { configRoot: root, dataDir: values["data-dir"] });
       const token = allow ? tokenFromEnv(loadEnv(root, process.env)) : undefined;
-      const { url, server, token: active, tokenGenerated } = await startServer({ root, port, allow, host: values.host, token });
+      const { url, server, token: active, tokenGenerated } = await startServer({ root, port, allow, host: values.host, token, accounts });
       const listening = (server.address() as { port: number }).port;
       process.stdout.write(`mockdata UI on ${url}  (root: ${root})\n`);
+      if (accounts) {
+        const { publicUrl, dataDir } = accounts.config;
+        process.stdout.write(`Accounts mode: sign-in required for everyone. Public address ${publicUrl.origin}, data in ${dataDir}\n`);
+        process.stdout.write(`Sign-up: ${[accounts.emailEnabled && "email", accounts.google && "Google"].filter(Boolean).join(" and ")}. Per-user limits: ${accounts.limits.llmDailyRows} LLM rows/day, ${accounts.limits.maxRows} rows/run, ${Math.round(accounts.limits.userQuotaBytes / 1024 / 1024)} MB storage, ${accounts.limits.maxRuns} runs at once overall.\n`);
+        if (!publicUrl.secure) process.stdout.write("Plain http on localhost: for trying it out only. A public site needs an https reverse proxy in front.\n");
+        if (accounts.emailEnabled) await accounts.mailer.verifyConnection().catch((e) => process.stderr.write(`Warning: the SMTP server could not be reached (${accounts.mailer.formatError(e)}); sign-up emails will fail until it can.\n`));
+      }
       if (allow) {
         process.stdout.write(`Also open to ${allow.map((c) => c.text).join(", ")}: ${localAddresses().map((a) => `http://${a}:${listening}`).join("  ")}\n`);
         const shown = tokenGenerated ? active : "<your MOCKDATA_TOKEN>";

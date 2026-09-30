@@ -8,6 +8,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "dependencies": {
+    "@mockdata/accounts": "*",
+    "@mockdata/auth-kit": "*",
     "@mockdata/cli": "*",
     "@mockdata/core": "*",
     "@mockdata/inputs": "*",

@@ -1,6 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { localRequestProblem, type NetworkAccess } from "@mockdata/cli";
+import type { AccountUser } from "@mockdata/accounts";
 import type { GenerateWithLlmOptions } from "@mockdata/llm";
+import type { AccountsRuntime } from "./accounts/runtime.js";
 
 export interface Ctx {
   root: string;
@@ -8,6 +10,9 @@ export interface Ctx {
   env: () => Record<string, string | undefined>;
   /** Test hooks for the LLM layer. */
   llm: Pick<GenerateWithLlmOptions, "provider" | "fetch" | "sleep">;
+  /** Accounts mode only: the account machinery and the signed-in user (`root` is then that user's private folder). */
+  accounts?: AccountsRuntime;
+  user?: AccountUser;
 }
 
 export type Handler = (ctx: Ctx, req: IncomingMessage, res: ServerResponse, url: URL) => Promise<void>;
@@ -16,6 +21,8 @@ export class HttpError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** A stable machine-readable reason the UI can switch on (never a value the caller sent). */
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -28,7 +35,7 @@ export function assertLocal(req: IncomingMessage, access?: NetworkAccess): void 
   if (problem) throw new HttpError(403, problem);
 }
 
-export async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+export async function readJson(req: IncomingMessage, maxBytes = MAX_BODY): Promise<Record<string, unknown>> {
   if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) {
     throw new HttpError(415, "Send JSON with Content-Type: application/json");
   }
@@ -36,7 +43,7 @@ export async function readJson(req: IncomingMessage): Promise<Record<string, unk
   let size = 0;
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > MAX_BODY) throw new HttpError(413, "Request body is too large");
+    if (size > maxBytes) throw new HttpError(413, "Request body is too large");
     chunks.push(chunk as Buffer);
   }
   let value: unknown;
