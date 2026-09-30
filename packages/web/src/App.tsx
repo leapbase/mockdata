@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "./api";
 import Editor from "./components/Editor";
 import GenerateBar from "./components/GenerateBar";
+import InferDialog from "./components/InferDialog";
 import Preview from "./components/Preview";
 import Sidebar from "./components/Sidebar";
 import { messageOf, useDebounced } from "./hooks";
@@ -37,6 +38,8 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
   const [llmOn, setLlmOn] = useState(false);
   const [progress, setProgress] = useState<api.Progress | null>(null);
   const abort = useRef<AbortController | null>(null);
+  const [dialog, setDialog] = useState<"infer" | "export" | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
 
   const fail = useCallback((e: unknown) => setError(messageOf(e)), []);
 
@@ -65,6 +68,7 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
       setPath(p);
       setText(t);
       setSavedText(t);
+      setWarnings([]);
       setError(null);
     } catch (e) {
       fail(e);
@@ -141,7 +145,7 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
         onOpen={(p) => void open(p)}
         onCreate={(p) => void saveAs(p, true)}
         onSave={save}
-        onInfer={() => undefined}
+        onInfer={() => setDialog("infer")}
       />
       <main className="editor">
         <Editor value={text} onChange={setText} errors={errors} />
@@ -162,6 +166,13 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
             ))
           )}
         </div>
+        {warnings.length > 0 && (
+          <ul className="warnings" aria-label="Inference warnings">
+            {warnings.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
+          </ul>
+        )}
       </main>
       <section className="preview">
         <GenerateBar
@@ -183,6 +194,20 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
         />
         {preview ? <Preview data={preview} /> : <p className="muted pad">Press Generate to preview the tables.</p>}
       </section>
+      {dialog === "infer" && (
+        <InferDialog
+          dbEnv={config?.dbEnv ?? []}
+          onClose={() => setDialog(null)}
+          onResult={(r) => {
+            setPath(null);
+            setText(r.schemaText);
+            setSavedText("");
+            setPreview(null);
+            setWarnings(r.warnings);
+            setDialog(null);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -210,3 +210,61 @@ describe("LLM run", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("model down");
   });
 });
+
+describe("infer", () => {
+  const base = {
+    "GET /api/config": () => ({ llm: { ok: false, reason: "r" }, dbEnv: ["DATABASE_URL"] }),
+    "GET /api/files": () => ({ files: ["old.yaml"] }),
+    "GET /api/file": () => ({ path: "old.yaml", text: "old" }),
+    "POST /api/validate": () => OK,
+  };
+
+  it("pasted content becomes an unsaved draft and its warnings are listed", async () => {
+    const calls = stubApi({
+      ...base,
+      "POST /api/infer": () => ({ schemaText: "tables:\n  people: {}\n", tables: ["people"], warnings: ["skipped nested array x"] }),
+    });
+    render(<App debounceMs={0} />);
+    await userEvent.click(await screen.findByRole("button", { name: /Infer from source/ }));
+    await userEvent.click(screen.getByRole("tab", { name: "Paste" }));
+    await userEvent.type(screen.getByLabelText("Sample or schema text"), "id,name");
+    await userEvent.type(screen.getByLabelText("File name"), "people.csv");
+    await userEvent.click(screen.getByRole("button", { name: "Infer" }));
+    await waitFor(() => expect((screen.getByLabelText("schema") as HTMLTextAreaElement).value).toBe("tables:\n  people: {}\n"));
+    expect(screen.getByText("skipped nested array x")).toBeTruthy();
+    expect(screen.getByText("Draft not saved yet: press Save to name it.")).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(calls.find((c) => c.key === "POST /api/infer")!.body).toMatchObject({ content: "id,name", name: "people.csv" });
+  });
+
+  it("offers only the database variable names the server reported and sends the name, never a URL", async () => {
+    const calls = stubApi({ ...base, "POST /api/infer": () => ({ schemaText: "tables: {}", tables: [], warnings: [] }) });
+    render(<App debounceMs={0} />);
+    await userEvent.click(await screen.findByRole("button", { name: /Infer from source/ }));
+    await userEvent.click(screen.getByRole("tab", { name: "Database" }));
+    const select = (await screen.findByLabelText("Database variable")) as HTMLSelectElement;
+    expect([...select.options].map((o) => o.value)).toEqual(["DATABASE_URL"]);
+    await userEvent.click(screen.getByRole("button", { name: "Infer" }));
+    await waitFor(() => expect(calls.find((c) => c.key === "POST /api/infer")).toBeTruthy());
+    expect(calls.find((c) => c.key === "POST /api/infer")!.body).toEqual({ connectionEnv: "DATABASE_URL" });
+  });
+
+  it("explains when no database variable is configured", async () => {
+    stubApi({ ...base, "GET /api/config": () => ({ llm: { ok: false, reason: "r" }, dbEnv: [] }) });
+    render(<App debounceMs={0} />);
+    await userEvent.click(await screen.findByRole("button", { name: /Infer from source/ }));
+    await userEvent.click(screen.getByRole("tab", { name: "Database" }));
+    expect(screen.getByText(/DATABASE_URL/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Infer" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("keeps the dialog open and shows the error when inference fails", async () => {
+    stubApi({ ...base, "POST /api/infer": () => errorResponse(400, "Path is outside the server root") });
+    render(<App debounceMs={0} />);
+    await userEvent.click(await screen.findByRole("button", { name: /Infer from source/ }));
+    await userEvent.type(screen.getByLabelText("Path under the folder"), "../x.csv");
+    await userEvent.click(screen.getByRole("button", { name: "Infer" }));
+    expect(await screen.findByText(/outside the server root/)).toBeTruthy();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+});
