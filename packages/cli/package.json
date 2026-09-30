@@ -5,6 +5,7 @@
   "bin": { "mockdata": "dist/bin.js" },
   "dependencies": {
     "@mockdata/core": "*",
+    "@mockdata/llm": "*",
     "yaml": "^2.5.0"
   }
 }

@@ -2,11 +2,14 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { parse as parseYaml } from "yaml";
-import { generate, parseSchema, type Dataset, type Row } from "@mockdata/core";
+import { parseSchema, type Dataset, type Row } from "@mockdata/core";
+import { generateWithLlm, type GenerateWithLlmOptions, type LlmReport } from "@mockdata/llm";
 
 export interface IO {
   out: (s: string) => void;
   err: (s: string) => void;
+  /** Overrides for the LLM layer (tests inject a fake provider). */
+  llm?: Pick<GenerateWithLlmOptions, "provider" | "fetch" | "env" | "sleep">;
 }
 
 const HELP = `mockdata - synthetic data generator
@@ -47,8 +50,13 @@ export function serialize(rows: Row[], columns: string[], format: Format): strin
   }
 }
 
+function describeUsage(r: LlmReport): string {
+  const cols = Object.entries(r.columns).map(([c, n]) => `${c} (${n} rows)`).join(", ");
+  return `llm: ${r.calls} call${r.calls === 1 ? "" : "s"}, ${r.inputTokens} input / ${r.outputTokens} output tokens; filled ${cols}\n`;
+}
+
 /** Returns a process exit code. Never calls process.exit, so it is testable. */
-export function run(argv: string[], io: IO): number {
+export async function run(argv: string[], io: IO): Promise<number> {
   const [command, ...rest] = argv;
   if (!command || command === "-h" || command === "--help") {
     io.out(HELP);
@@ -110,7 +118,8 @@ export function run(argv: string[], io: IO): number {
     }
 
     const schema = parseSchema(raw);
-    const data: Dataset = generate(schema, { seed });
+    const { data, report } = await generateWithLlm(schema, { seed, ...io.llm });
+    if (report.calls > 0) io.err(describeUsage(report));
     if (!values.out) {
       if (format !== "json") {
         io.err(`--format ${format} needs --out <dir> (one file per table)\n`);

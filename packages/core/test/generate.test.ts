@@ -172,3 +172,30 @@ describe("cycles", () => {
     expect(planGeneration(parseSchema(s)).deferred).toEqual([]);
   });
 });
+
+describe("llm columns", () => {
+  const llmSchema = (col: object = { type: "string", llm: true }, top: object | null = { provider: "openai", model: "m" }) => ({
+    seed: 1,
+    ...(top ? { llm: top } : {}),
+    tables: { reviews: { rows: 5, columns: { id: { type: "integer", primaryKey: true }, body: col } } },
+  });
+
+  it("requires the top-level llm config", () => {
+    expect(() => parseSchema(llmSchema(undefined, null))).toThrow(/no top-level "llm" config/);
+  });
+
+  it("rejects llm on non-strings and combined with deterministic generators", () => {
+    expect(() => parseSchema(llmSchema({ type: "integer", llm: true }))).toThrow(/only applies to string/);
+    expect(() => parseSchema(llmSchema({ type: "string", llm: true, pattern: "a" }))).toThrow(/cannot be combined with "pattern"/);
+  });
+
+  it("openai-compatible needs a baseUrl", () => {
+    expect(() => parseSchema(llmSchema(undefined, { provider: "openai-compatible", model: "m" }))).toThrow(/requires "baseUrl"/);
+  });
+
+  it("plain generate() refuses llm columns; deferLlm leaves them pending", () => {
+    expect(() => generate(llmSchema())).toThrow(/generateWithLlm/);
+    const rows = generate(llmSchema(), { deferLlm: true }).reviews!;
+    expect(rows.every((r) => r.body === undefined && "body" in r)).toBe(true);
+  });
+});

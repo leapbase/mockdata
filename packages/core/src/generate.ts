@@ -97,6 +97,22 @@ function pickParent(faker: Faker, col: Column, poolSize: number, used: Map<numbe
 export interface GenerateOptions {
   /** Overrides schema.seed. */
   seed?: number;
+  /**
+   * Leave `llm` columns null instead of failing, so an async pass (see
+   * @mockdata/llm) can fill them. The result is not fully validated until then.
+   */
+  deferLlm?: boolean;
+}
+
+/** Columns marked `llm`, in schema order. */
+export function llmColumns(schema: DataSchemaT): { table: string; column: string; prompt?: string }[] {
+  const out: { table: string; column: string; prompt?: string }[] = [];
+  for (const [table, t] of Object.entries(schema.tables)) {
+    for (const [column, col] of Object.entries(t.columns)) {
+      if (col.llm) out.push({ table, column, prompt: col.llm === true ? undefined : col.llm.prompt });
+    }
+  }
+  return out;
 }
 
 /** Deterministically generate every table, parents before children. */
@@ -105,6 +121,14 @@ export function generate(input: unknown, opts: GenerateOptions = {}): Dataset {
   const seed = opts.seed ?? schema.seed ?? 1;
   const faker = new Faker({ locale: en });
   faker.seed(seed);
+
+  const pending = llmColumns(schema);
+  if (pending.length > 0 && !opts.deferLlm) {
+    const first = pending[0]!;
+    throw new GenerationError(
+      `${first.table}.${first.column} uses "llm"; generate with an LLM provider (generateWithLlm in @mockdata/llm) instead of generate()`,
+    );
+  }
 
   const plan = planGeneration(schema);
   const deferred = new Set(plan.deferred);
@@ -116,7 +140,7 @@ export function generate(input: unknown, opts: GenerateOptions = {}): Dataset {
     for (const tname of level) data[tname] = generateTable(schema, tname, data, faker, deferred, usage);
   }
   for (const key of plan.deferred) fillDeferred(schema, key, data, faker, usage);
-  validate(schema, data);
+  validate(schema, data, { skipLlm: pending.length > 0 });
   return data;
 }
 
@@ -144,8 +168,13 @@ function generateTable(
     for (const cname of order) {
       const col = table.columns[cname]!;
       const key = `${tname}.${cname}`;
+      // llm cells stay `undefined` (pending) for the async fill pass; null means intentionally null.
       row[cname] = deferred.has(key)
         ? null
+        : col.llm
+        ? col.nullable && faker.number.float({ min: 0, max: 1 }) < (col.nullRate ?? 0.1)
+          ? null
+          : undefined
         : generateCell(schema, tname, cname, col, i, row, rows, data, faker, seen, usageFor(usage, key), deferred);
     }
     rows.push(row);
@@ -262,11 +291,12 @@ export class ValidationError extends Error {
 }
 
 /** Hard post-check: generators should never violate these; if they do, fail loudly. */
-export function validate(schema: DataSchemaT, data: Dataset): void {
+export function validate(schema: DataSchemaT, data: Dataset, opts: { skipLlm?: boolean } = {}): void {
   const bad: string[] = [];
   for (const [tname, table] of Object.entries(schema.tables)) {
     const rows = data[tname] ?? [];
     for (const [cname, col] of Object.entries(table.columns)) {
+      if (opts.skipLlm && col.llm) continue;
       const uniques = new Set<unknown>();
       const children = new Map<unknown, number>();
       const parentKeys = col.ref ? new Set((data[col.ref.split(".")[0]!] ?? []).map((r) => r[col.ref!.split(".")[1]!])) : undefined;

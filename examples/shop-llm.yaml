@@ -1,0 +1,21 @@
+# Same shape as shop.yaml, but review text is written by an LLM.
+# Needs ANTHROPIC_API_KEY (or change the provider/model below).
+seed: 42
+llm:
+  provider: anthropic
+  model: claude-haiku-4-5
+tables:
+  products:
+    rows: 5
+    columns:
+      id: { type: integer, primaryKey: true }
+      name: { type: string, faker: commerce.productName }
+  reviews:
+    rows: 12
+    columns:
+      id: { type: integer, primaryKey: true }
+      product_id: { type: integer, ref: products.id }
+      rating: { type: integer, min: 1, max: 5 }
+      body:
+        type: string
+        llm: { prompt: "A one or two sentence customer review whose tone matches the rating (1 = angry, 5 = delighted)" }

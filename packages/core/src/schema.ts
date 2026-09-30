@@ -43,6 +43,30 @@ export const ColumnSchema = z
      * foreign key means one-to-one (cap of 1).
      */
     maxPerParent: z.number().int().positive().optional(),
+    /**
+     * String columns only: fill with an LLM instead of a deterministic
+     * generator. `true` uses the column name and row context; an object can
+     * add an instruction. Requires the top-level `llm` config.
+     */
+    llm: z.union([z.literal(true), z.object({ prompt: z.string().optional() }).strict()]).optional(),
+  })
+  .strict();
+
+export const LLM_PROVIDERS = ["anthropic", "openai", "openai-compatible"] as const;
+
+/** Non-secret LLM settings. API keys are read from the environment, never from the schema. */
+export const LlmConfigSchema = z
+  .object({
+    provider: z.enum(LLM_PROVIDERS),
+    model: z.string().min(1),
+    /** Required for openai-compatible (e.g. http://localhost:11434/v1); optional override otherwise. */
+    baseUrl: z.string().url().optional(),
+    /** Env var holding the API key (defaults: ANTHROPIC_API_KEY / OPENAI_API_KEY). */
+    apiKeyEnv: z.string().optional(),
+    /** Rows per request (default 20). */
+    batchSize: z.number().int().positive().max(200).optional(),
+    /** Retries per request on rate limits, server errors, or unusable replies (default 3). */
+    maxRetries: z.number().int().min(0).max(10).optional(),
   })
   .strict();
 
@@ -56,10 +80,12 @@ export const TableSchema = z
 export const DataSchema = z
   .object({
     seed: z.number().int().optional(),
+    llm: LlmConfigSchema.optional(),
     tables: z.record(TableSchema),
   })
   .strict();
 
+export type LlmConfig = z.infer<typeof LlmConfigSchema>;
 export type Column = z.infer<typeof ColumnSchema>;
 export type Table = z.infer<typeof TableSchema>;
 export type DataSchemaT = z.infer<typeof DataSchema>;
@@ -85,6 +111,15 @@ export function parseSchema(input: unknown): DataSchemaT {
   for (const [tname, table] of Object.entries(schema.tables)) {
     for (const [cname, col] of Object.entries(table.columns)) {
       const where = `${tname}.${cname}`;
+      if (col.llm) {
+        if (col.type !== "string") throw new SchemaError(`${where}: "llm" only applies to string columns`);
+        const clash = (["ref", "enum", "pattern", "faker", "after", "primaryKey"] as const).find((k) => col[k]);
+        if (clash) throw new SchemaError(`${where}: "llm" cannot be combined with "${clash}"`);
+        if (!schema.llm) throw new SchemaError(`${where}: uses "llm" but the schema has no top-level "llm" config`);
+        if (schema.llm.provider === "openai-compatible" && !schema.llm.baseUrl) {
+          throw new SchemaError(`llm: provider "openai-compatible" requires "baseUrl"`);
+        }
+      }
       if (col.pattern !== undefined) {
         if (col.type !== "string") throw new SchemaError(`${where}: "pattern" only applies to string columns`);
         try {
