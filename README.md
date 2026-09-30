@@ -77,6 +77,7 @@ Everything in [`examples/`](examples) works as written (a test runs each one):
 | `clinical-trial.yaml` | A synthetic multi-site trial: consent -> visit and onset -> resolution date chains, optional end dates, enrolment skewed to a few sites |
 | `clinical-claims.yaml` | Synthetic insurance claims: service -> submission -> payment dates, an optional payment date, a cap on lines per claim |
 | `clinical-rwd-omop.yaml` | Real-world data shaped like the OMOP Common Data Model: person, observation period, visits, conditions, drug exposures, one measurement table per kind with its own range and unit, death; event dates stay within days of their visit (`within`) |
+| `clinical-sdtm.yaml` | Trial data laid out like CDISC SDTM (DM, EX, AE, DS, LB, VS) plus an ADaM-style ADSL, all dated from each subject's first dose (`after` + `within`), with string subject ids as foreign keys |
 | `samples/customers.csv`, `samples/orders.csv` | Sample rows (fake data) to try inferring a schema from |
 | `petstore-openapi.yaml` | An OpenAPI document to infer a schema from |
 | `make-sample-db.mjs` | Builds a small SQLite database (`node examples/make-sample-db.mjs`) to infer from |

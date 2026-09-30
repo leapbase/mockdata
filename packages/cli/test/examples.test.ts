@@ -166,6 +166,60 @@ describe("clinical-rwd-omop.yaml", () => {
   });
 });
 
+describe("clinical-sdtm.yaml", () => {
+  it("produces data that satisfies every feature it demonstrates", async () => {
+    const d = await json("generate", join(examples, "clinical-sdtm.yaml"));
+    expect(Object.fromEntries(Object.entries(d).map(([t, r]) => [t, (r as unknown[]).length]))).toEqual({
+      DM: 40, EX: 100, AE: 50, DS: 40, LB_HGB: 80, LB_ALT: 80, LB_CREAT: 80, VS_BP: 100, VS_PULSE: 100, ADSL: 40,
+    });
+    const ids = d.DM.map((s: any) => s.USUBJID);
+    for (const id of ids) expect(id).toMatch(/^ABC101-[0-9]{7}$/);
+    expect(new Set(ids).size).toBe(ids.length);
+    const subjects = new Map<string, any>(d.DM.map((s: any) => [s.USUBJID, s]));
+    const days = (a: string, b: string) => (Date.parse(a) - Date.parse(b)) / 86_400_000;
+    for (const s of d.DM) expect(days(s.RFENDTC, s.RFSTDTC)).toBeGreaterThanOrEqual(0);
+
+    // every event date follows the subject's first dose and stays within its bound
+    const dated: [string, string, number][] = [
+      ["EX", "EXSTDTC", 14], ["AE", "AESTDTC", 150], ["DS", "DSSTDTC", 180], ["LB_HGB", "LBDTC", 180], ["LB_ALT", "LBDTC", 180],
+      ["LB_CREAT", "LBDTC", 180], ["VS_BP", "VSDTC", 180], ["VS_PULSE", "VSDTC", 180], ["ADSL", "TRTSDT", 7],
+    ];
+    for (const [table, col, bound] of dated) {
+      for (const r of d[table]) {
+        expect(subjects.has(r.USUBJID), `${table} orphan`).toBe(true);
+        const gap = days(r[col], subjects.get(r.USUBJID).RFSTDTC);
+        expect(gap, `${table}.${col}`).toBeGreaterThanOrEqual(0);
+        expect(gap, `${table}.${col}`).toBeLessThanOrEqual(bound);
+      }
+    }
+    for (const a of d.AE) if (a.AEENDTC) expect(days(a.AEENDTC, a.AESTDTC)).toBeGreaterThanOrEqual(0);
+    expect(d.AE.some((a: any) => a.AEENDTC === null)).toBe(true);
+
+    // caps and one-to-one
+    expect(perParent(d.AE, "USUBJID")).toBeLessThanOrEqual(4);
+    expect(perParent(d.EX, "USUBJID")).toBeLessThanOrEqual(6);
+    for (const t of ["DS", "ADSL"]) expect(new Set(d[t].map((r: any) => r.USUBJID)).size).toBe(d[t].length);
+
+    // controlled terms, ranges and units
+    for (const a of d.AE) {
+      expect(["MILD", "MODERATE", "SEVERE"]).toContain(a.AESEV);
+      expect(["Y", "N"]).toContain(a.AESER);
+    }
+    const ranges: [string, string, number, number, string][] = [
+      ["LB_HGB", "LBORRES", 8, 18, "g/dL"], ["LB_ALT", "LBORRES", 5, 200, "U/L"], ["LB_CREAT", "LBORRES", 0.4, 3, "mg/dL"],
+      ["VS_PULSE", "PULSE", 45, 140, "beats/min"],
+    ];
+    for (const [table, col, lo, hi, unit] of ranges) {
+      for (const r of d[table]) {
+        expect(r[col]).toBeGreaterThanOrEqual(lo);
+        expect(r[col]).toBeLessThanOrEqual(hi);
+        expect(r.LBORRESU ?? r.VSORRESU).toBe(unit);
+      }
+    }
+    for (const r of d.VS_BP) expect(r.SYSBP).toBeGreaterThan(r.DIABP);
+  });
+});
+
 describe("hr.yaml", () => {
   it("produces data that satisfies every feature it demonstrates", async () => {
     const d = await json("generate", join(examples, "hr.yaml"));

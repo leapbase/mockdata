@@ -1,0 +1,106 @@
+# Trial data laid out like CDISC SDTM (DM, EX, AE, DS, LB, VS) plus an ADaM-style
+# subject-level table (ADSL). Synthetic data: terms and values are illustrative.
+# Every event date is tied to the subject's first dose (RFSTDTC) with `after`, and
+# kept close to it with `within`. Simplifications, because the DSL cannot derive one
+# column from another or tie a value to a code:
+#   - USUBJID is an opaque id (a real one embeds site and subject), and there is no
+#     SUBJID; no --SEQ sequence numbers and no study-day (--DY) columns;
+#   - ARMCD and the ADaM treatment variables (TRT01P/TRT01A) are left out so they
+#     cannot contradict DM.ARM;
+#   - LB and VS are split per test so each has a plausible range and unit: union the
+#     tables downstream to get the usual single domain;
+#   - ADaM is reduced to ADSL flags and dates.
+seed: 101
+tables:
+  DM:
+    rows: 40
+    columns:
+      STUDYID: { type: string, enum: [ABC101] }
+      USUBJID: { type: string, pattern: "ABC101-[0-9]{7}", unique: true }
+      SITEID: { type: string, enum: ["101", "102", "103", "104"] }
+      AGE: { type: integer, min: 18, max: 85 }
+      AGEU: { type: string, enum: [YEARS] }
+      SEX: { type: string, enum: [M, F, U] }
+      RACE: { type: string, enum: [WHITE, BLACK OR AFRICAN AMERICAN, ASIAN, "AMERICAN INDIAN OR ALASKA NATIVE", MULTIPLE] }
+      ARM: { type: string, enum: [Placebo, Drug X 10 mg, Drug X 20 mg] }
+      COUNTRY: { type: string, enum: [USA, CAN, GBR, DEU, JPN] }
+      RFSTDTC: { type: date, min: "2023-01-01", max: "2024-06-30" }   # first dose
+      RFENDTC: { type: date, after: RFSTDTC, within: 180 }   # last dose
+  EX:
+    rows: 100
+    columns:
+      USUBJID: { type: string, ref: DM.USUBJID, maxPerParent: 6 }   # at most 6 exposure records each
+      EXTRT: { type: string, enum: [DRUG X] }
+      EXDOSE: { type: integer, enum: [10, 20] }
+      EXDOSU: { type: string, enum: [mg] }
+      EXSTDTC: { type: date, after: USUBJID.RFSTDTC, within: 14 }
+      EXENDTC: { type: date, after: EXSTDTC, within: 30 }
+  AE:
+    rows: 50
+    columns:
+      USUBJID: { type: string, ref: DM.USUBJID, maxPerParent: 4 }   # at most 4 events each
+      AETERM: { type: string, enum: [Headache, Nausea, Fatigue, Rash, Dizziness, Insomnia, Alanine aminotransferase increased] }
+      AESEV: { type: string, enum: [MILD, MODERATE, SEVERE] }
+      AESER: { type: string, enum: [Y, N] }
+      AEREL: { type: string, enum: [RELATED, NOT RELATED] }
+      AESTDTC: { type: date, after: USUBJID.RFSTDTC, within: 150 }
+      AEENDTC: { type: date, after: AESTDTC, within: 30, nullable: true, nullRate: 0.3 }   # ongoing when empty
+  DS:
+    rows: 40
+    columns:
+      USUBJID: { type: string, ref: DM.USUBJID, unique: true }   # unique foreign key = one per subject
+      DSDECOD: { type: string, enum: [COMPLETED, ADVERSE EVENT, WITHDRAWAL BY SUBJECT, LOST TO FOLLOW-UP] }
+      DSSTDTC: { type: date, after: USUBJID.RFSTDTC, within: 180 }
+  LB_HGB:
+    rows: 80
+    columns:
+      USUBJID: { type: string, ref: DM.USUBJID }
+      LBTESTCD: { type: string, enum: [HGB] }
+      LBTEST: { type: string, enum: [Hemoglobin] }
+      LBORRES: { type: float, min: 8, max: 18 }
+      LBORRESU: { type: string, enum: [g/dL] }
+      LBNRIND: { type: string, enum: [LOW, NORMAL, HIGH] }   # independent of the value here
+      LBDTC: { type: date, after: USUBJID.RFSTDTC, within: 180 }
+  LB_ALT:
+    rows: 80
+    columns:
+      USUBJID: { type: string, ref: DM.USUBJID }
+      LBTESTCD: { type: string, enum: [ALT] }
+      LBTEST: { type: string, enum: [Alanine Aminotransferase] }
+      LBORRES: { type: float, min: 5, max: 200 }
+      LBORRESU: { type: string, enum: [U/L] }
+      LBNRIND: { type: string, enum: [LOW, NORMAL, HIGH] }
+      LBDTC: { type: date, after: USUBJID.RFSTDTC, within: 180 }
+  LB_CREAT:
+    rows: 80
+    columns:
+      USUBJID: { type: string, ref: DM.USUBJID }
+      LBTESTCD: { type: string, enum: [CREAT] }
+      LBTEST: { type: string, enum: [Creatinine] }
+      LBORRES: { type: float, min: 0.4, max: 3 }
+      LBORRESU: { type: string, enum: [mg/dL] }
+      LBNRIND: { type: string, enum: [LOW, NORMAL, HIGH] }
+      LBDTC: { type: date, after: USUBJID.RFSTDTC, within: 180 }
+  VS_BP:
+    rows: 100
+    columns:
+      USUBJID: { type: string, ref: DM.USUBJID }
+      SYSBP: { type: float, min: 100, max: 180 }   # the ranges never overlap, so systolic > diastolic
+      DIABP: { type: float, min: 50, max: 95 }
+      VSORRESU: { type: string, enum: [mmHg] }
+      VSDTC: { type: date, after: USUBJID.RFSTDTC, within: 180 }
+  VS_PULSE:
+    rows: 100
+    columns:
+      USUBJID: { type: string, ref: DM.USUBJID }
+      PULSE: { type: float, min: 45, max: 140 }
+      VSORRESU: { type: string, enum: [beats/min] }
+      VSDTC: { type: date, after: USUBJID.RFSTDTC, within: 180 }
+  ADSL:
+    rows: 40
+    columns:
+      USUBJID: { type: string, ref: DM.USUBJID, unique: true }
+      SAFFL: { type: string, enum: [Y, N] }   # safety population flag
+      ITTFL: { type: string, enum: [Y, N] }   # intent-to-treat flag
+      TRTSDT: { type: date, after: USUBJID.RFSTDTC, within: 7 }
+      TRTEDT: { type: date, after: TRTSDT, within: 180 }
