@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, realpathSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, realpathSync, writeSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import {
@@ -94,6 +94,45 @@ export function assertNotSymlink(file: string): void {
     return;
   }
   if (stat.isSymbolicLink()) throw new UserError(`${path.basename(file)} is a symbolic link; refusing to write through it`);
+}
+
+/**
+ * Write `data` to `file` (a path from resolveInside) without trusting an earlier check:
+ * a link may have been swapped in since, e.g. while LLM calls ran. The path is
+ * re-resolved, the file is opened with O_NOFOLLOW (and O_EXCL unless `overwrite`),
+ * and the opened file must really live inside the root before anything is
+ * truncated or written.
+ */
+export function writeFileConfined(root: string, file: string, data: string | Buffer, opts: { overwrite?: boolean } = {}): void {
+  const rootReal = realpathSync(root);
+  const rel = path.relative(rootReal, file);
+  if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) throw new UserError(`Path "${path.basename(file)}" is outside the server root`);
+  const target = resolveInside(root, rel);
+  mkdirSync(path.dirname(target), { recursive: true });
+  const target2 = resolveInside(root, rel); // folders now exist: check again through any link that appeared
+  let fd: number;
+  try {
+    fd = openSync(target2, constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW | (opts.overwrite ? 0 : constants.O_EXCL), 0o644);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "EEXIST") throw new UserError(`${path.basename(file)} already exists`);
+    if (code === "ELOOP" || code === "EMLINK") throw new UserError(`${path.basename(file)} is a symbolic link; refusing to write through it`);
+    throw e;
+  }
+  try {
+    const real = realpathSync(target2);
+    const r = path.relative(rootReal, real);
+    const opened = fstatSync(fd);
+    const onDisk = lstatSync(real);
+    if (r.startsWith("..") || path.isAbsolute(r) || opened.ino !== onDisk.ino || opened.dev !== onDisk.dev) {
+      throw new UserError(`Path "${path.basename(file)}" changed while writing; refusing`);
+    }
+    if (opts.overwrite) ftruncateSync(fd, 0);
+    const buf = typeof data === "string" ? Buffer.from(data) : data;
+    for (let off = 0; off < buf.length; ) off += writeSync(fd, buf, off);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);

@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { assertNotEnv, assertNotSymlink, assertRowBudget, checkSchemaPath, inferConfined, loadEnv, parseSchemaText, resolveInside, serialize, UserError } from "@mockdata/cli";
+import { assertNotEnv, assertNotSymlink, assertRowBudget, checkSchemaPath, inferConfined, loadEnv, parseSchemaText, resolveInside, serialize, UserError, writeFileConfined } from "@mockdata/cli";
 import { llmColumns, parseSchema, type Dataset } from "@mockdata/core";
 import { generateWithLlm, type GenerateWithLlmOptions, type LlmReport } from "@mockdata/llm";
 import { SCHEMA_REFERENCE } from "./reference.js";
@@ -176,9 +176,8 @@ export function createServer(opts: ServerOptions = {}): McpServer {
 
         const files: string[] = [];
         if (outDir) {
-          mkdirSync(outDir, { recursive: true });
           for (const { table, file } of targets) {
-            writeFileSync(file, serialize(data[table]!, Object.keys(schema.tables[table]!.columns), args.format));
+            writeFileConfined(root, file, serialize(data[table]!, Object.keys(schema.tables[table]!.columns), args.format), { overwrite: args.overwrite });
             files.push(path.relative(root, file));
           }
         }

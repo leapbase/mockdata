@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import { assertNotEnv, assertNotSymlink, checkSchemaPath, isEnvFile, resolveInside, SCHEMA_EXT, UserError } from "@mockdata/cli";
+import { assertNotEnv, assertNotSymlink, checkSchemaPath, isEnvFile, resolveInside, SCHEMA_EXT, UserError, writeFileConfined } from "@mockdata/cli";
 import { optBool, readJson, reqString, sendJson, type Handler } from "../http.js";
 
 const SKIP_DIRS = new Set(["node_modules", "dist", "out"]);
@@ -48,8 +48,8 @@ export const writeFile: Handler = async (ctx, req, res) => {
   checkSchemaPath(rel, "path");
   const file = resolveInside(ctx.root, rel);
   assertNotSymlink(file);
-  if (optBool(body, "create") && existsSync(file)) throw new UserError(`${rel} already exists`);
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, text);
+  const create = optBool(body, "create") ?? false;
+  if (create && existsSync(file)) throw new UserError(`${rel} already exists`);
+  writeFileConfined(ctx.root, file, text, { overwrite: !create });
   sendJson(res, 200, { path: rel });
 };

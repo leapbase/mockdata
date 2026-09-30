@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
-import { assertNotSymlink, assertRowBudget, resolveInside, serialize, UserError } from "@mockdata/cli";
+import { assertNotSymlink, assertRowBudget, resolveInside, serialize, UserError, writeFileConfined } from "@mockdata/cli";
 import { LlmCancelledError, generateWithLlm } from "@mockdata/llm";
 import { HttpError, optBool, optEnum, optInt, optString, readJson, sendJson, type Handler } from "../http.js";
 import { zip } from "../zip.js";
@@ -59,8 +59,7 @@ export const exportRoute: Handler = async (ctx, req, res) => {
 
   const files: string[] = [];
   for (const { table, file } of targets) {
-    mkdirSync(path.dirname(file), { recursive: true });
-    writeFileSync(file, text(table));
+    writeFileConfined(ctx.root, file, text(table), { overwrite });
     files.push(path.relative(ctx.root, file).split(path.sep).join("/"));
   }
   sendJson(res, 200, {
