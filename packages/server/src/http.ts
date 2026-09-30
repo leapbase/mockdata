@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { localRequestProblem } from "@mockdata/cli";
 import type { GenerateWithLlmOptions } from "@mockdata/llm";
 
 export interface Ctx {
@@ -21,27 +22,10 @@ export class HttpError extends Error {
 }
 
 export const MAX_BODY = 10 * 1024 * 1024;
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-
-function hostnameOf(hostHeader: string): string {
-  const m = /^(\[[^\]]+\]|[^:]+)(?::\d+)?$/.exec(hostHeader.trim());
-  return m ? m[1]!.toLowerCase() : "";
-}
-
 /** Refuse requests that were not addressed to localhost or that a foreign web page initiated (DNS rebinding, CSRF). */
 export function assertLocal(req: IncomingMessage): void {
-  const host = req.headers.host;
-  if (!host || !LOCAL_HOSTS.has(hostnameOf(host))) throw new HttpError(403, "Host not allowed: the UI only answers on localhost");
-  const origin = req.headers.origin;
-  if (origin !== undefined) {
-    let hostname = "";
-    try {
-      hostname = new URL(origin).hostname;
-    } catch {
-      /* falls through to the rejection below */
-    }
-    if (!LOCAL_HOSTS.has(hostname)) throw new HttpError(403, "Origin not allowed");
-  }
+  const problem = localRequestProblem(req.headers.host, req.headers.origin);
+  if (problem) throw new HttpError(403, problem);
 }
 
 export async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {

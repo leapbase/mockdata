@@ -87,6 +87,28 @@ export function assertNotSymlink(file: string): void {
   if (stat.isSymbolicLink()) throw new UserError(`${path.basename(file)} is a symbolic link; refusing to write through it`);
 }
 
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/**
+ * Why a request must be refused, or undefined if it is fine: it has to be
+ * addressed to localhost (DNS rebinding) and, if a browser page sent it, come
+ * from a localhost origin (CSRF). Shared by the web UI and the MCP HTTP server.
+ */
+export function localRequestProblem(host: string | undefined, origin: string | undefined): string | undefined {
+  const m = host ? /^(\[[^\]]+\]|[^:]+)(?::\d+)?$/.exec(host.trim()) : null;
+  if (!m || !LOCAL_HOSTS.has(m[1]!.toLowerCase())) return "Host not allowed: this server only answers on localhost";
+  if (origin !== undefined) {
+    let hostname = "";
+    try {
+      hostname = new URL(origin).hostname;
+    } catch {
+      /* falls through to the rejection below */
+    }
+    if (!LOCAL_HOSTS.has(hostname)) return "Origin not allowed";
+  }
+  return undefined;
+}
+
 /** Throws unless `rel` names a schema file we may read or write; returns its lower-case extension. */
 export function checkSchemaPath(rel: string, label = "schemaPath"): string {
   const ext = path.extname(rel).toLowerCase();

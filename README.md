@@ -151,7 +151,7 @@ The run prints how many calls and tokens it used. LLM output is not reproducible
 
 ## Use it from an AI agent (MCP)
 
-The MCP server exposes the same abilities to agents over stdio:
+The MCP server exposes the same abilities to agents, over stdio or HTTP:
 
 | Tool | Does |
 |---|---|
@@ -174,6 +174,15 @@ Register it in `.mcp.json` (or with `claude mcp add`), using absolute paths:
   }
 }
 ```
+
+**Over HTTP** (for clients that connect to a URL instead of starting a process):
+
+```
+MOCKDATA_ROOT=/path/to/a/working/folder node packages/mcp/dist/bin.js --http [--port 4748]
+claude mcp add --transport http mockdata http://127.0.0.1:4748/mcp
+```
+
+It serves MCP at `/mcp` on 127.0.0.1 only and refuses requests whose `Host` or `Origin` is not localhost. There is no login: the tools read and write files and can spend LLM credits, so do not put it behind a public address or tunnel. Each client session gets its own server (so `get_run_report` is per client), up to 20 open sessions.
 
 The agent can only read schemas and write output inside `MOCKDATA_ROOT`. It never reads `.env` files and never overwrites an existing file unless asked. It cannot supply a connection string: `infer_schema` only accepts the *name* of an environment variable that looks like database config (for example `DATABASE_URL`).
 
