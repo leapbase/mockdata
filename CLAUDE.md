@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`mockdata` is a hybrid synthetic data generator (TypeScript/Node, React UI planned), modelled on `~/git/syda` but fixing its gaps. Deterministic generators handle structure, keys, numbers and dates; an LLM is meant to fill only semantic free-text columns. The approved plan is at `~/.claude/plans/i-want-to-create-woolly-sunrise.md` (planned packages: llm, inputs, cli, mcp, server, web).
+`mockdata` is a hybrid synthetic data generator (TypeScript/Node, React UI), modelled on `~/git/syda` but fixing its gaps. Deterministic generators handle structure, keys, numbers and dates; an LLM is meant to fill only semantic free-text columns. The approved plan is at `~/.claude/plans/i-want-to-create-woolly-sunrise.md`.
 
-Implemented so far: `packages/core`, `packages/llm`, `packages/inputs`, `packages/cli`, `packages/mcp`. The server/web UI from the plan is still to build.
+Implemented so far: `packages/core`, `packages/llm`, `packages/inputs`, `packages/cli`, `packages/mcp`, `packages/server`, `packages/web`. Run history and a visual schema builder are not built.
 
 `packages/cli/src/cli.ts` exports async `run(argv, io)`, which resolves to an exit code and never calls `process.exit`, so tests call it directly (`io.llm` injects a fake provider). `bin.ts` is a thin wrapper. Commands: `generate <schema> [-o dir] [-f json|ndjson|csv] [-s seed]`, `validate <schema>`, and `infer <source>` (see Input loaders). Without `-o` generate prints JSON to stdout; csv/ndjson need `-o`.
 
@@ -23,7 +23,7 @@ node packages/cli/dist/bin.js generate examples/shop.yaml -o out -f csv
 MOCKDATA_ROOT=$PWD node packages/mcp/dist/bin.js   # MCP server on stdio
 ```
 
-Build order is core, llm, inputs, cli, mcp (each imports the earlier ones' `dist`). Each package sets its own `outDir` (a base-config `outDir` resolves relative to the repo root, not the package). Vitest aliases `@mockdata/core` to its source (`vitest.config.ts`), so tests need no build.
+Build order is core, llm, inputs, cli, mcp, server, then web via Vite (each imports the earlier ones' `dist`). Each package sets its own `outDir` (a base-config `outDir` resolves relative to the repo root, not the package). Vitest aliases `@mockdata/core` to its source (`vitest.config.ts`), so tests need no build.
 
 ## Docs and examples
 
@@ -83,6 +83,14 @@ Tool inputs come from an agent, so file access is strict: `schemaPath` and `outp
 `infer_schema` never accepts a connection string from the caller: `connectionEnv` names an env var/.env entry, the name must be upper-case and mention DATABASE/DB/POSTGRES/MYSQL/MARIADB/SQLITE (so it cannot be pointed at an API key), the value must be a supported database URL, and values are never echoed. `path` follows the same root confinement and `.env` rules as `schemaPath`.
 
 Schema hardening that exists because schemas may be untrusted: table names must match `^[A-Za-z_][A-Za-z0-9_-]*$` (they become file names), and `faker:` must be `module.method` with no `constructor`/`prototype` segments and not `helpers.fake`/`mustache`/`fromRegExp`.
+
+## Web UI (`packages/server`, `packages/web`)
+
+`createApp({root, env, llm})` (`server/src/app.ts`) is a plain Node `http` handler (no framework); `startServer` listens on 127.0.0.1, `bin.ts` is `mockdata-ui [root] [--port]` (`npm run ui`). Routes: `GET /api/config|files|file`, `PUT /api/file`, `POST /api/validate|generate|generate/stream|infer|export`. Tests boot a real server on port 0 with `boot()` in `server/test/helpers.ts` (fake LLM provider via `llm`, temp root, empty env).
+
+It treats the browser like an untrusted MCP caller: path confinement, the `.env` rule, `connectionEnv` names and `inferConfined` live in `packages/cli/src/confined.ts` and are shared with `packages/mcp` (change them once; errors must never echo a caller-supplied value). Requests need a localhost `Host`/`Origin` and `Content-Type: application/json`; static files carry a CSP. `/api/generate/stream` is SSE over POST (the schema text is the body); closing the connection aborts the run through `generateWithLlm`'s `signal` (checked between batches; a request already in flight finishes). Preview is capped at 200,000 rows total and reports `pending` LLM columns (cells still `undefined`). `/api/config` returns the LLM provider name or the reason it is unavailable, plus database env var names, never values.
+
+`packages/web` is Vite + React 19 + CodeMirror 6, no router or state library; `App.tsx` holds the state. Its API types in `api.ts` mirror the server's responses by hand. Tests stub `fetch` (`test/stub.ts`) and mock the CodeMirror `Editor` component (jsdom cannot lay it out), so the real editor is only exercised in a browser.
 
 ## Conventions
 

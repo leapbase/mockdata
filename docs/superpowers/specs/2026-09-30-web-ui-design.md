@@ -11,8 +11,8 @@ A local-first web UI for mockdata: edit a YAML/JSON schema with live validation,
 
 ## Architecture
 
-- `packages/server`: library plus `mockdata-ui` bin; `mockdata ui [root]` in the CLI calls it. Exports `createApp({root, env, llm})` returning a Node `http` request handler (no port needed in tests; `llm` injects a fake provider). Small hand-rolled router, no framework. Binds `127.0.0.1` only. Serves `packages/web/dist` statically.
-- `packages/web`: Vite + React 18 + TypeScript, CodeMirror 6 (`@uiw/react-codemirror`, `@codemirror/lang-yaml`). No router or state library; one top-level component with hooks; plain CSS with light/dark theme. Dev server proxies `/api` to the server.
+- `packages/server`: library plus `mockdata-ui` bin (`npm run ui`); there is no `mockdata ui` CLI subcommand because the server depends on the CLI package. Exports `createApp({root, env, llm})` returning a Node `http` request handler (no port needed in tests; `llm` injects a fake provider). Small hand-rolled router, no framework. Binds `127.0.0.1` only. Serves `packages/web/dist` statically.
+- `packages/web`: Vite + React 19 + TypeScript, CodeMirror 6 (`@uiw/react-codemirror`, `@codemirror/lang-yaml`). No router or state library; one top-level component with hooks; plain CSS with light/dark theme. Dev server proxies `/api` to the server.
 - Build order: core, llm, inputs, cli, mcp, server, then web (Vite).
 - The server is a thin layer over `@mockdata/core`, `llm`, `inputs` and `cli` (`loadEnv`, `parseSchemaText`, `serialize`).
 - Refactor: move `resolveInside`, the `.env*` filename rule and the `connectionEnv` name/URL checks from `packages/mcp` into `@mockdata/cli` so MCP and the server share one copy.
@@ -23,11 +23,11 @@ A local-first web UI for mockdata: edit a YAML/JSON schema with live validation,
 |---|---|
 | `GET /api/files` | List `.yaml/.yml/.json` schema files under root (never `.env*`). |
 | `GET/PUT /api/file?path=` | Read / save a schema. Relative path, confined to root, same rules as MCP `outputDir`. |
-| `POST /api/validate` | `{text}` -> parse errors (with line numbers where available), table order, cycle/deferred-FK notes. |
+| `POST /api/validate` | `{text}` -> parse errors (a line number for YAML syntax errors only; schema errors have none), table order, cycle/deferred-FK notes. |
 | `POST /api/generate` | `{text, seed, rows?, tables?}` -> capped preview rows + validation report (deterministic only). |
-| `GET /api/generate/stream` (SSE) | LLM run: per-column progress and token counts; closing the connection aborts the run. |
+| `POST /api/generate/stream` (SSE) | LLM run (same body as `/api/generate`; the schema text is the body, so it is a POST read with fetch streaming): per-column progress and token counts; closing the connection aborts the run before the next model request. |
 | `POST /api/infer` | `{path}` \| `{content, kind}` \| `{connectionEnv}` -> `{schemaText, warnings}`. |
-| `POST /api/export` | `{text, seed, format, outputDir, overwrite}` -> written file list; also a zip download. |
+| `POST /api/export` | `{text, seed, format, outputDir, overwrite}` -> written file list; or `{zip: true}` instead of `outputDir` -> a zip download (nothing written). Exactly one of the two. |
 | `GET /api/config` | LLM provider, model, key-present boolean, usable DB env var names. Never values. |
 
 ## Security
@@ -43,10 +43,10 @@ Inputs are treated like MCP tool input (untrusted).
 One screen, three regions.
 - **Sidebar:** schema files under root; New, Save, "Infer from source..."; dot for unsaved changes.
 - **Center:** YAML editor with inline lint markers (400ms debounced `/api/validate`); status strip with table count, generation order, cycle notes.
-- **Right:** preview. Tab per table, grid of first 50 rows (raw JSON view), header with seed, row-count override, Generate. Validation problems as a banner. FK cells marked; clicking jumps to the parent row.
+- **Right:** preview. Tab per table, grid of first 50 rows (raw JSON view), header with seed, row-count override (applies to every table; preview refuses more than 200,000 rows in total), Generate. Validation problems as a banner. FK cells marked; clicking jumps to the parent row.
 
 Flows:
-- **Generate:** without LLM, one POST. With LLM, open the SSE stream; progress bar (table.column, batch n of m), token counts, Cancel. Pending cells from a cancelled run show empty, so a partial result never looks complete.
+- **Generate:** without LLM, one POST. With LLM, open the SSE stream; progress bar (table.column, batch n of m), token counts, Cancel. A cancelled run is discarded and the previous preview stays, so a partial result never looks complete.
 - **Infer:** dialog with tabs: file under root, pasted content + kind, DB env var name. Result opens as an unsaved draft; warnings listed beside it.
 - **Export:** dialog for format (json/ndjson/csv), relative output folder (default `out/`), overwrite checkbox; shows written files; zip download.
 - **LLM toggle:** disabled with tooltip when `/api/config` shows no provider/key; names missing variables, never values.

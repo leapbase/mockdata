@@ -177,6 +177,25 @@ Register it in `.mcp.json` (or with `claude mcp add`), using absolute paths:
 
 The agent can only read schemas and write output inside `MOCKDATA_ROOT`. It never reads `.env` files and never overwrites an existing file unless asked. It cannot supply a connection string: `infer_schema` only accepts the *name* of an environment variable that looks like database config (for example `DATABASE_URL`).
 
+## Web UI
+
+A local editor and preview, for people who prefer a browser to a terminal.
+
+```
+npm run build
+npm run ui -- examples          # or: node packages/server/dist/bin.js <folder> [--port 4747]
+```
+
+Open http://127.0.0.1:4747. The folder you pass is the root: schema files are listed in the sidebar, `.env` is read from there, and nothing outside it is ever read or written.
+
+- **Edit**: YAML with live validation (errors appear inline and in the status strip, which also shows the generation order). Save writes the file back.
+- **Preview**: Generate shows the first 50 rows of every table. Set a seed or a row count for all tables. Foreign key values are links to the parent row.
+- **Fill LLM columns**: turn it on to run `llm` columns with progress and a Cancel button. It is only enabled when a provider is configured in `.env` (see LLM setup); the toggle shows which one. Cancelling discards the partial run.
+- **Infer from source**: pick a file under the root, paste sample rows or a JSON Schema/OpenAPI document, or choose a database variable by name. The result opens as an unsaved draft with the warnings listed.
+- **Export**: write json/ndjson/csv files to a folder under the root (existing files are kept unless you tick Overwrite) or download a zip.
+
+The server listens on 127.0.0.1 only and rejects requests from other hosts or origins. Connection strings are never typed into the browser: keep them in `.env` and pick the variable name. For development run `npm run dev -w packages/web` (Vite on its own port, proxying `/api` to a running `mockdata-ui`).
+
 ## Use it as a library
 
 The packages are not published to npm yet; inside this repo (npm workspaces):
@@ -198,6 +217,8 @@ const data = generate(schemaObjectOrYamlParsed, { seed: 1 });   // { customers: 
 | `packages/inputs` | Schema inference from databases, OpenAPI/JSON Schema, sample data |
 | `packages/cli` | The `mockdata` command |
 | `packages/mcp` | The MCP server (`mockdata-mcp`) |
+| `packages/server` | The local web UI server (`mockdata-ui`) |
+| `packages/web` | The React app the server hosts (Vite, CodeMirror) |
 
 ## Development
 
