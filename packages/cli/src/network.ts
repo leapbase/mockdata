@@ -91,7 +91,7 @@ export function parseAllow(spec: string): Cidr[] {
     const shorthand = /^(\d{1,3}\.\d{1,3}\.\d{1,3})\.x$/.exec(item);
     const c = cidr(shorthand ? `${shorthand[1]}.0/24` : item);
     if (!PRIVATE.some((p) => within(c, p))) {
-      throw new NetworkConfigError(`"${item}" is not a private address range (10/8, 172.16/12, 192.168/16, 100.64/10): this server has no login, so it must not be opened to the internet`);
+      throw new NetworkConfigError(`"${item}" is not a private address range (10/8, 172.16/12, 192.168/16, 100.64/10): private-network mode has no per-user login (only a shared token), so it must not be opened to the internet; for a public site use accounts mode (MOCKDATA_PUBLIC_URL)`);
     }
     if (Number(c.text.split("/")[1]) < MIN_PREFIX) throw new NetworkConfigError(`"${item}" is wider than a /${MIN_PREFIX}; list a narrower range`);
     return c;
@@ -228,7 +228,7 @@ export function listenPlan(opts: ListenOptions): { host: string; access?: Networ
   const host = opts.host ?? (allow.length > 0 ? "0.0.0.0" : "127.0.0.1");
   if (allow.length === 0) {
     if (host !== "localhost" && !isLoopback(host)) {
-      throw new NetworkConfigError(`Listening on "${host}" needs --allow (e.g. --allow 100.100.1.x): this server has no login, so you must say who may connect`);
+      throw new NetworkConfigError(`Listening on "${host}" needs --allow (e.g. --allow 100.100.1.x): private-network mode has no per-user login, so you must say who may connect`);
     }
     return { host, tokenGenerated: false };
   }

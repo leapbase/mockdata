@@ -31,7 +31,7 @@ npx mockdata validate examples/shop.yaml                      # check a schema w
 
 ### Run the servers
 
-Run `npm run build` first (and again after code changes). Both servers listen on 127.0.0.1 only unless you pass `--allow` (see "Opening it to your network").
+Run `npm run build` first (and again after code changes). Needs Node 22.13 or newer. Both servers listen on 127.0.0.1 only unless you pass `--allow` (see "Opening it to your network") or turn on accounts (see "Accounts and going public").
 
 | What | Command | Address |
 |---|---|---|
@@ -252,6 +252,47 @@ Everyone outside this machine also needs a shared secret token. Set `MOCKDATA_TO
 
 Traffic is plain http, so the token can be read by anyone who can see the network path. Use a network you trust, such as a Tailscale tailnet (already encrypted). Anyone holding the token can read and write schema files under the root, spend your LLM credits and use every MCP tool, so treat it like a password and keep sensitive files out of the root. Rotate it by changing `MOCKDATA_TOKEN` and restarting.
 
+## Accounts and going public
+
+For a site other people sign in to, set `MOCKDATA_PUBLIC_URL` and start the UI as usual. Accounts are an opt-in mode; without that variable nothing here applies.
+
+| Mode | Turned on by | Who gets in |
+|---|---|---|
+| Local (default) | nothing | anyone on this machine; nothing is reachable from outside |
+| Private network | `--allow ranges` | the listed private ranges, with a shared token |
+| **Accounts** | `MOCKDATA_PUBLIC_URL` | everyone signs in, **including localhost**; no token, no allow list |
+
+Localhost is not trusted in accounts mode because a reverse proxy that terminates https connects from localhost on behalf of the whole internet. To keep the no-login local workflow, run without `MOCKDATA_PUBLIC_URL`; to try accounts on your own machine, use `MOCKDATA_PUBLIC_URL=http://localhost:4747`.
+
+**What you configure** (environment or `.env`; see `.env.example`):
+
+| Variable | Meaning |
+|---|---|
+| `MOCKDATA_PUBLIC_URL` | `https://your-domain` (plain http is accepted only for localhost) |
+| `MOCKDATA_DATA_DIR` or `--data-dir` | accounts database and every user's private folder (default `./mockdata-data`); back it up |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | email for verification and password reset. **Resend:** `smtp.resend.com`, port `465`, secure `true`, user `resend`, password = your Resend API key; verify your sending domain in Resend first |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | optional Google sign-in; in Google Cloud add the redirect URI `<MOCKDATA_PUBLIC_URL>/api/auth/google/callback` |
+| `MOCKDATA_TRUST_PROXY=1` | a reverse proxy on this machine is in front: rate limits then use the last `X-Forwarded-For` address |
+| `MOCKDATA_LLM_DAILY_ROWS`, `MOCKDATA_MAX_ROWS`, `MOCKDATA_USER_QUOTA_MB`, `MOCKDATA_MAX_RUNS` | per-user model-written rows per day (2000), rows per run (200000), storage (50 MB), and runs at once across all users (4) |
+
+It refuses to start unless people can sign up (email and/or Google) and the address is valid. The UI listens on 127.0.0.1; put a reverse proxy in front that provides https. With Caddy (certificates are automatic):
+
+```
+mockdata.example.com {
+  reverse_proxy 127.0.0.1:4747
+}
+```
+
+```
+MOCKDATA_PUBLIC_URL=https://mockdata.example.com MOCKDATA_TRUST_PROXY=1 npm run ui -- /path/holding/.env
+```
+
+**How it behaves.** Sign-up needs a verified email (a link mailed to the address; Google accounts need Google to report the address as verified). Sessions are a random id in an `HttpOnly`, `SameSite=Lax` cookie (`Secure` over https) stored hashed on the server, and last 30 days. Sign-up, sign-in and reset answer the same whether or not an address exists. Resetting or changing a password signs out the other sessions. Each user gets a private folder named by a random id; nobody can read or write outside their own, and the account database lives outside all of them.
+
+**What users cannot do**, because the server's keys and databases are the operator's: infer a schema from a database variable, or choose a model, provider, address or key in a schema's `llm:` block (the operator's settings are used; batching, retries and context depth still work). Sign-ups are rate limited per address and mailbox, and each user has the row, storage, daily model-row and concurrent-run limits above.
+
+**Known limits.** The same person signing in with email and with Google gets two separate accounts. Rate limits and run slots live in memory, so they reset on restart and assume a single server process. The MCP server is not part of accounts mode (it keeps the shared-token setup). SMTP credentials and model keys sit in the operator's environment.
+
 ## Use it as a library
 
 The packages are not published to npm yet; inside this repo (npm workspaces):
@@ -269,6 +310,8 @@ const data = generate(schemaObjectOrYamlParsed, { seed: 1 });   // { customers: 
 | Package | Role |
 |---|---|
 | `packages/core` | Schema validation, table ordering, generation, constraint checks |
+| `packages/auth-kit` | Vendored account logic from itravelmap: password hashing, validation, verification and reset tokens, mailer |
+| `packages/accounts` | SQLite account store, sessions, OAuth state, rate limits, quotas, emails |
 | `packages/llm` | Providers (Anthropic, OpenAI, Ollama/OpenAI-compatible), prompts with parent context, retries |
 | `packages/inputs` | Schema inference from databases, OpenAPI/JSON Schema, sample data |
 | `packages/cli` | The `mockdata` command |
