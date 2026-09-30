@@ -1,0 +1,114 @@
+import type { IncomingMessage, ServerResponse } from "node:http";
+import type { GenerateWithLlmOptions } from "@mockdata/llm";
+
+export interface Ctx {
+  root: string;
+  /** Environment for provider and connection settings: .env under root beneath the real environment, re-read on every call. */
+  env: () => Record<string, string | undefined>;
+  /** Test hooks for the LLM layer. */
+  llm: Pick<GenerateWithLlmOptions, "provider" | "fetch" | "sleep">;
+}
+
+export type Handler = (ctx: Ctx, req: IncomingMessage, res: ServerResponse, url: URL) => Promise<void>;
+
+export class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+export const MAX_BODY = 10 * 1024 * 1024;
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+function hostnameOf(hostHeader: string): string {
+  const m = /^(\[[^\]]+\]|[^:]+)(?::\d+)?$/.exec(hostHeader.trim());
+  return m ? m[1]!.toLowerCase() : "";
+}
+
+/** Refuse requests that were not addressed to localhost or that a foreign web page initiated (DNS rebinding, CSRF). */
+export function assertLocal(req: IncomingMessage): void {
+  const host = req.headers.host;
+  if (!host || !LOCAL_HOSTS.has(hostnameOf(host))) throw new HttpError(403, "Host not allowed: the UI only answers on localhost");
+  const origin = req.headers.origin;
+  if (origin !== undefined) {
+    let hostname = "";
+    try {
+      hostname = new URL(origin).hostname;
+    } catch {
+      /* falls through to the rejection below */
+    }
+    if (!LOCAL_HOSTS.has(hostname)) throw new HttpError(403, "Origin not allowed");
+  }
+}
+
+export async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+  if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) {
+    throw new HttpError(415, "Send JSON with Content-Type: application/json");
+  }
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > MAX_BODY) throw new HttpError(413, "Request body is too large");
+    chunks.push(chunk as Buffer);
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+  } catch {
+    throw new HttpError(400, "Body is not valid JSON");
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new HttpError(400, "Body must be a JSON object");
+  return value as Record<string, unknown>;
+}
+
+type Body = Record<string, unknown>;
+const bad = (key: string, what: string) => new HttpError(400, `"${key}" must be ${what}`);
+
+export function reqString(b: Body, key: string): string {
+  const v = b[key];
+  if (typeof v !== "string") throw bad(key, "a string");
+  return v;
+}
+export function optString(b: Body, key: string): string | undefined {
+  const v = b[key];
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "string") throw bad(key, "a string");
+  return v;
+}
+export function optInt(b: Body, key: string, min: number, max: number): number | undefined {
+  const v = b[key];
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "number" || !Number.isInteger(v) || v < min || v > max) throw bad(key, `an integer from ${min} to ${max}`);
+  return v;
+}
+export function optBool(b: Body, key: string): boolean | undefined {
+  const v = b[key];
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "boolean") throw bad(key, "true or false");
+  return v;
+}
+export function optEnum<T extends string>(b: Body, key: string, allowed: readonly T[]): T | undefined {
+  const v = b[key];
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "string" || !(allowed as readonly string[]).includes(v)) throw bad(key, `one of ${allowed.join(", ")}`);
+  return v as T;
+}
+export function optStringArray(b: Body, key: string): string[] | undefined {
+  const v = b[key];
+  if (v === undefined || v === null) return undefined;
+  if (!Array.isArray(v) || !v.every((x) => typeof x === "string")) throw bad(key, "a list of strings");
+  return v as string[];
+}
+
+export function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+  });
+  res.end(JSON.stringify(body));
+}

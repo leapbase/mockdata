@@ -1,0 +1,14 @@
+{
+  "name": "@mockdata/server",
+  "version": "0.0.1",
+  "type": "module",
+  "bin": { "mockdata-ui": "dist/bin.js" },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "dependencies": {
+    "@mockdata/cli": "*",
+    "@mockdata/core": "*",
+    "@mockdata/inputs": "*",
+    "@mockdata/llm": "*"
+  }
+}

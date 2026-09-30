@@ -5,8 +5,9 @@
   "workspaces": ["packages/*", "apps/*"],
   "scripts": {
     "test": "vitest run",
+    "ui": "node packages/server/dist/bin.js",
     "typecheck": "npm run build",
-    "build": "tsc -p packages/core && tsc -p packages/llm && tsc -p packages/inputs && tsc -p packages/cli && tsc -p packages/mcp"
+    "build": "tsc -p packages/core && tsc -p packages/llm && tsc -p packages/inputs && tsc -p packages/cli && tsc -p packages/mcp && tsc -p packages/server"
   },
   "devDependencies": {
     "typescript": "^5.6.0",
