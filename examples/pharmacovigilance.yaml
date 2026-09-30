@@ -1,0 +1,56 @@
+# Post-marketing drug safety reports (pharmacovigilance), shaped like E2B individual
+# case safety reports (ICSRs). Synthetic data: products are fictional, terms are
+# illustrative, nothing here is a real report. Shows a chain of dates per case
+# (first drug -> event onset -> receipt -> follow-up) and reports concentrated on a few
+# products, which is what makes signal-detection exercises interesting.
+# Simplifications, because the DSL cannot tie one column to another:
+#   - seriousness criteria are left out (they could contradict the serious flag);
+#   - there is no per-reaction onset or death date (they could contradict the case dates
+#     and the outcome); the case carries one event onset date.
+seed: 61
+tables:
+  products:
+    rows: 6
+    columns:
+      id: { type: integer, primaryKey: true }
+      product_code: { type: string, pattern: "[A-Z]{5}-[0-9]{3}", unique: true }
+      substance: { type: string, enum: [atorvastatin, metformin, apixaban, sertraline, ibuprofen, amoxicillin] }
+  cases:
+    rows: 60
+    columns:
+      id: { type: integer, primaryKey: true }
+      case_id: { type: string, pattern: "US-2024-[0-9]{6}", unique: true }   # safety report id
+      report_type: { type: string, enum: [spontaneous, literature, study, regulatory authority] }
+      reporter_type: { type: string, enum: [physician, pharmacist, other health professional, consumer] }
+      country: { type: string, enum: [US, CA, GB, DE, FR, JP] }
+      patient_sex: { type: string, enum: [male, female, unknown] }
+      patient_age_years: { type: integer, min: 0, max: 95 }
+      serious: { type: string, enum: ["Y", "N"] }
+      first_drug_date: { type: date, min: "2022-01-01", max: "2024-03-31" }
+      event_onset_date: { type: date, after: first_drug_date, within: 90 }   # after starting the drug
+      receipt_date: { type: date, after: event_onset_date, within: 120 }   # company learns of it last
+  suspect_drugs:
+    rows: 90
+    columns:
+      id: { type: integer, primaryKey: true }
+      case_id: { type: integer, ref: cases.id, maxPerParent: 3 }   # at most 3 drugs per case
+      product_id: { type: integer, ref: products.id, distribution: zipf }   # a few products dominate
+      role: { type: string, enum: [suspect, concomitant, interacting] }
+      route: { type: string, enum: [oral, intravenous, subcutaneous] }
+      dose_mg: { type: integer, min: 1, max: 1000 }
+      start_date: { type: date, after: case_id.first_drug_date, within: 30 }
+  reactions:
+    rows: 110
+    columns:
+      id: { type: integer, primaryKey: true }
+      case_id: { type: integer, ref: cases.id, maxPerParent: 5 }   # at most 5 reactions per case
+      meddra_pt: { type: string, enum: [Nausea, Headache, Rash, Dizziness, Diarrhoea, Hepatic enzyme increased, Haemorrhage, Anaphylactic reaction, Rhabdomyolysis, Hypoglycaemia] }
+      outcome: { type: string, enum: [recovered, recovering, not recovered, recovered with sequelae, fatal, unknown] }
+      causality: { type: string, enum: [certain, probable, possible, unlikely, unassessable] }   # WHO-UMC categories
+  follow_ups:
+    rows: 40
+    columns:
+      id: { type: integer, primaryKey: true }
+      case_id: { type: integer, ref: cases.id, maxPerParent: 3 }
+      follow_up_date: { type: date, after: case_id.receipt_date, within: 90 }
+      information: { type: string, enum: [outcome update, additional drug details, lab results, reporter clarification] }

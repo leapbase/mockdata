@@ -220,6 +220,44 @@ describe("clinical-sdtm.yaml", () => {
   });
 });
 
+describe("pharmacovigilance.yaml", () => {
+  it("produces data that satisfies every feature it demonstrates", async () => {
+    const d = await json("generate", join(examples, "pharmacovigilance.yaml"));
+    expect(Object.fromEntries(Object.entries(d).map(([t, r]) => [t, (r as unknown[]).length]))).toEqual({
+      products: 6, cases: 60, suspect_drugs: 90, reactions: 110, follow_ups: 40,
+    });
+    const ids = d.cases.map((c: any) => c.case_id);
+    for (const id of ids) expect(id).toMatch(/^US-2024-[0-9]{6}$/);
+    expect(new Set(ids).size).toBe(ids.length);
+    const days = (a: string, b: string) => (Date.parse(a) - Date.parse(b)) / 86_400_000;
+    // the chain of dates on each case
+    for (const c of d.cases) {
+      expect(days(c.event_onset_date, c.first_drug_date)).toBeGreaterThanOrEqual(0);
+      expect(days(c.event_onset_date, c.first_drug_date)).toBeLessThanOrEqual(90);
+      expect(days(c.receipt_date, c.event_onset_date)).toBeGreaterThanOrEqual(0);
+      expect(days(c.receipt_date, c.event_onset_date)).toBeLessThanOrEqual(120);
+    }
+    const cases = byId(d.cases);
+    for (const s of d.suspect_drugs) {
+      const gap = days(s.start_date, cases.get(s.case_id).first_drug_date);
+      expect(gap).toBeGreaterThanOrEqual(0);
+      expect(gap).toBeLessThanOrEqual(30);
+    }
+    for (const f of d.follow_ups) {
+      const gap = days(f.follow_up_date, cases.get(f.case_id).receipt_date);
+      expect(gap).toBeGreaterThanOrEqual(0);
+      expect(gap).toBeLessThanOrEqual(90);
+    }
+    // caps
+    expect(perParent(d.suspect_drugs, "case_id")).toBeLessThanOrEqual(3);
+    expect(perParent(d.reactions, "case_id")).toBeLessThanOrEqual(5);
+    expect(perParent(d.follow_ups, "case_id")).toBeLessThanOrEqual(3);
+    // reports are concentrated on a few products (zipf)
+    expect(perParent(d.suspect_drugs, "product_id")).toBeGreaterThan(90 / 6);
+    for (const r of d.reactions) expect(["certain", "probable", "possible", "unlikely", "unassessable"]).toContain(r.causality);
+  });
+});
+
 describe("hr.yaml", () => {
   it("produces data that satisfies every feature it demonstrates", async () => {
     const d = await json("generate", join(examples, "hr.yaml"));
