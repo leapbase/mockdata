@@ -1,0 +1,51 @@
+:root {
+  --bg: #ffffff;
+  --panel: #f6f7f8;
+  --fg: #1c1e21;
+  --muted: #667;
+  --line: #d9dce0;
+  --accent: #2b6cb0;
+  --err: #b00020;
+  --warn: #8a5a00;
+  --focus: #fff3c4;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15171a;
+    --panel: #1d2024;
+    --fg: #e6e6e6;
+    --muted: #9aa3ad;
+    --line: #333840;
+    --accent: #6fa8dc;
+    --err: #ff8080;
+    --warn: #e0b050;
+    --focus: #4a4320;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif; }
+button, input, select, textarea { font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 4px 8px; }
+button { cursor: pointer; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.app { display: grid; grid-template-columns: 220px minmax(0, 1fr) minmax(0, 1fr); height: 100vh; }
+.app > * { min-height: 0; border-right: 1px solid var(--line); }
+.sidebar { background: var(--panel); padding: 8px; overflow: auto; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.files { list-style: none; margin: 8px 0 0; padding: 0; }
+.file { width: 100%; text-align: left; border-color: transparent; background: transparent; }
+.file.active { background: var(--bg); border-color: var(--line); }
+.dot, .hint { color: var(--warn); font-size: 12px; }
+.editor { display: flex; flex-direction: column; }
+.editor > :first-child { flex: 1; min-height: 0; overflow: auto; }
+.status { display: flex; flex-wrap: wrap; gap: 12px; padding: 6px 10px; border-top: 1px solid var(--line); background: var(--panel); }
+.status .error, .banner.error { color: var(--err); }
+.status .note { color: var(--warn); }
+.banner { grid-column: 1 / -1; padding: 6px 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.preview { display: flex; flex-direction: column; overflow: hidden; border-right: 0; }
+
+@media (max-width: 900px) {
+  .app { grid-template-columns: 1fr; height: auto; }
+  .editor { height: 60vh; }
+}
