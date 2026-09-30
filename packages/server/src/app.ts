@@ -7,6 +7,7 @@ import { LlmConfigError, LlmFillError, LlmHttpError } from "@mockdata/llm";
 import { assertLocal, HttpError, sendJson, type Ctx, type Handler } from "./http.js";
 import { serveStatic } from "./static.js";
 import { getConfig } from "./routes/config.js";
+import { listFiles, readFile, writeFile } from "./routes/files.js";
 
 export interface AppOptions {
   /** Directory schemas live in and all paths are confined to; .env is read from here. Default: cwd. */
@@ -21,6 +22,9 @@ export interface AppOptions {
 
 const ROUTES: Record<string, Handler> = {
   "GET /api/config": getConfig,
+  "GET /api/files": listFiles,
+  "GET /api/file": readFile,
+  "PUT /api/file": writeFile,
 };
 
 /** Errors caused by the caller's schema or input are 400; failures talking to a model are 502. */
