@@ -77,22 +77,66 @@ function parentCap(col: Column): number {
 }
 
 /**
- * Choose a parent row index for a foreign key, honouring the distribution and
- * the per-parent cap (probing forward from the pick when a parent is full).
- * Returns undefined when every parent is at capacity.
+ * How many children each parent row has, and which parents still have room. Finding "the first parent at or after
+ * `start` with spare capacity" is a union-find over full parents (each full parent points at the next index, with
+ * path compression), so a long run of full parents is skipped in near-constant time instead of probed one by one.
+ * That matters for zipf skew, which piles picks onto the first few parents: a linear probe was quadratic.
  */
-function pickParent(faker: Faker, col: Column, poolSize: number, used: Map<number, number>): number | undefined {
-  if (poolSize === 0) return undefined;
-  const cap = parentCap(col);
-  const start = col.distribution === "zipf" ? zipfIndex(faker, poolSize) : faker.number.int({ min: 0, max: poolSize - 1 });
-  for (let step = 0; step < poolSize; step++) {
-    const idx = (start + step) % poolSize;
-    if ((used.get(idx) ?? 0) < cap) {
-      used.set(idx, (used.get(idx) ?? 0) + 1);
-      return idx;
+export class ParentUsage {
+  private readonly counts: number[] = [];
+  /** next[i] is i while parent i has room; once full it points further along. */
+  private readonly next: number[] = [];
+
+  private ensure(size: number): void {
+    // Growing pools (self references) add parents with room at the end.
+    while (this.next.length < size) {
+      this.counts.push(0);
+      this.next.push(this.next.length);
     }
   }
-  return undefined;
+
+  /** The first index >= i below `size` that still has room, or `size` if there is none. */
+  private find(i: number, size: number): number {
+    let root = i;
+    while (root < size && this.next[root] !== root) root = this.next[root]!;
+    if (root > size) root = size;
+    // Path compression: everything on the way now points straight at the answer.
+    let node = i;
+    while (node < size && this.next[node] !== node) {
+      const following = this.next[node]!;
+      this.next[node] = root;
+      node = following;
+    }
+    return root;
+  }
+
+  /**
+   * Take one slot from the first parent at or after `start` (wrapping round) with room under `cap`, as a forward
+   * probe would. Undefined when every parent is full. With no cap nothing needs tracking.
+   */
+  pick(start: number, poolSize: number, cap: number): number | undefined {
+    if (poolSize === 0) return undefined;
+    if (cap === Infinity) return start;
+    this.ensure(poolSize);
+    let idx = this.find(start, poolSize);
+    if (idx >= poolSize) {
+      idx = this.find(0, poolSize);
+      if (idx >= start) return undefined; // wrapped all the way round
+    }
+    this.counts[idx] = (this.counts[idx] ?? 0) + 1;
+    if (this.counts[idx]! >= cap) this.next[idx] = idx + 1;
+    return idx;
+  }
+}
+
+/**
+ * Choose a parent row index for a foreign key, honouring the distribution and the per-parent cap (moving on from
+ * the pick when a parent is full). Returns undefined when every parent is at capacity.
+ */
+function pickParent(faker: Faker, col: Column, poolSize: number, used: ParentUsage): number | undefined {
+  if (poolSize === 0) return undefined;
+  const start = col.distribution === "zipf" ? zipfIndex(faker, poolSize) : faker.number.int({ min: 0, max: poolSize - 1 });
+  return used.pick(start, poolSize, parentCap(col));
 }
 
 export interface GenerateOptions {
@@ -134,7 +178,7 @@ export function generate(input: unknown, opts: GenerateOptions = {}): Dataset {
   const plan = planGeneration(schema);
   const deferred = new Set(plan.deferred);
   /** "table.column" -> parent row index -> number of children so far. */
-  const usage = new Map<string, Map<number, number>>();
+  const usage = new Map<string, ParentUsage>();
 
   const data: Dataset = {};
   for (const level of plan.levels) {
@@ -145,9 +189,9 @@ export function generate(input: unknown, opts: GenerateOptions = {}): Dataset {
   return data;
 }
 
-function usageFor(usage: Map<string, Map<number, number>>, key: string): Map<number, number> {
+function usageFor(usage: Map<string, ParentUsage>, key: string): ParentUsage {
   let m = usage.get(key);
-  if (!m) usage.set(key, (m = new Map()));
+  if (!m) usage.set(key, (m = new ParentUsage()));
   return m;
 }
 
@@ -157,7 +201,7 @@ function generateTable(
   data: Dataset,
   faker: Faker,
   deferred: Set<string>,
-  usage: Map<string, Map<number, number>>,
+  usage: Map<string, ParentUsage>,
 ): Row[] {
   const table = schema.tables[tname]!;
   const order = columnOrder(schema, tname);
@@ -194,7 +238,7 @@ function generateCell(
   data: Dataset,
   faker: Faker,
   seen: Map<string, Set<unknown>>,
-  used: Map<number, number>,
+  used: ParentUsage,
   deferred: Set<string>,
 ): unknown {
   const where = `${tname}.${cname}`;
@@ -250,7 +294,7 @@ function fillDeferred(
   key: string,
   data: Dataset,
   faker: Faker,
-  usage: Map<string, Map<number, number>>,
+  usage: Map<string, ParentUsage>,
 ): void {
   const [tname, cname] = key.split(".") as [string, string];
   const col = schema.tables[tname]!.columns[cname]!;
@@ -265,6 +309,31 @@ function fillDeferred(
   }
 }
 
+interface RowIndex {
+  byKey: Map<unknown, Row>;
+  /** How many rows of the table have been indexed so far (a table that is still being generated keeps growing). */
+  upTo: number;
+}
+const rowIndexes = new WeakMap<Dataset, Map<string, RowIndex>>();
+
+/**
+ * The first row of `table` whose `column` equals `value`, through an index built lazily as rows appear. A scan per
+ * lookup made `after: fk.col` quadratic. Referenced columns are primary keys or unique, so first-wins is exact.
+ */
+function lookupRow(data: Dataset, table: string, column: string, value: unknown): Row | undefined {
+  let byTable = rowIndexes.get(data);
+  if (!byTable) rowIndexes.set(data, (byTable = new Map()));
+  const key = `${table}.${column}`;
+  let index = byTable.get(key);
+  if (!index) byTable.set(key, (index = { byKey: new Map(), upTo: 0 }));
+  const rows = data[table] ?? [];
+  for (; index.upTo < rows.length; index.upTo++) {
+    const r = rows[index.upTo]!;
+    if (!index.byKey.has(r[column])) index.byKey.set(r[column], r);
+  }
+  return index.byKey.get(value);
+}
+
 function resolveAfter(schema: DataSchemaT, tname: string, after: string, row: Row, data: Dataset, where: string): number | undefined {
   const parts = after.split(".");
   let value: unknown;
@@ -275,8 +344,7 @@ function resolveAfter(schema: DataSchemaT, tname: string, after: string, row: Ro
     const fkValue = row[parts[0]!];
     if (fkValue === null || fkValue === undefined) return undefined;
     const [pt, pc] = fkCol.ref!.split(".") as [string, string];
-    const parentRow = (data[pt] ?? []).find((r) => r[pc] === fkValue);
-    value = parentRow?.[parts[1]!];
+    value = lookupRow(data, pt, pc, fkValue)?.[parts[1]!];
   }
   if (value === null || value === undefined) return undefined;
   const ms = Date.parse(String(value));
