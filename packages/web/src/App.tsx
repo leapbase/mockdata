@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "./api";
 import Editor from "./components/Editor";
+import ExportDialog from "./components/ExportDialog";
 import GenerateBar from "./components/GenerateBar";
 import InferDialog from "./components/InferDialog";
 import Preview from "./components/Preview";
@@ -146,6 +147,7 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
         onCreate={(p) => void saveAs(p, true)}
         onSave={save}
         onInfer={() => setDialog("infer")}
+        onExport={() => setDialog("export")}
       />
       <main className="editor">
         <Editor value={text} onChange={setText} errors={errors} />
@@ -206,6 +208,14 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
             setWarnings(r.warnings);
             setDialog(null);
           }}
+        />
+      )}
+      {dialog === "export" && (
+        <ExportDialog
+          text={text}
+          seed={seed === "" ? undefined : Number(seed)}
+          hasLlm={(check?.llmColumns ?? []).length > 0}
+          onClose={() => setDialog(null)}
         />
       )}
     </div>

@@ -268,3 +268,54 @@ describe("infer", () => {
     expect(screen.getByRole("dialog")).toBeTruthy();
   });
 });
+
+describe("export", () => {
+  const base = {
+    "GET /api/config": () => CONFIG_NO_LLM,
+    "GET /api/files": () => ({ files: [] }),
+    "POST /api/validate": () => OK,
+  };
+
+  it("writes files to the chosen folder and lists them", async () => {
+    const calls = stubApi({ ...base, "POST /api/export": () => ({ files: ["out/a.csv"], rows: { a: 2 } }) });
+    render(<App debounceMs={0} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Export…" }));
+    await userEvent.selectOptions(screen.getByLabelText("Format"), "csv");
+    await userEvent.click(screen.getByRole("button", { name: "Write files" }));
+    expect(await screen.findByText("out/a.csv")).toBeTruthy();
+    const body = calls.find((c) => c.key === "POST /api/export")!.body;
+    expect(body).toMatchObject({ format: "csv", outputDir: "out", overwrite: false });
+    expect(body.zip).toBeUndefined();
+  });
+
+  it("passes the overwrite choice and shows a conflict error without closing", async () => {
+    stubApi({ ...base, "POST /api/export": () => errorResponse(400, "Refusing to overwrite existing files: out/a.csv") });
+    render(<App debounceMs={0} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Export…" }));
+    await userEvent.click(screen.getByRole("button", { name: "Write files" }));
+    expect(await screen.findByText(/Refusing to overwrite/)).toBeTruthy();
+    expect(screen.getByLabelText("Overwrite existing files")).toBeTruthy();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("downloads a zip", async () => {
+    const calls = stubApi({ ...base, "POST /api/export": () => new Response(new Blob(["zip"])) });
+    const created: Blob[] = [];
+    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: (b: Blob) => (created.push(b), "blob:x"), revokeObjectURL: () => {} }));
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    render(<App debounceMs={0} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Export…" }));
+    await userEvent.click(screen.getByRole("button", { name: "Download zip" }));
+    await waitFor(() => expect(click).toHaveBeenCalled());
+    expect(calls.find((c) => c.key === "POST /api/export")!.body).toMatchObject({ zip: true });
+    expect(created).toHaveLength(1);
+    click.mockRestore();
+  });
+
+  it("warns that a schema with LLM columns spends model calls", async () => {
+    stubApi({ ...base, "POST /api/validate": () => ({ ...OK, llmColumns: ["a.b"] }) });
+    render(<App debounceMs={0} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Export…" }));
+    expect(await screen.findByText(/model calls/i)).toBeTruthy();
+  });
+});
