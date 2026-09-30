@@ -89,7 +89,7 @@ export async function inferConfined(root: string, baseEnv: Record<string, string
 
   if (args.connectionEnv !== undefined) {
     if (!DB_ENV_NAME.test(args.connectionEnv)) {
-      throw new UserError(`connectionEnv must be an upper-case variable name that mentions DATABASE, DB, POSTGRES, MYSQL, MARIADB or SQLITE (got "${args.connectionEnv}")`);
+      throw new UserError(`connectionEnv must be an upper-case variable name that mentions DATABASE, DB, POSTGRES, MYSQL, MARIADB or SQLITE`);
     }
     const url = loadEnv(root, baseEnv)[args.connectionEnv];
     if (!url) throw new UserError(`Environment variable ${args.connectionEnv} is not set (checked the environment and .env in the server root)`);
