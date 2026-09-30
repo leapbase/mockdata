@@ -1,0 +1,16 @@
+{
+  "name": "mockdata",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "npm run build",
+    "build": "tsc -p packages/core && tsc -p packages/cli"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "@types/node": "^22.0.0"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "@mockdata/cli",
+  "version": "0.0.1",
+  "type": "module",
+  "bin": { "mockdata": "dist/bin.js" },
+  "dependencies": {
+    "@mockdata/core": "*",
+    "yaml": "^2.5.0"
+  }
+}

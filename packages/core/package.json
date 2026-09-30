@@ -1,0 +1,11 @@
+{
+  "name": "@mockdata/core",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "dependencies": {
+    "@faker-js/faker": "^9.0.0",
+    "zod": "^3.23.0"
+  }
+}

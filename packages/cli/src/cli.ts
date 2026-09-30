@@ -1,0 +1,135 @@
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { extname, join } from "node:path";
+import { parseArgs } from "node:util";
+import { parse as parseYaml } from "yaml";
+import { generate, parseSchema, type Dataset, type Row } from "@mockdata/core";
+
+export interface IO {
+  out: (s: string) => void;
+  err: (s: string) => void;
+}
+
+const HELP = `mockdata - synthetic data generator
+
+Usage:
+  mockdata generate <schema.(yaml|yml|json)> [options]
+  mockdata validate <schema.(yaml|yml|json)>
+
+generate options:
+  -o, --out <dir>       write one file per table into <dir> (default: print JSON to stdout)
+  -f, --format <fmt>    json | ndjson | csv (default: json)
+  -s, --seed <n>        override the schema seed
+  -h, --help            show this help
+`;
+
+const FORMATS = ["json", "ndjson", "csv"] as const;
+type Format = (typeof FORMATS)[number];
+
+export function loadSchemaFile(path: string): unknown {
+  const text = readFileSync(path, "utf8");
+  return extname(path).toLowerCase() === ".json" ? JSON.parse(text) : parseYaml(text);
+}
+
+function csvCell(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  const s = String(v);
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+export function serialize(rows: Row[], columns: string[], format: Format): string {
+  switch (format) {
+    case "json":
+      return JSON.stringify(rows, null, 2) + "\n";
+    case "ndjson":
+      return rows.map((r) => JSON.stringify(r)).join("\n") + (rows.length ? "\n" : "");
+    case "csv":
+      return [columns.join(","), ...rows.map((r) => columns.map((c) => csvCell(r[c])).join(","))].join("\n") + "\n";
+  }
+}
+
+/** Returns a process exit code. Never calls process.exit, so it is testable. */
+export function run(argv: string[], io: IO): number {
+  const [command, ...rest] = argv;
+  if (!command || command === "-h" || command === "--help") {
+    io.out(HELP);
+    return command ? 0 : 1;
+  }
+  if (command !== "generate" && command !== "validate") {
+    io.err(`Unknown command "${command}"\n\n${HELP}`);
+    return 1;
+  }
+
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args: rest,
+      allowPositionals: true,
+      options: {
+        out: { type: "string", short: "o" },
+        format: { type: "string", short: "f", default: "json" },
+        seed: { type: "string", short: "s" },
+        help: { type: "boolean", short: "h" },
+      },
+    });
+  } catch (e) {
+    io.err(`${(e as Error).message}\n\n${HELP}`);
+    return 1;
+  }
+  const { values, positionals } = parsed;
+  if (values.help) {
+    io.out(HELP);
+    return 0;
+  }
+  const file = positionals[0];
+  if (!file || positionals.length > 1) {
+    io.err(`Expected exactly one schema file\n\n${HELP}`);
+    return 1;
+  }
+
+  try {
+    const raw = loadSchemaFile(file);
+    if (command === "validate") {
+      const schema = parseSchema(raw);
+      const n = Object.keys(schema.tables).length;
+      io.out(`OK: ${n} table${n === 1 ? "" : "s"}\n`);
+      return 0;
+    }
+
+    const format = values.format as Format;
+    if (!FORMATS.includes(format)) {
+      io.err(`Invalid --format "${values.format}" (expected ${FORMATS.join(", ")})\n`);
+      return 1;
+    }
+    let seed: number | undefined;
+    if (values.seed !== undefined) {
+      seed = Number(values.seed);
+      if (!Number.isInteger(seed)) {
+        io.err(`Invalid --seed "${values.seed}" (expected an integer)\n`);
+        return 1;
+      }
+    }
+
+    const schema = parseSchema(raw);
+    const data: Dataset = generate(schema, { seed });
+    if (!values.out) {
+      if (format !== "json") {
+        io.err(`--format ${format} needs --out <dir> (one file per table)\n`);
+        return 1;
+      }
+      io.out(JSON.stringify(data, null, 2) + "\n");
+      return 0;
+    }
+
+    mkdirSync(values.out, { recursive: true });
+    for (const [table, rows] of Object.entries(data)) {
+      const columns = Object.keys(schema.tables[table]!.columns);
+      writeFileSync(join(values.out, `${table}.${format}`), serialize(rows, columns, format));
+      io.err(`wrote ${table}.${format} (${rows.length} rows)\n`);
+    }
+    return 0;
+  } catch (e) {
+    const err = e as Error;
+    io.err(`${err.name === "Error" ? "" : err.name + ": "}${err.message}\n`);
+    return 1;
+  }
+}
