@@ -1,7 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { SESSION_COOKIE, SESSION_TTL_SECONDS, clearCookie, sendPasswordResetEmail, sendVerificationEmail, serializeCookie, type AccountUser } from "@mockdata/accounts";
+import { SESSION_COOKIE, clearCookie, sendPasswordResetEmail, sendVerificationEmail, type AccountUser } from "@mockdata/accounts";
 import { EmailTakenError } from "@mockdata/auth-kit";
 import type { AccountsRuntime } from "../accounts/runtime.js";
+import { googleCallback, googleStart } from "../accounts/google.js";
+import { startSession } from "../accounts/session.js";
 import { HttpError, readJson, reqString, sendJson } from "../http.js";
 
 /** Who is calling an /api/auth/ route: nobody, or the user behind the session cookie. */
@@ -31,13 +33,6 @@ function field(result: string | { error: string }): string {
 /** Validation messages describe the rule, never the input, so they can be shown as they are. */
 function emailOf(acc: AccountsRuntime, body: Record<string, unknown>): string {
   return field(acc.auth.validateEmail(reqString(body, "email")));
-}
-
-async function startSession(acc: AccountsRuntime, res: ServerResponse, userId: number): Promise<void> {
-  const session = await acc.sessions.create(userId);
-  const cookie = serializeCookie(SESSION_COOKIE, session.id, { maxAgeSeconds: SESSION_TTL_SECONDS, secure: acc.config.publicUrl.secure });
-  const existing = res.getHeader("set-cookie");
-  res.setHeader("set-cookie", [...(Array.isArray(existing) ? existing : existing ? [String(existing)] : []), cookie]);
 }
 
 /** Send a message without letting a mail failure change the response (that would reveal whether an address exists). */
@@ -197,6 +192,8 @@ export const AUTH_ROUTES: Record<string, AuthHandler> = {
   "POST /api/auth/forgot-password": forgotPassword,
   "POST /api/auth/reset-password": resetPassword,
   "POST /api/auth/change-password": changePassword,
+  "GET /api/auth/google": googleStart,
+  "GET /api/auth/google/callback": googleCallback,
 };
 
 /** `/api/auth/me` when accounts are off, so the page knows to skip the login screen. */
