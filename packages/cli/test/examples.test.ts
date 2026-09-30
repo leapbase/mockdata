@@ -258,6 +258,63 @@ describe("pharmacovigilance.yaml", () => {
   });
 });
 
+describe("manufacturing-quality.yaml", () => {
+  it("produces data that satisfies every feature it demonstrates", async () => {
+    const d = await json("generate", join(examples, "manufacturing-quality.yaml"));
+    expect(Object.fromEntries(Object.entries(d).map(([t, r]) => [t, (r as unknown[]).length]))).toEqual({
+      products: 5, raw_material_lots: 15, batches: 40, batch_materials: 100, qc_assay: 40, qc_dissolution: 40, qc_moisture: 40,
+      stability_studies: 20, stability_results: 60, deviations: 25, capas: 20, equipment: 8, calibrations: 30,
+    });
+    for (const b of d.batches) expect(b.batch_no).toMatch(/^B[0-9]{7}$/);
+    for (const l of d.raw_material_lots) expect(l.lot_no).toMatch(/^L[0-9]{8}$/);
+    expect(new Set(d.batches.map((b: any) => b.batch_no)).size).toBe(d.batches.length);
+    const days = (a: string, b: string) => (Date.parse(a) - Date.parse(b)) / 86_400_000;
+    const between = (gap: number, max: number) => {
+      expect(gap).toBeGreaterThanOrEqual(0);
+      expect(gap).toBeLessThanOrEqual(max);
+    };
+    for (const l of d.raw_material_lots) between(days(l.expiry_on, l.received_on), 730);
+    const batches = byId(d.batches);
+    for (const b of d.batches) between(days(b.expiry_on, b.manufactured_on), 1095);
+    // every lot predates every batch, so traceability is consistent by construction
+    const lastReceived = Math.max(...d.raw_material_lots.map((l: any) => Date.parse(l.received_on)));
+    for (const b of d.batches) expect(Date.parse(b.manufactured_on)).toBeGreaterThan(lastReceived);
+    expect(perParent(d.batch_materials, "batch_id")).toBeLessThanOrEqual(6);
+    // QC: each table has its own range and is tested soon after manufacture
+    const qc: [string, string, number, number][] = [
+      ["qc_assay", "result_pct_label_claim", 90, 110], ["qc_dissolution", "result_pct_dissolved_30min", 70, 100], ["qc_moisture", "result_pct_water", 0.1, 5],
+    ];
+    for (const [table, col, lo, hi] of qc) {
+      for (const r of d[table]) {
+        expect(r[col]).toBeGreaterThanOrEqual(lo);
+        expect(r[col]).toBeLessThanOrEqual(hi);
+        between(days(r.tested_on, batches.get(r.batch_id).manufactured_on), 30);
+      }
+    }
+    // stability
+    const studies = byId(d.stability_studies);
+    for (const s of d.stability_studies) between(days(s.started_on, batches.get(s.batch_id).manufactured_on), 30);
+    for (const r of d.stability_results) between(days(r.tested_on, studies.get(r.study_id).started_on), 730);
+    expect(perParent(d.stability_studies, "batch_id")).toBeLessThanOrEqual(2);
+    // deviations and CAPAs: chains of dates, and some items still open
+    const deviations = byId(d.deviations);
+    for (const v of d.deviations) {
+      between(days(v.opened_on, batches.get(v.batch_id).manufactured_on), 60);
+      if (v.closed_on) between(days(v.closed_on, v.opened_on), 90);
+    }
+    for (const c of d.capas) {
+      between(days(c.opened_on, deviations.get(c.deviation_id).opened_on), 30);
+      between(days(c.due_on, c.opened_on), 120);
+      if (c.closed_on) between(days(c.closed_on, c.opened_on), 180);
+    }
+    expect(d.deviations.some((v: any) => v.closed_on === null)).toBe(true);
+    expect(d.capas.some((c: any) => c.closed_on === null)).toBe(true);
+    expect(perParent(d.capas, "deviation_id")).toBeLessThanOrEqual(2);
+    for (const c of d.calibrations) between(days(c.next_due_on, c.calibrated_on), 365);
+    expect(perParent(d.calibrations, "equipment_id")).toBeLessThanOrEqual(6);
+  });
+});
+
 describe("hr.yaml", () => {
   it("produces data that satisfies every feature it demonstrates", async () => {
     const d = await json("generate", join(examples, "hr.yaml"));

@@ -1,0 +1,113 @@
+# Pharmaceutical manufacturing and quality (GMP): batches, the raw-material lots they
+# used, QC results, stability studies, deviations with CAPAs, and equipment calibration.
+# Synthetic data: products, ranges and terms are illustrative.
+# Shows bounded date chains (manufacture -> test, deviation -> CAPA -> closure,
+# calibration -> next due), open items (empty close dates), and traceability from a
+# batch back to its material lots.
+# Simplifications, because the DSL cannot tie one column to another:
+#   - raw-material lots are all received in 2021-2022 and batches are made from 2023
+#     on, so a lot always predates the batches that consume it (true by construction);
+#   - QC results are split per test (assay, dissolution, moisture) so each has its own
+#     range and unit, and carry no pass/fail flag (it could contradict the value);
+#   - a lot's expiry and a batch's expiry are not checked against when they are used.
+seed: 83
+tables:
+  products:
+    rows: 5
+    columns:
+      id: { type: integer, primaryKey: true }
+      product_code: { type: string, pattern: "[A-Z]{4}-[0-9]{3}", unique: true }
+      dosage_form: { type: string, enum: [tablet, capsule, injection, oral solution, cream] }
+  raw_material_lots:
+    rows: 15
+    columns:
+      id: { type: integer, primaryKey: true }
+      lot_no: { type: string, pattern: "L[0-9]{8}", unique: true }
+      material: { type: string, enum: [active ingredient, lactose, microcrystalline cellulose, magnesium stearate, povidone, purified water] }
+      supplier: { type: string, enum: [Acme Chemicals, Borealis Materials, Corvid Pharma Supply] }
+      received_on: { type: date, min: "2021-01-01", max: "2022-12-31" }
+      expiry_on: { type: date, after: received_on, within: 730 }
+  batches:
+    rows: 40
+    columns:
+      id: { type: integer, primaryKey: true }
+      batch_no: { type: string, pattern: "B[0-9]{7}", unique: true }
+      product_id: { type: integer, ref: products.id, distribution: zipf }   # a few products are made most often
+      site: { type: string, enum: [Plant A, Plant B, Plant C] }
+      manufactured_on: { type: date, min: "2023-01-01", max: "2024-06-30" }
+      expiry_on: { type: date, after: manufactured_on, within: 1095 }
+      status: { type: string, enum: [released, quarantine, rejected, recalled] }
+  batch_materials:
+    rows: 100
+    columns:
+      id: { type: integer, primaryKey: true }
+      batch_id: { type: integer, ref: batches.id, maxPerParent: 6 }   # at most 6 lots per batch
+      lot_id: { type: integer, ref: raw_material_lots.id }
+      quantity_kg: { type: float, min: 0.5, max: 500 }
+  qc_assay:
+    rows: 40
+    columns:
+      id: { type: integer, primaryKey: true }
+      batch_id: { type: integer, ref: batches.id }
+      tested_on: { type: date, after: batch_id.manufactured_on, within: 30 }
+      result_pct_label_claim: { type: float, min: 90, max: 110 }
+  qc_dissolution:
+    rows: 40
+    columns:
+      id: { type: integer, primaryKey: true }
+      batch_id: { type: integer, ref: batches.id }
+      tested_on: { type: date, after: batch_id.manufactured_on, within: 30 }
+      result_pct_dissolved_30min: { type: float, min: 70, max: 100 }
+  qc_moisture:
+    rows: 40
+    columns:
+      id: { type: integer, primaryKey: true }
+      batch_id: { type: integer, ref: batches.id }
+      tested_on: { type: date, after: batch_id.manufactured_on, within: 30 }
+      result_pct_water: { type: float, min: 0.1, max: 5 }
+  stability_studies:
+    rows: 20
+    columns:
+      id: { type: integer, primaryKey: true }
+      batch_id: { type: integer, ref: batches.id, maxPerParent: 2 }   # at most 2 studies per batch
+      storage_condition: { type: string, enum: ["25C/60%RH", "30C/65%RH", "40C/75%RH"] }
+      planned_months: { type: integer, enum: [6, 12, 24, 36] }
+      started_on: { type: date, after: batch_id.manufactured_on, within: 30 }
+  stability_results:
+    rows: 60
+    columns:
+      id: { type: integer, primaryKey: true }
+      study_id: { type: integer, ref: stability_studies.id }
+      timepoint_months: { type: integer, enum: [0, 3, 6, 9, 12, 18, 24] }
+      assay_pct_label_claim: { type: float, min: 85, max: 105 }
+      tested_on: { type: date, after: study_id.started_on, within: 730 }
+  deviations:
+    rows: 25
+    columns:
+      id: { type: integer, primaryKey: true }
+      batch_id: { type: integer, ref: batches.id }
+      category: { type: string, enum: [process, equipment, materials, documentation, environmental] }
+      severity: { type: string, enum: [minor, major, critical] }
+      opened_on: { type: date, after: batch_id.manufactured_on, within: 60 }
+      closed_on: { type: date, after: opened_on, within: 90, nullable: true, nullRate: 0.25 }   # open when empty
+  capas:
+    rows: 20
+    columns:
+      id: { type: integer, primaryKey: true }
+      deviation_id: { type: integer, ref: deviations.id, maxPerParent: 2 }   # at most 2 CAPAs per deviation
+      opened_on: { type: date, after: deviation_id.opened_on, within: 30 }
+      due_on: { type: date, after: opened_on, within: 120 }
+      closed_on: { type: date, after: opened_on, within: 180, nullable: true, nullRate: 0.4 }   # open when empty
+  equipment:
+    rows: 8
+    columns:
+      id: { type: integer, primaryKey: true }
+      tag: { type: string, pattern: "EQ-[0-9]{4}", unique: true }
+      type: { type: string, enum: [balance, tablet press, HPLC, autoclave, dissolution bath, pH meter] }
+  calibrations:
+    rows: 30
+    columns:
+      id: { type: integer, primaryKey: true }
+      equipment_id: { type: integer, ref: equipment.id, maxPerParent: 6 }   # at most 6 records each
+      calibrated_on: { type: date, min: "2023-01-01", max: "2024-12-31" }
+      next_due_on: { type: date, after: calibrated_on, within: 365 }
