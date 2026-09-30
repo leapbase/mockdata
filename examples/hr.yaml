@@ -1,0 +1,37 @@
+# Shows the features shop.yaml does not: regex patterns, one-to-one links,
+# per-parent caps, a self reference, a table cycle, and an "after" date rule.
+seed: 7
+tables:
+  departments:
+    rows: 5
+    columns:
+      id: { type: integer, primaryKey: true }
+      code: { type: string, pattern: "D[0-9]{3}", unique: true }
+      name: { type: string, enum: [Engineering, Sales, Support, Finance, Legal] }
+      # departments -> employees -> departments is a cycle. It is allowed because this
+      # foreign key is nullable: it starts empty and is filled once employees exist.
+      head_id: { type: integer, ref: employees.id, nullable: true, nullRate: 0 }
+  employees:
+    rows: 40
+    columns:
+      id: { type: integer, primaryKey: true }
+      department_id: { type: integer, ref: departments.id, distribution: zipf }   # a few big departments
+      manager_id: { type: integer, ref: employees.id, nullable: true, nullRate: 0.05 }   # self reference
+      name: { type: string, faker: person.fullName }
+      email: { type: email, unique: true }
+      badge: { type: string, pattern: "EMP-[0-9]{5}", unique: true }
+      hired_on: { type: date, min: "2015-01-01", max: "2024-12-31" }
+      left_on: { type: date, after: hired_on, nullable: true, nullRate: 0.8 }   # never before hired_on
+      salary: { type: float, min: 40000, max: 200000 }
+  parking_spots:
+    rows: 15
+    columns:
+      id: { type: integer, primaryKey: true }
+      employee_id: { type: integer, ref: employees.id, unique: true }   # unique foreign key = one-to-one
+      spot: { type: string, pattern: "[A-C][0-9]{2}", unique: true }
+  equipment:
+    rows: 60
+    columns:
+      id: { type: integer, primaryKey: true }
+      employee_id: { type: integer, ref: employees.id, maxPerParent: 3 }   # at most 3 items each
+      kind: { type: string, enum: [laptop, monitor, phone, headset] }

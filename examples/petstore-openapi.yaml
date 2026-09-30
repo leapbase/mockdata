@@ -1,0 +1,34 @@
+# A small OpenAPI document. `mockdata infer` turns each object schema into a table,
+# and owner_id / pet_id into foreign keys.
+openapi: 3.0.3
+info: { title: Vet clinic, version: "1.0" }
+components:
+  schemas:
+    Owner:
+      type: object
+      required: [id, name, email]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        email: { type: string, format: email }
+        phone: { type: string, nullable: true }
+    Pet:
+      type: object
+      required: [id, owner_id, species]
+      properties:
+        id: { type: integer }
+        owner_id: { type: integer }
+        name: { type: string }
+        species: { type: string, enum: [dog, cat, rabbit, parrot] }
+        birthday: { type: string, format: date }
+        weight_kg: { type: number, minimum: 0.1, maximum: 60 }
+    Visit:
+      type: object
+      required: [id, pet_id, visited_at]
+      x-rows: 200
+      properties:
+        id: { type: integer }
+        pet_id: { type: integer }
+        visited_at: { type: string, format: date-time }
+        notes: { type: string }
+        cost: { type: number, minimum: 10, maximum: 900 }

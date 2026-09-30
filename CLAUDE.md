@@ -25,6 +25,10 @@ MOCKDATA_ROOT=$PWD node packages/mcp/dist/bin.js   # MCP server on stdio
 
 Build order is core, llm, inputs, cli, mcp (each imports the earlier ones' `dist`). Each package sets its own `outDir` (a base-config `outDir` resolves relative to the repo root, not the package). Vitest aliases `@mockdata/core` to its source (`vitest.config.ts`), so tests need no build.
 
+## Docs and examples
+
+`README.md` is the user-facing guide (install, schema reference, infer, LLM setup, MCP setup); keep it in step with the schema DSL, the CLI help text and `packages/mcp/src/reference.ts` when any of them change. Every file under `examples/` is documented in the README and exercised by `packages/cli/test/examples.test.ts`, so a broken example fails the suite. `examples/samples/*.csv` were produced by `mockdata generate examples/shop.yaml -f csv` (fake data). `examples/sample.db` is created on demand by `make-sample-db.mjs` and is git-ignored.
+
 ## Core architecture (`packages/core/src`)
 
 - `schema.ts`: Zod schema plus `parseSchema`, which also cross-validates refs (target must exist, be primaryKey/unique, and have the same type) and `after` rules.
