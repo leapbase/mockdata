@@ -8,6 +8,8 @@ import { loadEnv } from "./env.js";
 import { runInfer } from "./infer.js";
 
 export { loadEnv };
+export { toYaml } from "./infer.js";
+export * from "./confined.js";
 
 export interface IO {
   out: (s: string) => void;

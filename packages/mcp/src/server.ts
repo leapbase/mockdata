@@ -1,18 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { loadEnv, parseSchemaText, serialize } from "@mockdata/cli";
+import { checkSchemaPath, inferConfined, loadEnv, parseSchemaText, resolveInside, serialize, UserError } from "@mockdata/cli";
 import { llmColumns, parseSchema, type Dataset } from "@mockdata/core";
-import {
-  detectDatabase,
-  fromJsonSchema,
-  inferFromDatabase,
-  inferFromSampleFiles,
-  inferFromSource,
-  looksLikeJsonSchema,
-  type InferResult,
-} from "@mockdata/inputs";
 import { generateWithLlm, type GenerateWithLlmOptions, type LlmReport } from "@mockdata/llm";
 import { SCHEMA_REFERENCE } from "./reference.js";
 
@@ -25,9 +16,6 @@ export interface ServerOptions {
   llm?: Pick<GenerateWithLlmOptions, "provider" | "fetch" | "sleep">;
 }
 
-/** Problems caused by the caller's input; reported as tool errors, not crashes. */
-class UserError extends Error {}
-
 interface RunSummary {
   at: string;
   seed: number;
@@ -38,10 +26,6 @@ interface RunSummary {
 }
 
 const FORMATS = ["json", "ndjson", "csv"] as const;
-const MAX_INLINE_BYTES = 5 * 1024 * 1024;
-/** Env var names an agent may use for a database URL: must look like database config, never e.g. an API key. */
-const DB_ENV_NAME = /^(?=.*(DATABASE|DB|POSTGRES|MYSQL|MARIADB|SQLITE))[A-Z][A-Z0-9_]*$/;
-const SCHEMA_EXT = new Set([".yaml", ".yml", ".json"]);
 
 const text = (value: unknown) => ({
   content: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }],
@@ -56,24 +40,6 @@ async function guarded(body: () => unknown | Promise<unknown>) {
     const err = e as Error;
     return fail(err instanceof UserError ? err.message : `${err.name}: ${err.message}`);
   }
-}
-
-/**
- * Resolve a caller-supplied relative path inside `root`. Rejects absolute
- * paths, `..` escapes, and symlinks that lead outside the root.
- */
-function resolveInside(root: string, rel: string): string {
-  if (path.isAbsolute(rel)) throw new UserError(`Path "${rel}" must be relative to the server root`);
-  const rootReal = realpathSync(root);
-  const target = path.resolve(rootReal, rel);
-  const within = (p: string) => {
-    const r = path.relative(rootReal, p);
-    return r === "" || (!r.startsWith("..") && !path.isAbsolute(r));
-  };
-  let probe = target;
-  while (!existsSync(probe)) probe = path.dirname(probe);
-  if (!within(target) || !within(realpathSync(probe))) throw new UserError(`Path "${rel}" is outside the server root`);
-  return target;
 }
 
 export function createServer(opts: ServerOptions = {}): McpServer {
@@ -99,10 +65,7 @@ export function createServer(opts: ServerOptions = {}): McpServer {
       throw new UserError('Provide exactly one of "schema" or "schemaPath"');
     }
     if (args.schema !== undefined) return typeof args.schema === "string" ? parseSchemaText(args.schema) : args.schema;
-    const ext = path.extname(args.schemaPath!).toLowerCase();
-    if (!SCHEMA_EXT.has(ext) || path.basename(args.schemaPath!).startsWith(".env")) {
-      throw new UserError(`schemaPath must be a .yaml, .yml or .json file (got "${args.schemaPath}")`);
-    }
+    const ext = checkSchemaPath(args.schemaPath!);
     const file = resolveInside(root, args.schemaPath!);
     if (!existsSync(file)) throw new UserError(`No such file: ${args.schemaPath}`);
     const content = readFileSync(file, "utf8");
@@ -163,35 +126,7 @@ export function createServer(opts: ServerOptions = {}): McpServer {
     },
     (args) =>
       guarded(async () => {
-        const given = [args.path, args.content, args.connectionEnv].filter((v) => v !== undefined).length;
-        if (given !== 1) throw new UserError('Provide exactly one of "path", "content" or "connectionEnv"');
-        const opts = { kind: args.kind, rows: args.rows, schema: args.pgSchema, enums: args.enums };
-        let result: InferResult;
-
-        if (args.connectionEnv !== undefined) {
-          if (!DB_ENV_NAME.test(args.connectionEnv)) {
-            throw new UserError(`connectionEnv must be an upper-case variable name that mentions DATABASE, DB, POSTGRES, MYSQL, MARIADB or SQLITE (got "${args.connectionEnv}")`);
-          }
-          const url = loadEnv(root, baseEnv)[args.connectionEnv];
-          if (!url) throw new UserError(`Environment variable ${args.connectionEnv} is not set (checked the environment and .env in the server root)`);
-          // Do not echo the value: it may be a credential of some other kind.
-          if (!detectDatabase(url)) throw new UserError(`${args.connectionEnv} does not hold a supported database URL (postgres://, mysql://, mariadb:// or sqlite:)`);
-          result = await inferFromDatabase(url, opts);
-        } else if (args.content !== undefined) {
-          if (Buffer.byteLength(args.content) > MAX_INLINE_BYTES) throw new UserError("content is larger than 5 MB; write it to a file under the server root and use path");
-          const doc = args.kind === "sample" ? undefined : safeParse(args.content);
-          result =
-            args.kind === "json-schema" || (args.kind === undefined && looksLikeJsonSchema(doc))
-              ? fromJsonSchema(doc as Record<string, unknown>, opts)
-              : inferFromSampleFiles([{ name: args.name ?? "data.json", text: args.content }], opts);
-        } else {
-          if (path.basename(args.path!).startsWith(".env")) throw new UserError("Refusing to read .env files");
-          const target = resolveInside(root, args.path!);
-          if (!existsSync(target)) throw new UserError(`No such file or folder: ${args.path}`);
-          if (args.kind === "database" && !detectDatabase(target)) throw new UserError("kind database with a path needs a SQLite file (.db, .sqlite, .sqlite3)");
-          result = await inferFromSource(target, opts);
-        }
-
+        const result = await inferConfined(root, baseEnv, args);
         return { tables: Object.keys(result.schema.tables), warnings: result.warnings, schema: result.schema };
       }),
   );
@@ -273,15 +208,6 @@ export function createServer(opts: ServerOptions = {}): McpServer {
   );
 
   return server;
-}
-
-/** Parse JSON/YAML text, or undefined if it is neither (then it is treated as sample rows). */
-function safeParse(text: string): unknown {
-  try {
-    return parseSchemaText(text);
-  } catch {
-    return undefined;
-  }
 }
 
 function preview(data: Dataset, n: number): Dataset {

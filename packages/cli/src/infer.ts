@@ -7,7 +7,7 @@ import { loadEnv } from "./env.js";
 import type { IO } from "./cli.js";
 
 /** YAML text for a schema. Date-like strings are quoted: other YAML parsers would turn bare 2024-01-01 into a date object. */
-function toYaml(schema: unknown): string {
+export function toYaml(schema: unknown): string {
   const doc = new Document(schema);
   visit(doc, {
     Scalar(_key, node) {
