@@ -1,5 +1,6 @@
 import { parseSchemaText } from "@mockdata/cli";
 import { CycleError, generate, llmColumns, parseSchema, planGeneration, SchemaError, type DataSchemaT } from "@mockdata/core";
+import { LlmCancelledError, generateWithLlm } from "@mockdata/llm";
 import { optInt, optStringArray, readJson, reqString, sendJson, type Handler } from "../http.js";
 import { applyRowOverride, buildPreview } from "../preview.js";
 
@@ -56,4 +57,38 @@ export const generateRoute: Handler = async (_ctx, req, res) => {
   // llm columns stay pending here; the stream route fills them.
   const data = generate(schema, { seed, deferLlm: true });
   sendJson(res, 200, buildPreview(schema, data, { seed, rows: previewRows, tables }));
+};
+
+/**
+ * Fill llm columns and stream progress as server-sent events. The client
+ * reads this with fetch (POST carries the schema text). Closing the
+ * connection aborts the run before the next model request.
+ */
+export const streamRoute: Handler = async (ctx, req, res) => {
+  const { schema, seed, previewRows, tables } = readRunParams(await readJson(req));
+  res.writeHead(200, {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+  });
+  const abort = new AbortController();
+  res.on("close", () => abort.abort());
+  const send = (event: string, data: unknown) => {
+    if (!res.writableEnded && !res.destroyed) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+  try {
+    const { data, report } = await generateWithLlm(schema, {
+      seed,
+      ...ctx.llm,
+      env: ctx.env(),
+      signal: abort.signal,
+      onProgress: (p) => send("progress", p),
+    });
+    send("done", { ...buildPreview(schema, data, { seed, rows: previewRows, tables }), report });
+  } catch (e) {
+    // A cancelled run has no listener left; anything else is reported (messages name variables, never values).
+    if (!(e instanceof LlmCancelledError)) send("error", { name: (e as Error).name, message: (e as Error).message });
+  } finally {
+    res.end();
+  }
 };

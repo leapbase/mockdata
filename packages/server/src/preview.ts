@@ -49,6 +49,9 @@ export function buildPreview(schema: DataSchemaT, data: Dataset, opts: { seed?: 
     seed: opts.seed ?? schema.seed ?? 1,
     counts: Object.fromEntries(Object.entries(data).map(([t, r]) => [t, r.length])),
     tables,
-    pending: llmColumns(schema).map((c) => `${c.table}.${c.column}`),
+    // A cell is pending while it is undefined (null means intentionally null).
+    pending: llmColumns(schema)
+      .filter((c) => (data[c.table] ?? []).some((r) => r[c.column] === undefined))
+      .map((c) => `${c.table}.${c.column}`),
   };
 }
