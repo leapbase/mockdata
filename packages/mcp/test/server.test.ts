@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -37,7 +38,7 @@ describe("mcp server", () => {
   it("lists the tools", async () => {
     const { client } = await start();
     const names = (await client.listTools()).tools.map((t) => t.name).sort();
-    expect(names).toEqual(["describe_schema_format", "generate_data", "get_run_report", "validate_schema"]);
+    expect(names).toEqual(["describe_schema_format", "generate_data", "get_run_report", "infer_schema", "validate_schema"]);
   });
 
   it("describe_schema_format returns the reference", async () => {
@@ -180,5 +181,107 @@ describe("mcp with llm columns", () => {
     const r = await call("generate_data", { schema: withLlm });
     expect(r.isError).toBe(true);
     expect(r.body).toMatch(/AI_PROVIDER/);
+  });
+});
+
+describe("mcp infer_schema", () => {
+  const customersCsv = "id,name\n1,Ann\n2,Bo\n3,Cy\n";
+  const ordersCsv = "id,customer_id,total\n1,1,9.5\n2,2,3\n3,1,7\n";
+
+  function sqliteFile(root: string, name = "shop.db") {
+    const file = join(root, name);
+    const db = new DatabaseSync(file);
+    db.exec(`
+      create table customers (id integer primary key, email text not null unique);
+      create table orders (id integer primary key, customer_id integer not null references customers(id));
+      insert into customers values (1, 'secret-row@example.com');
+    `);
+    db.close();
+    return file;
+  }
+
+  it("infers from a SQLite file under the root, and the result feeds straight into generate_data", async () => {
+    const { call, root } = await start();
+    sqliteFile(root);
+    const r = (await call("infer_schema", { path: "shop.db", rows: 9 })).json();
+    expect(r.tables.sort()).toEqual(["customers", "orders"]);
+    expect(r.schema.tables.orders.columns.customer_id).toMatchObject({ ref: "customers.id" });
+    expect(JSON.stringify(r)).not.toContain("secret-row");
+    const gen = (await call("generate_data", { schema: r.schema })).json();
+    expect(gen.rows).toEqual({ customers: 9, orders: 9 });
+  });
+
+  it("infers from inline OpenAPI and inline sample text", async () => {
+    const { call } = await start();
+    const api = JSON.stringify({ openapi: "3.0.0", components: { schemas: { Pet: { type: "object", required: ["id"], properties: { id: { type: "integer" } } } } } });
+    expect((await call("infer_schema", { content: api })).json().tables).toEqual(["Pet"]);
+    const sample = (await call("infer_schema", { content: ordersCsv, name: "orders.csv" })).json();
+    expect(sample.schema.tables.orders.columns.total).toMatchObject({ type: "float", min: 3, max: 9.5 });
+    expect((await call("infer_schema", { content: '[{"a":1},{"a":2}]', kind: "sample" })).json().tables).toEqual(["data"]);
+  });
+
+  it("infers from a folder of sample files and links them", async () => {
+    const { call, root } = await start();
+    mkdirSync(join(root, "samples"));
+    writeFileSync(join(root, "samples/customers.csv"), customersCsv);
+    writeFileSync(join(root, "samples/orders.csv"), ordersCsv);
+    const r = (await call("infer_schema", { path: "samples" })).json();
+    expect(r.schema.tables.orders.columns.customer_id).toMatchObject({ ref: "customers.id" });
+  });
+
+  it("connectionEnv reads a database URL from the environment or .env, never from the caller", async () => {
+    const root = tmp();
+    const file = sqliteFile(root);
+    const viaEnv = await start({ root, env: { APP_DATABASE_URL: `sqlite:${file}` } });
+    expect((await viaEnv.call("infer_schema", { connectionEnv: "APP_DATABASE_URL" })).json().tables.sort()).toEqual(["customers", "orders"]);
+
+    const root2 = tmp();
+    writeFileSync(join(root2, ".env"), `MY_DB_URL=sqlite:${sqliteFile(root2)}\n`);
+    const viaDotenv = await start({ root: root2, env: {} });
+    expect((await viaDotenv.call("infer_schema", { connectionEnv: "MY_DB_URL" })).isError).toBe(false);
+
+    const missing = await viaDotenv.call("infer_schema", { connectionEnv: "OTHER_DB_URL" });
+    expect(missing.isError).toBe(true);
+    expect(missing.body).toMatch(/OTHER_DB_URL is not set/);
+  });
+
+  it("refuses connectionEnv names that are not database config, and never echoes values", async () => {
+    const { call } = await start({ env: { ANTHROPIC_API_KEY: "sk-super-secret", DB_NOTES: "sk-also-secret", APP_DATABASE_URL: "https://example.com/not-a-db" } });
+    const key = await call("infer_schema", { connectionEnv: "ANTHROPIC_API_KEY" });
+    expect(key.isError).toBe(true);
+    expect(key.body).not.toContain("sk-super-secret");
+    const notUrl = await call("infer_schema", { connectionEnv: "DB_NOTES" });
+    expect(notUrl.body).toMatch(/does not hold a supported database URL/);
+    expect(notUrl.body).not.toContain("sk-also-secret");
+    expect((await call("infer_schema", { connectionEnv: "APP_DATABASE_URL" })).body).not.toContain("example.com");
+    expect((await call("infer_schema", { connectionEnv: "postgres://u:pw@h/db" })).isError).toBe(true);
+  });
+
+  it("does not leak a database password from a failing connection", async () => {
+    const { call } = await start({ env: { APP_DATABASE_URL: "postgres://alice:s3cret@127.0.0.1:1/db" } });
+    const r = await call("infer_schema", { connectionEnv: "APP_DATABASE_URL" });
+    expect(r.isError).toBe(true);
+    expect(r.body).not.toContain("s3cret");
+  });
+
+  it("keeps path access inside the root and away from .env", async () => {
+    const { call, root } = await start();
+    writeFileSync(join(root, ".env"), "OPENAI_API_KEY=sk-super-secret\n");
+    const outside = tmp();
+    writeFileSync(join(outside, "leak.csv"), "id\n1\n");
+    symlinkSync(outside, join(root, "link"));
+    for (const path of ["../leak.csv", "/etc/hosts", "link/leak.csv", ".env", "sub/.env"]) {
+      const r = await call("infer_schema", { path });
+      expect(r.isError, path).toBe(true);
+      expect(r.body, path).not.toContain("sk-super-secret");
+    }
+    expect((await call("infer_schema", { path: "missing.csv" })).body).toMatch(/No such file/);
+  });
+
+  it("requires exactly one source and rejects oversized inline content", async () => {
+    const { call } = await start();
+    expect((await call("infer_schema", {})).body).toMatch(/exactly one of/);
+    expect((await call("infer_schema", { path: "a.csv", content: "x" })).body).toMatch(/exactly one of/);
+    expect((await call("infer_schema", { content: "a\n" + "x".repeat(6 * 1024 * 1024), name: "big.csv" })).body).toMatch(/larger than 5 MB/);
   });
 });

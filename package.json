@@ -6,7 +6,7 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "npm run build",
-    "build": "tsc -p packages/core && tsc -p packages/llm && tsc -p packages/cli && tsc -p packages/mcp"
+    "build": "tsc -p packages/core && tsc -p packages/llm && tsc -p packages/inputs && tsc -p packages/cli && tsc -p packages/mcp"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

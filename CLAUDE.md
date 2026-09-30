@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `mockdata` is a hybrid synthetic data generator (TypeScript/Node, React UI planned), modelled on `~/git/syda` but fixing its gaps. Deterministic generators handle structure, keys, numbers and dates; an LLM is meant to fill only semantic free-text columns. The approved plan is at `~/.claude/plans/i-want-to-create-woolly-sunrise.md` (planned packages: llm, inputs, cli, mcp, server, web).
 
-Implemented so far: `packages/core`, `packages/llm`, `packages/cli`, `packages/mcp`. The input loaders (JSON Schema/OpenAPI, sample inference, DB reflection; so no `infer_schema` MCP tool yet) and the server/web UI from the plan are still to build.
+Implemented so far: `packages/core`, `packages/llm`, `packages/inputs`, `packages/cli`, `packages/mcp`. The server/web UI from the plan is still to build.
 
-`packages/cli/src/cli.ts` exports async `run(argv, io)`, which resolves to an exit code and never calls `process.exit`, so tests call it directly (`io.llm` injects a fake provider). `bin.ts` is a thin wrapper. Commands: `generate <schema> [-o dir] [-f json|ndjson|csv] [-s seed]` and `validate <schema>`. Without `-o` it prints JSON to stdout; csv/ndjson need `-o`.
+`packages/cli/src/cli.ts` exports async `run(argv, io)`, which resolves to an exit code and never calls `process.exit`, so tests call it directly (`io.llm` injects a fake provider). `bin.ts` is a thin wrapper. Commands: `generate <schema> [-o dir] [-f json|ndjson|csv] [-s seed]`, `validate <schema>`, and `infer <source>` (see Input loaders). Without `-o` generate prints JSON to stdout; csv/ndjson need `-o`.
 
 ## Commands
 
@@ -23,7 +23,7 @@ node packages/cli/dist/bin.js generate examples/shop.yaml -o out -f csv
 MOCKDATA_ROOT=$PWD node packages/mcp/dist/bin.js   # MCP server on stdio
 ```
 
-Build order is core, llm, cli, mcp (each imports the previous one's `dist`). Each package sets its own `outDir` (a base-config `outDir` resolves relative to the repo root, not the package). Vitest aliases `@mockdata/core` to its source (`vitest.config.ts`), so tests need no build.
+Build order is core, llm, inputs, cli, mcp (each imports the earlier ones' `dist`). Each package sets its own `outDir` (a base-config `outDir` resolves relative to the repo root, not the package). Vitest aliases `@mockdata/core` to its source (`vitest.config.ts`), so tests need no build.
 
 ## Core architecture (`packages/core/src`)
 
@@ -55,11 +55,26 @@ Only columns marked `llm` (string type) go to a model; everything else stays det
 - Tests use fake `fetch`/providers only (CLI tests use an empty temp cwd so a real `.env` never leaks in). A live run against Ollama has been verified manually; Anthropic/OpenAI request shapes are not yet verified live. LLM output is not reproducible by seed (only the deterministic columns are).
 - Known limits: no parent-row context in prompts yet, no cost estimate (tokens only), calls are sequential.
 
+## Input loaders (`packages/inputs/src`)
+
+Build a schema from an existing source; every loader returns `{schema, warnings}` and ends in `finalize` (`common.ts`), which re-checks the result with `parseSchema` + `planGeneration` and turns any problem into a warning so the user still gets a file to fix. Warnings are part of the output contract: anything skipped, guessed or approximated must be reported.
+
+- `jsonschema.ts` `fromJsonSchema`: JSON Schema, OpenAPI 3.x/Swagger 2, and Pydantic `model_json_schema()` output. Each object schema is a table; nested objects/arrays are skipped with a warning; optional properties become nullable; `<thing>_id` / `<thing>Id` links to a table named <thing> with a same-typed `id`. Explicit overrides: `x-mockdata-ref`, `x-rows`. Local `$ref` only.
+- `sample.ts` `inferFromSamples` / `parseSample`: CSV (own RFC 4180 parser), JSON, NDJSON, or a folder of files. Infers types, ranges, null rates, small enums, faker hints by column name, foreign keys (name-based, subset-checked), zipf skew, one-to-one, and `after` date rules only when they hold in every row and there are at least 20 rows. Copies shape, never rows; enums do copy observed values of low-cardinality columns (`enums: false` / `--no-enums` disables).
+- `db/`: `catalog.ts` (`RawTable` -> schema; `mapDbType`) plus one introspector per dialect: `sqlite.ts` (built-in `node:sqlite`, PRAGMAs, opened read-only), `postgres.ts` (`information_schema` + `pg_constraint`, in a `begin read only` transaction, default schema `public`), `mysql.ts` (`information_schema`, read-only session; URL must name the database). Each takes an injectable `query` function so tests need no server. Queries run sequentially (one connection, one query at a time). Only catalog metadata is read, never table rows. `db/index.ts` `inferFromDatabase` redacts passwords from every error.
+- Not supported and reported as warnings: composite primary/unique/foreign keys, views, non-scalar types (mapped to string), self-referencing NOT NULL foreign keys (forced nullable).
+- `source.ts` `inferFromSource` detects the kind from a URL/extension/directory; sample files over 100 MB are refused.
+- Python models: Pydantic goes through `Model.model_json_schema()` -> `fromJsonSchema`. There is no SQLAlchemy helper script; create the tables in a SQLite file (`Base.metadata.create_all`) and infer from that.
+
+Verified against real engines (Postgres 16 server, MySQL 9.3 server, SQLite) in throwaway instances; the automated suite uses SQLite files, `@electric-sql/pglite` (real Postgres, in-process) and canned MySQL rows. A live MySQL test runs when `MOCKDATA_TEST_MYSQL_URL` is set (it expects tables `mockdata_customers`/`mockdata_orders`). Connection strings should go in `.env` and be used as `mockdata infer env:VAR`, so they never appear on a command line.
+
 ## MCP server (`packages/mcp/src`)
 
-`createServer({root, env, llm})` in `server.ts` (official `@modelcontextprotocol/sdk`, stdio via `bin.ts`; register with e.g. `claude mcp add mockdata -e MOCKDATA_ROOT=/some/dir -- node <repo>/packages/mcp/dist/bin.js`). Tools: `describe_schema_format` (text in `reference.ts`, keep it in sync with the schema DSL), `validate_schema`, `generate_data` (row counts + capped preview; optional `outputDir`/`format`/`overwrite`), `get_run_report` (last run, in memory). Reuses `loadEnv`/`parseSchemaText`/`serialize` from `@mockdata/cli`.
+`createServer({root, env, llm})` in `server.ts` (official `@modelcontextprotocol/sdk`, stdio via `bin.ts`; register with e.g. `claude mcp add mockdata -e MOCKDATA_ROOT=/some/dir -- node <repo>/packages/mcp/dist/bin.js`). Tools: `describe_schema_format` (text in `reference.ts`, keep it in sync with the schema DSL), `validate_schema`, `infer_schema` (path under root, inline content, or `connectionEnv`), `generate_data` (row counts + capped preview; optional `outputDir`/`format`/`overwrite`), `get_run_report` (last run, in memory). Reuses `loadEnv`/`parseSchemaText`/`serialize` from `@mockdata/cli`.
 
 Tool inputs come from an agent, so file access is strict: `schemaPath` and `outputDir` must be relative and stay inside `root` (`resolveInside` also blocks symlink escapes), `schemaPath` must be .yaml/.yml/.json and never `.env*`, existing files are never overwritten without `overwrite: true`, and conflicts are checked before any LLM call. stdout is the protocol channel: never `console.log` in this package or anything it imports; use stderr.
+
+`infer_schema` never accepts a connection string from the caller: `connectionEnv` names an env var/.env entry, the name must be upper-case and mention DATABASE/DB/POSTGRES/MYSQL/MARIADB/SQLITE (so it cannot be pointed at an API key), the value must be a supported database URL, and values are never echoed. `path` follows the same root confinement and `.env` rules as `schemaPath`.
 
 Schema hardening that exists because schemas may be untrusted: table names must match `^[A-Za-z_][A-Za-z0-9_-]*$` (they become file names), and `faker:` must be `module.method` with no `constructor`/`prototype` segments and not `helpers.fake`/`mustache`/`fromRegExp`.
 

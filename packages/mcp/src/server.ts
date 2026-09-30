@@ -4,6 +4,15 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { loadEnv, parseSchemaText, serialize } from "@mockdata/cli";
 import { llmColumns, parseSchema, type Dataset } from "@mockdata/core";
+import {
+  detectDatabase,
+  fromJsonSchema,
+  inferFromDatabase,
+  inferFromSampleFiles,
+  inferFromSource,
+  looksLikeJsonSchema,
+  type InferResult,
+} from "@mockdata/inputs";
 import { generateWithLlm, type GenerateWithLlmOptions, type LlmReport } from "@mockdata/llm";
 import { SCHEMA_REFERENCE } from "./reference.js";
 
@@ -29,6 +38,9 @@ interface RunSummary {
 }
 
 const FORMATS = ["json", "ndjson", "csv"] as const;
+const MAX_INLINE_BYTES = 5 * 1024 * 1024;
+/** Env var names an agent may use for a database URL: must look like database config, never e.g. an API key. */
+const DB_ENV_NAME = /^(?=.*(DATABASE|DB|POSTGRES|MYSQL|MARIADB|SQLITE))[A-Z][A-Z0-9_]*$/;
 const SCHEMA_EXT = new Set([".yaml", ".yml", ".json"]);
 
 const text = (value: unknown) => ({
@@ -127,6 +139,64 @@ export function createServer(opts: ServerOptions = {}): McpServer {
   );
 
   server.registerTool(
+    "infer_schema",
+    {
+      title: "Infer a schema",
+      description:
+        "Build a mockdata schema from an existing source instead of writing one by hand. Give exactly one of: " +
+        "`path` (a file or folder under the server root: SQLite .db/.sqlite, JSON Schema/OpenAPI .json/.yaml, or sample .csv/.json/.ndjson files), " +
+        "`content` (inline JSON Schema/OpenAPI or sample text; set `name` like orders.csv so the format is known), or " +
+        "`connectionEnv` (NAME of an environment variable holding a postgres://, mysql:// or sqlite: URL, for example DATABASE_URL; " +
+        "connection strings themselves are never accepted). Databases are reflected read-only, metadata only. " +
+        "Returns the schema plus warnings about anything skipped or guessed; review them, then pass the schema to generate_data.",
+      inputSchema: {
+        path: z.string().optional().describe("File or folder relative to the server root."),
+        content: z.string().optional().describe("Inline JSON Schema/OpenAPI document or sample rows (max 5 MB)."),
+        name: z.string().optional().describe("With content: a file name such as orders.csv, used to pick the format and table name."),
+        connectionEnv: z.string().optional().describe("Name of an environment variable (or .env entry) holding a database URL."),
+        kind: z.enum(["json-schema", "sample", "database"]).optional().describe("Force the interpretation instead of detecting it."),
+        rows: z.number().int().min(0).max(10_000_000).optional().describe("Rows per table in the resulting schema."),
+        pgSchema: z.string().optional().describe("Postgres schema to reflect (default public)."),
+        enums: z.boolean().default(true).describe("For sample data: copy observed values of low-cardinality columns into enum lists."),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    },
+    (args) =>
+      guarded(async () => {
+        const given = [args.path, args.content, args.connectionEnv].filter((v) => v !== undefined).length;
+        if (given !== 1) throw new UserError('Provide exactly one of "path", "content" or "connectionEnv"');
+        const opts = { kind: args.kind, rows: args.rows, schema: args.pgSchema, enums: args.enums };
+        let result: InferResult;
+
+        if (args.connectionEnv !== undefined) {
+          if (!DB_ENV_NAME.test(args.connectionEnv)) {
+            throw new UserError(`connectionEnv must be an upper-case variable name that mentions DATABASE, DB, POSTGRES, MYSQL, MARIADB or SQLITE (got "${args.connectionEnv}")`);
+          }
+          const url = loadEnv(root, baseEnv)[args.connectionEnv];
+          if (!url) throw new UserError(`Environment variable ${args.connectionEnv} is not set (checked the environment and .env in the server root)`);
+          // Do not echo the value: it may be a credential of some other kind.
+          if (!detectDatabase(url)) throw new UserError(`${args.connectionEnv} does not hold a supported database URL (postgres://, mysql://, mariadb:// or sqlite:)`);
+          result = await inferFromDatabase(url, opts);
+        } else if (args.content !== undefined) {
+          if (Buffer.byteLength(args.content) > MAX_INLINE_BYTES) throw new UserError("content is larger than 5 MB; write it to a file under the server root and use path");
+          const doc = args.kind === "sample" ? undefined : safeParse(args.content);
+          result =
+            args.kind === "json-schema" || (args.kind === undefined && looksLikeJsonSchema(doc))
+              ? fromJsonSchema(doc as Record<string, unknown>, opts)
+              : inferFromSampleFiles([{ name: args.name ?? "data.json", text: args.content }], opts);
+        } else {
+          if (path.basename(args.path!).startsWith(".env")) throw new UserError("Refusing to read .env files");
+          const target = resolveInside(root, args.path!);
+          if (!existsSync(target)) throw new UserError(`No such file or folder: ${args.path}`);
+          if (args.kind === "database" && !detectDatabase(target)) throw new UserError("kind database with a path needs a SQLite file (.db, .sqlite, .sqlite3)");
+          result = await inferFromSource(target, opts);
+        }
+
+        return { tables: Object.keys(result.schema.tables), warnings: result.warnings, schema: result.schema };
+      }),
+  );
+
+  server.registerTool(
     "generate_data",
     {
       title: "Generate synthetic data",
@@ -203,6 +273,15 @@ export function createServer(opts: ServerOptions = {}): McpServer {
   );
 
   return server;
+}
+
+/** Parse JSON/YAML text, or undefined if it is neither (then it is treated as sample rows). */
+function safeParse(text: string): unknown {
+  try {
+    return parseSchemaText(text);
+  } catch {
+    return undefined;
+  }
 }
 
 function preview(data: Dataset, n: number): Dataset {

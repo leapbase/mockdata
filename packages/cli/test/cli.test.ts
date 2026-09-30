@@ -1,4 +1,5 @@
 import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -130,5 +131,89 @@ describe("cli with llm columns", () => {
       expect(err).toMatch(/Unknown LLM provider "mystery"/);
       expect(err).not.toContain("sk-super-secret");
     });
+  });
+});
+
+describe("cli infer", () => {
+  const work = mkdtempSync(join(tmpdir(), "mockdata-infer-"));
+  const dbFile = join(work, "shop.db");
+  const db = new DatabaseSync(dbFile);
+  db.exec(`
+    create table customers (id integer primary key, email text not null unique, name text);
+    create table orders (id integer primary key, customer_id integer not null references customers(id), total real not null);
+    create table nodes (id integer primary key, parent_id integer not null references nodes(id));
+  `);
+  db.close();
+
+  it("prints a YAML schema to stdout and warnings to stderr, and the result validates and generates", async () => {
+    const r = await execIn(work, { env: {} }, "infer", dbFile);
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(/^tables:\n {2}customers:/);
+    expect(r.out).not.toContain("warning");
+    expect(r.err).toMatch(/warning: nodes\.parent_id: self-referencing foreign key made nullable/);
+
+    const schemaFile = join(work, "inferred.yaml");
+    writeFileSync(schemaFile, r.out);
+    expect((await execIn(work, { env: {} }, "validate", schemaFile)).out).toBe("OK: 3 tables\n");
+    const gen = await execIn(work, { env: {} }, "generate", schemaFile);
+    expect(gen.code).toBe(0);
+    expect(JSON.parse(gen.out).orders).toHaveLength(100);
+  });
+
+  it("--out writes YAML or JSON and refuses to overwrite without --force", async () => {
+    const out = join(work, "out.yaml");
+    expect((await execIn(work, { env: {} }, "infer", dbFile, "-o", out, "--rows", "7")).code).toBe(0);
+    expect(readFileSync(out, "utf8")).toMatch(/rows: 7/);
+    const again = await execIn(work, { env: {} }, "infer", dbFile, "-o", out);
+    expect(again.code).toBe(1);
+    expect(again.err).toMatch(/Refusing to overwrite/);
+    expect((await execIn(work, { env: {} }, "infer", dbFile, "-o", out, "--force")).code).toBe(0);
+
+    const json = join(work, "out.json");
+    expect((await execIn(work, { env: {} }, "infer", dbFile, "-o", json)).code).toBe(0);
+    expect(JSON.parse(readFileSync(json, "utf8")).tables.customers.rows).toBe(100);
+  });
+
+  it("env:VAR takes the connection string from the environment or .env, and names the variable when missing", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "mockdata-infer-env-"));
+    writeFileSync(join(cwd, ".env"), `MY_DB=sqlite:${dbFile}\n`);
+    const ok = await execIn(cwd, { env: {} }, "infer", "env:MY_DB");
+    expect(ok.code).toBe(0);
+    expect(ok.out).toContain("customers:");
+    const missing = await execIn(work, { env: {} }, "infer", "env:NOPE_DB");
+    expect(missing.code).toBe(1);
+    expect(missing.err).toMatch(/Environment variable NOPE_DB is not set/);
+  });
+
+  it("infers from sample files and a directory, and from an OpenAPI file", async () => {
+    const samples = mkdtempSync(join(tmpdir(), "mockdata-infer-samples-"));
+    writeFileSync(join(samples, "customers.csv"), "id,name\n1,Ann\n2,Bo\n3,Cy\n");
+    writeFileSync(join(samples, "orders.csv"), "id,customer_id\n1,1\n2,2\n3,1\n");
+    const dir = await execIn(work, { env: {} }, "infer", samples);
+    expect(dir.out).toMatch(/ref: customers\.id/);
+    const api = join(work, "api.yaml");
+    writeFileSync(api, "openapi: 3.0.0\ncomponents:\n  schemas:\n    Pet:\n      type: object\n      required: [id]\n      properties:\n        id: { type: integer }\n");
+    expect((await execIn(work, { env: {} }, "infer", api)).out).toMatch(/Pet:/);
+  });
+
+  it("quotes date-like strings so any YAML parser reads them as strings", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mockdata-infer-dates-"));
+    writeFileSync(join(dir, "events.csv"), "id,day\n" + Array.from({ length: 5 }, (_, i) => `${i + 1},2024-01-0${i + 1}`).join("\n") + "\n");
+    const { out } = await execIn(work, { env: {} }, "infer", join(dir, "events.csv"));
+    expect(out).toMatch(/min: "2024-01-01"/);
+    expect(out).toMatch(/max: "2024-01-05"/);
+  });
+
+  it("rejects bad usage with a nonzero code", async () => {
+    for (const argv of [["infer"], ["infer", "a", "b"], ["infer", dbFile, "--from", "xml"], ["infer", dbFile, "--rows", "-3"], ["infer", "/no/such/thing.csv"]]) {
+      expect((await execIn(work, { env: {} }, ...argv)).code, argv.join(" ")).toBe(1);
+    }
+    expect((await execIn(work, { env: {} }, "infer", "--help")).out).toMatch(/mockdata infer/);
+  });
+
+  it("never prints a database password", async () => {
+    const r = await execIn(work, { env: {} }, "infer", "postgres://alice:s3cret@127.0.0.1:1/db");
+    expect(r.code).toBe(1);
+    expect(r.err + r.out).not.toContain("s3cret");
   });
 });

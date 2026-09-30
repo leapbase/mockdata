@@ -8,6 +8,7 @@ export default defineConfig({
     alias: {
       "@mockdata/core": src("core"),
       "@mockdata/llm": src("llm"),
+      "@mockdata/inputs": src("inputs"),
       "@mockdata/cli": fileURLToPath(new URL("./packages/cli/src/cli.ts", import.meta.url)),
     },
   },

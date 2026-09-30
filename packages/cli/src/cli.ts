@@ -1,9 +1,13 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
-import { parseArgs, parseEnv } from "node:util";
+import { parseArgs } from "node:util";
 import { parse as parseYaml } from "yaml";
 import { parseSchema, type Dataset, type Row } from "@mockdata/core";
 import { generateWithLlm, type GenerateWithLlmOptions, type LlmReport } from "@mockdata/llm";
+import { loadEnv } from "./env.js";
+import { runInfer } from "./infer.js";
+
+export { loadEnv };
 
 export interface IO {
   out: (s: string) => void;
@@ -19,6 +23,8 @@ const HELP = `mockdata - synthetic data generator
 Usage:
   mockdata generate <schema.(yaml|yml|json)> [options]
   mockdata validate <schema.(yaml|yml|json)>
+  mockdata infer <source> [options]        build a schema from a database, OpenAPI/JSON Schema, or sample data
+                                           (run "mockdata infer --help")
 
 generate options:
   -o, --out <dir>       write one file per table into <dir> (default: print JSON to stdout)
@@ -57,16 +63,6 @@ export function serialize(rows: Row[], columns: string[], format: Format): strin
   }
 }
 
-/**
- * Environment for the LLM layer: variables from ./.env, overridden by the real
- * environment (io.llm.env in tests). Returns names only in errors, never values.
- */
-export function loadEnv(cwd: string, base: Record<string, string | undefined>): Record<string, string | undefined> {
-  const file = join(cwd, ".env");
-  const dotenv = existsSync(file) ? parseEnv(readFileSync(file, "utf8")) : {};
-  return { ...dotenv, ...base };
-}
-
 function describeUsage(r: LlmReport): string {
   const cols = Object.entries(r.columns).map(([c, n]) => `${c} (${n} rows)`).join(", ");
   return `llm: ${r.calls} call${r.calls === 1 ? "" : "s"}, ${r.inputTokens} input / ${r.outputTokens} output tokens; filled ${cols}\n`;
@@ -79,6 +75,7 @@ export async function run(argv: string[], io: IO): Promise<number> {
     io.out(HELP);
     return command ? 0 : 1;
   }
+  if (command === "infer") return runInfer(rest, io);
   if (command !== "generate" && command !== "validate") {
     io.err(`Unknown command "${command}"\n\n${HELP}`);
     return 1;

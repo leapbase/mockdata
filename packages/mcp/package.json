@@ -8,6 +8,7 @@
   "dependencies": {
     "@mockdata/cli": "*",
     "@mockdata/core": "*",
+    "@mockdata/inputs": "*",
     "@mockdata/llm": "*",
     "@modelcontextprotocol/sdk": "^1.0.0"
   }
