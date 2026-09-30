@@ -3,7 +3,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App";
-import { stubApi } from "./stub";
+import { errorResponse, stubApi } from "./stub";
 
 // CodeMirror needs real layout; the App only depends on value/onChange/errors.
 vi.mock("../src/components/Editor", () => ({
@@ -96,5 +96,49 @@ describe("shell", () => {
     });
     render(<App debounceMs={0} />);
     expect(await screen.findByRole("alert")).toBeTruthy();
+  });
+});
+
+describe("generate", () => {
+  const PREVIEW = { seed: 1, counts: { a: 2 }, pending: [], tables: { a: { columns: ["id"], refs: {}, rows: [{ id: 1 }, { id: 2 }] } } };
+
+  it("sends the editor text, seed and row override and shows the tables", async () => {
+    const calls = stubApi({
+      "GET /api/config": () => CONFIG_NO_LLM,
+      "GET /api/files": () => ({ files: [] }),
+      "POST /api/validate": () => OK,
+      "POST /api/generate": () => PREVIEW,
+    });
+    render(<App debounceMs={0} />);
+    await userEvent.type(await screen.findByLabelText("Seed"), "42");
+    await userEvent.type(screen.getByLabelText("Rows per table"), "3");
+    await userEvent.click(screen.getByRole("button", { name: "Generate" }));
+    expect(await screen.findByRole("tab", { name: /a/ })).toBeTruthy();
+    const body = calls.find((c) => c.key === "POST /api/generate")!.body;
+    expect(body).toMatchObject({ seed: 42, rows: 3 });
+    expect(typeof body.text).toBe("string");
+  });
+
+  it("shows the server's reason when generation fails and keeps the previous preview", async () => {
+    let n = 0;
+    stubApi({
+      "GET /api/config": () => CONFIG_NO_LLM,
+      "GET /api/files": () => ({ files: [] }),
+      "POST /api/validate": () => OK,
+      "POST /api/generate": () => (++n === 1 ? PREVIEW : errorResponse(400, "Invalid schema: x")),
+    });
+    render(<App debounceMs={0} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Generate" }));
+    await screen.findByRole("tab", { name: /a/ });
+    await userEvent.click(screen.getByRole("button", { name: "Generate" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Invalid schema: x");
+    expect(screen.getByRole("tab", { name: /a/ })).toBeTruthy();
+  });
+
+  it("disables the LLM toggle with the server's reason", async () => {
+    stubApi({ "GET /api/config": () => CONFIG_NO_LLM, "GET /api/files": () => ({ files: [] }), "POST /api/validate": () => OK });
+    render(<App debounceMs={0} />);
+    const box = (await screen.findByLabelText(/Fill LLM columns/)) as HTMLInputElement;
+    expect(box.disabled).toBe(true);
   });
 });

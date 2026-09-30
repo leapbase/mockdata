@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import * as api from "./api";
 import Editor from "./components/Editor";
+import GenerateBar from "./components/GenerateBar";
+import Preview from "./components/Preview";
 import Sidebar from "./components/Sidebar";
 import { messageOf, useDebounced } from "./hooks";
 
@@ -28,6 +30,10 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
   const [config, setConfig] = useState<api.Config | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingSave, setPendingSave] = useState(false);
+  const [seed, setSeed] = useState("");
+  const [rows, setRows] = useState("");
+  const [preview, setPreview] = useState<api.Preview | null>(null);
+  const [running, setRunning] = useState(false);
 
   const fail = useCallback((e: unknown) => setError(messageOf(e)), []);
 
@@ -80,8 +86,23 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
     else setPendingSave(true);
   }
 
+  function runBody(): api.GenerateBody {
+    return { text, seed: seed === "" ? undefined : Number(seed), rows: rows === "" ? undefined : Number(rows) };
+  }
+
+  async function generate() {
+    setError(null);
+    setRunning(true);
+    try {
+      setPreview(await api.generate(runBody()));
+    } catch (e) {
+      fail(e);
+    } finally {
+      setRunning(false);
+    }
+  }
+
   const errors = check && !check.ok ? (check.errors ?? []) : [];
-  void config;
 
   return (
     <div className="app">
@@ -123,7 +144,26 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
           )}
         </div>
       </main>
-      <section className="preview" />
+      <section className="preview">
+        <GenerateBar
+          seed={seed}
+          rows={rows}
+          onSeed={setSeed}
+          onRows={setRows}
+          onGenerate={() => void generate()}
+          running={running}
+          llm={{
+            available: config?.llm.ok === true,
+            reason: config && !config.llm.ok ? config.llm.reason : undefined,
+            provider: config?.llm.ok ? config.llm.provider : undefined,
+            on: false,
+            onToggle: () => undefined,
+          }}
+          progress={null}
+          onCancel={() => undefined}
+        />
+        {preview ? <Preview data={preview} /> : <p className="muted pad">Press Generate to preview the tables.</p>}
+      </section>
     </div>
   );
 }
