@@ -2,6 +2,7 @@
 import { parseArgs } from "node:util";
 import { loadEnv, localAddresses, parseAllow, tokenFromEnv, type Cidr } from "@mockdata/cli";
 import { accountsFromEnv } from "./accounts/runtime.js";
+import { poolSettingsFromEnv } from "./workers/factory.js";
 import { startServer } from "./listen.js";
 
 const HELP = `mockdata-ui - local web UI for mockdata
@@ -19,6 +20,10 @@ Usage:
   --data-dir <d>  accounts mode: where accounts and each user's private folder live
                   (default $MOCKDATA_DATA_DIR or ./mockdata-data)
   -h, --help
+
+Generation runs in worker threads so a big run does not freeze the page for everyone: MOCKDATA_WORKERS
+(threads; default up to 4, 0 = run on the main thread), MOCKDATA_WORKER_QUEUE (waiting jobs, 16),
+MOCKDATA_JOB_TIMEOUT_SECS (120) and MOCKDATA_WORKER_HEAP_MB (2048) in the environment or .env.
 
 Accounts mode: set MOCKDATA_PUBLIC_URL (https://your-domain, or http://localhost:<port> to try it)
 in the environment or .env. Everyone then signs in, including localhost, each user gets a private
@@ -55,9 +60,11 @@ if (values.help) {
       const allow: Cidr[] | undefined = values.allow === undefined ? undefined : parseAllow(values.allow);
       const accounts = await accountsFromEnv(process.env, { configRoot: root, dataDir: values["data-dir"] });
       const token = allow ? tokenFromEnv(loadEnv(root, process.env)) : undefined;
-      const { url, server, token: active, tokenGenerated } = await startServer({ root, port, allow, host: values.host, token, accounts });
+      const workers = poolSettingsFromEnv(loadEnv(root, process.env));
+      const { url, server, token: active, tokenGenerated } = await startServer({ root, port, allow, host: values.host, token, accounts, workers });
       const listening = (server.address() as { port: number }).port;
       process.stdout.write(`mockdata UI on ${url}  (root: ${root})\n`);
+      process.stdout.write(workers.size > 0 ? `Generation: ${workers.size} worker thread${workers.size === 1 ? "" : "s"}, queue of ${workers.maxQueue}, ${workers.jobTimeoutSecs} s limit per job\n` : "Generation: on the main thread (MOCKDATA_WORKERS=0); a big run will block the page\n");
       if (accounts) {
         const { publicUrl, dataDir } = accounts.config;
         process.stdout.write(`Accounts mode: sign-in required for everyone. Public address ${publicUrl.origin}, data in ${dataDir}\n`);
