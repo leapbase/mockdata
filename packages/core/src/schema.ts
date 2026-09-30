@@ -34,6 +34,8 @@ export const ColumnSchema = z
      * parent row reached through the foreign key column `fkCol`.
      */
     after: z.string().optional(),
+    /** With `after`: the value is at most this many days after that date (a bounded gap, e.g. a hospital stay). */
+    within: z.number().positive().optional(),
     /** Faker path such as "person.fullName" for string columns. */
     faker: z.string().optional(),
     /** Regex the string must match, e.g. "[A-Z]{3}-[0-9]{4}". */
@@ -162,6 +164,7 @@ export function parseSchema(input: unknown): DataSchemaT {
           throw new SchemaError(`${where}: type "${col.type}" differs from ref target type "${pcol.type}"`);
         }
       }
+      if (col.within !== undefined && !col.after) throw new SchemaError(`${where}: "within" needs "after"`);
       if (col.after) {
         if (col.type !== "date" && col.type !== "datetime") {
           throw new SchemaError(`${where}: "after" only applies to date/datetime columns`);

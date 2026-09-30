@@ -40,6 +40,7 @@ Build order is core, llm, inputs, cli, mcp, server, then web via Vite (each impo
 
 Schema DSL points that are easy to miss:
 - FK is `ref: "table.column"`, with optional `distribution: "zipf"`. A self reference only samples earlier rows, so it should be `nullable`.
+- `within: n` (with `after`) bounds a date to at most n days after its source, so gaps like a hospital stay stay realistic; `validate` re-checks it.
 - Cross-column rule is `after`: `"col"` for the same row, `"fkCol.parentCol"` to read through a foreign key to the parent row.
 - Output is deterministic per `seed` via a seeded Faker instance.
 

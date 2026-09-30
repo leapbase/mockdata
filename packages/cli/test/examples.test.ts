@@ -100,7 +100,8 @@ describe("clinical-rwd-omop.yaml", () => {
   it("produces data that satisfies every feature it demonstrates", async () => {
     const d = await json("generate", join(examples, "clinical-rwd-omop.yaml"));
     expect(Object.fromEntries(Object.entries(d).map(([t, r]) => [t, (r as unknown[]).length]))).toEqual({
-      person: 40, observation_period: 40, visit_occurrence: 120, condition_occurrence: 150, drug_exposure: 180, measurement: 300, death: 5,
+      person: 40, observation_period: 40, visit_occurrence: 120, condition_occurrence: 150, drug_exposure: 180,
+      measurement_hba1c: 80, measurement_heart_rate: 100, measurement_blood_pressure: 100, measurement_bmi: 60, death: 5,
     });
     for (const p of d.person) {
       expect([8507, 8532]).toContain(p.gender_concept_id);
@@ -129,7 +130,34 @@ describe("clinical-rwd-omop.yaml", () => {
       expect(x.drug_exposure_start_date >= visits.get(x.visit_occurrence_id).visit_start_date).toBe(true);
       expect(x.drug_exposure_end_date >= x.drug_exposure_start_date).toBe(true);
     }
-    for (const m of d.measurement) expect(m.measurement_date >= visits.get(m.visit_occurrence_id).visit_start_date).toBe(true);
+    // dates stay close to their visit (within), so a stay is never years long
+    const days = (a: string, b: string) => (Date.parse(a) - Date.parse(b)) / 86_400_000;
+    for (const v of d.visit_occurrence) expect(days(v.visit_end_date, v.visit_start_date)).toBeLessThanOrEqual(14);
+    for (const c of d.condition_occurrence) expect(days(c.condition_start_date, visits.get(c.visit_occurrence_id).visit_start_date)).toBeLessThanOrEqual(14);
+    for (const x of d.drug_exposure) expect(days(x.drug_exposure_end_date, x.drug_exposure_start_date)).toBeLessThanOrEqual(90);
+    // each measurement table has plausible values and its own unit
+    const checks: [string, string, number, number, string][] = [
+      ["measurement_hba1c", "value_as_number", 4, 14, "%"],
+      ["measurement_heart_rate", "value_as_number", 45, 140, "bpm"],
+      ["measurement_bmi", "value_as_number", 15, 45, "kg/m2"],
+    ];
+    for (const [table, col, lo, hi, unit] of checks) {
+      for (const m of d[table]) {
+        expect(m[col]).toBeGreaterThanOrEqual(lo);
+        expect(m[col]).toBeLessThanOrEqual(hi);
+        expect(m.unit_source_value).toBe(unit);
+      }
+    }
+    for (const m of d.measurement_blood_pressure) {
+      expect(m.systolic).toBeGreaterThan(m.diastolic);
+      expect(m.unit_source_value).toBe("mmHg");
+    }
+    for (const t of ["measurement_hba1c", "measurement_heart_rate", "measurement_blood_pressure", "measurement_bmi"]) {
+      for (const m of d[t]) {
+        expect(m.measurement_date >= visits.get(m.visit_occurrence_id).visit_start_date).toBe(true);
+        expect(days(m.measurement_date, visits.get(m.visit_occurrence_id).visit_start_date)).toBeLessThanOrEqual(14);
+      }
+    }
     expect(perParent(d.condition_occurrence, "visit_occurrence_id")).toBeLessThanOrEqual(4);
     // deaths: one per person, after birth
     const dead = d.death.map((x: any) => x.person_id);

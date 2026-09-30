@@ -221,3 +221,62 @@ describe("table names", () => {
     expect(() => parseSchema({ tables: { [name]: { rows: 1, columns: { id: { type: "integer" } } } } })).toThrow(SchemaError);
   });
 });
+
+describe("within (bounded gap after another date)", () => {
+  const DAY = 86_400_000;
+  const gapped = (within: unknown) => ({
+    seed: 3,
+    tables: {
+      stays: {
+        rows: 200,
+        columns: {
+          id: { type: "integer", primaryKey: true },
+          start: { type: "date", min: "2020-01-01", max: "2024-12-31" },
+          end: { type: "date", after: "start", within },
+        },
+      },
+    },
+  });
+
+  it("keeps every value between the source date and source + N days", () => {
+    const { stays } = generate(parseSchema(gapped(7)), { seed: 3 });
+    for (const r of stays!) {
+      const gap = (Date.parse(String(r.end)) - Date.parse(String(r.start))) / DAY;
+      expect(gap).toBeGreaterThanOrEqual(0);
+      expect(gap).toBeLessThanOrEqual(7);
+    }
+    expect(new Set(stays!.map((r) => r.end)).size).toBeGreaterThan(50);
+  });
+
+  it("works through a foreign key and combined with an explicit max", () => {
+    const s = parseSchema({
+      seed: 1,
+      tables: {
+        visits: { rows: 10, columns: { id: { type: "integer", primaryKey: true }, day: { type: "date", min: "2024-01-01", max: "2024-03-01" } } },
+        events: {
+          rows: 100,
+          columns: {
+            id: { type: "integer", primaryKey: true },
+            visit_id: { type: "integer", ref: "visits.id" },
+            at: { type: "date", after: "visit_id.day", within: 30, max: "2024-03-10" },
+          },
+        },
+      },
+    });
+    const { visits, events } = generate(s, { seed: 1 });
+    const day = new Map(visits!.map((v) => [v.id, Date.parse(String(v.day))]));
+    for (const e of events!) {
+      const t = Date.parse(String(e.at));
+      expect(t).toBeGreaterThanOrEqual(day.get(e.visit_id)!);
+      expect(t - day.get(e.visit_id)!).toBeLessThanOrEqual(30 * DAY);
+      expect(t).toBeLessThanOrEqual(Date.parse("2024-03-10"));
+    }
+  });
+
+  it("is rejected without after, on non-date columns, and for non-positive values", () => {
+    const col = (c: object) => ({ seed: 1, tables: { t: { rows: 1, columns: { id: { type: "integer", primaryKey: true }, d: { type: "date" }, x: c } } } });
+    expect(() => parseSchema(col({ type: "date", within: 5 }))).toThrow(/within.*after/);
+    expect(() => parseSchema(col({ type: "integer", after: "d", within: 5 }))).toThrow(SchemaError);
+    expect(() => parseSchema(col({ type: "date", after: "d", within: 0 }))).toThrow();
+  });
+});

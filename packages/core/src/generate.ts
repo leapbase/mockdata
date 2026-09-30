@@ -51,7 +51,8 @@ function generateValue(faker: Faker, col: Column, lowerBoundMs?: number): unknow
     case "date":
     case "datetime": {
       const min = Math.max(toMs(col.min, DEFAULT_MIN_DATE), lowerBoundMs ?? -Infinity);
-      const max = toMs(col.max, Math.max(DEFAULT_MAX_DATE, min + 365 * DAY));
+      const span = col.within !== undefined && lowerBoundMs !== undefined ? lowerBoundMs + col.within * DAY : undefined;
+      const max = Math.min(toMs(col.max, span ?? Math.max(DEFAULT_MAX_DATE, min + 365 * DAY)), span ?? Infinity);
       if (min > max) throw new GenerationError(`Empty date range [${new Date(min).toISOString()}, ${new Date(max).toISOString()}]`);
       const d = new Date(faker.number.int({ min, max }));
       return col.type === "date" ? d.toISOString().slice(0, 10) : d.toISOString();
@@ -327,6 +328,9 @@ export function validate(schema: DataSchemaT, data: Dataset, opts: { skipLlm?: b
         if (col.after) {
           const lower = resolveAfter(schema, tname, col.after, row, data, at);
           if (lower !== undefined && Date.parse(String(v)) < lower) bad.push(`${at}: ${String(v)} is before ${col.after}`);
+          if (lower !== undefined && col.within !== undefined && Date.parse(String(v)) > lower + col.within * DAY) {
+            bad.push(`${at}: ${String(v)} is more than ${col.within} days after ${col.after}`);
+          }
         }
       });
     }

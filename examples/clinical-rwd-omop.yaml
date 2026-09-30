@@ -2,9 +2,12 @@
 # period, visits, conditions, drug exposures, measurements and death. Synthetic
 # data: concept ids are a small illustrative subset of OMOP standard concepts
 # (check them against your vocabulary before relying on them), never real patients.
-# The DSL cannot keep a denormalised column consistent with another, so the event
-# tables link to visit_occurrence only (reach the person through the visit), and
-# person has birth_date instead of year_of_birth (which could not match it).
+# Simplifications, because the DSL cannot tie one column's value to another's:
+#   - event tables link to visit_occurrence only (reach the person through the visit);
+#   - person has birth_date instead of year_of_birth (which could not match it);
+#   - OMOP's single measurement table is split into one table per measurement so each
+#     has a plausible range and unit; union them downstream if you need one table.
+# `within` keeps dates close to the visit they belong to.
 seed: 47
 tables:
   person:
@@ -22,7 +25,7 @@ tables:
       observation_period_id: { type: integer, primaryKey: true }
       person_id: { type: integer, ref: person.person_id, unique: true }   # one period per person here
       observation_period_start_date: { type: date, after: person_id.birth_date }
-      observation_period_end_date: { type: date, after: observation_period_start_date }
+      observation_period_end_date: { type: date, after: observation_period_start_date, within: 3650 }
   visit_occurrence:
     rows: 120
     columns:
@@ -30,15 +33,15 @@ tables:
       person_id: { type: integer, ref: person.person_id, distribution: zipf }   # a few heavy users of care
       visit_concept_id: { type: integer, enum: [9201, 9202, 9203] }   # inpatient, outpatient, emergency
       visit_start_date: { type: date, after: person_id.birth_date }   # never before birth
-      visit_end_date: { type: date, after: visit_start_date }
+      visit_end_date: { type: date, after: visit_start_date, within: 14 }   # stays of up to two weeks
   condition_occurrence:
     rows: 150
     columns:
       condition_occurrence_id: { type: integer, primaryKey: true }
       visit_occurrence_id: { type: integer, ref: visit_occurrence.visit_occurrence_id, maxPerParent: 4 }
       condition_concept_id: { type: integer, enum: [201826, 320128, 317009, 255573, 316139, 80180] }   # T2DM, hypertension, asthma, COPD, heart failure, osteoarthritis
-      condition_start_date: { type: date, after: visit_occurrence_id.visit_start_date }
-      condition_end_date: { type: date, after: condition_start_date, nullable: true, nullRate: 0.6 }   # chronic when empty
+      condition_start_date: { type: date, after: visit_occurrence_id.visit_start_date, within: 14 }
+      condition_end_date: { type: date, after: condition_start_date, within: 365, nullable: true, nullRate: 0.6 }   # chronic when empty
       condition_source_value: { type: string, enum: [E11.9, I10, J45.909, J44.9, I50.9, M19.90] }
   drug_exposure:
     rows: 180
@@ -46,19 +49,46 @@ tables:
       drug_exposure_id: { type: integer, primaryKey: true }
       visit_occurrence_id: { type: integer, ref: visit_occurrence.visit_occurrence_id }
       drug_concept_id: { type: integer, enum: [1503297, 1308216, 1545958, 1112807, 1118084] }   # metformin, lisinopril, atorvastatin, aspirin, celecoxib
-      drug_exposure_start_date: { type: date, after: visit_occurrence_id.visit_start_date }
-      drug_exposure_end_date: { type: date, after: drug_exposure_start_date }
+      drug_exposure_start_date: { type: date, after: visit_occurrence_id.visit_start_date, within: 14 }
+      drug_exposure_end_date: { type: date, after: drug_exposure_start_date, within: 90 }
       days_supply: { type: integer, min: 7, max: 90 }
       quantity: { type: float, min: 7, max: 180 }
-  measurement:
-    rows: 300
+  measurement_hba1c:
+    rows: 80
     columns:
       measurement_id: { type: integer, primaryKey: true }
       visit_occurrence_id: { type: integer, ref: visit_occurrence.visit_occurrence_id }
-      measurement_concept_id: { type: integer, enum: [3004410, 3027018, 3004249, 3012888, 3038553] }   # HbA1c, heart rate, systolic BP, diastolic BP, BMI
-      measurement_date: { type: date, after: visit_occurrence_id.visit_start_date }
-      value_as_number: { type: float, min: 4, max: 180 }
-      unit_source_value: { type: string, enum: ["%", "bpm", "mmHg", "kg/m2"] }
+      measurement_concept_id: { type: integer, enum: [3004410] }   # hemoglobin A1c
+      measurement_date: { type: date, after: visit_occurrence_id.visit_start_date, within: 14 }
+      value_as_number: { type: float, min: 4, max: 14 }
+      unit_source_value: { type: string, enum: ["%"] }
+  measurement_heart_rate:
+    rows: 100
+    columns:
+      measurement_id: { type: integer, primaryKey: true }
+      visit_occurrence_id: { type: integer, ref: visit_occurrence.visit_occurrence_id }
+      measurement_concept_id: { type: integer, enum: [3027018] }   # heart rate
+      measurement_date: { type: date, after: visit_occurrence_id.visit_start_date, within: 14 }
+      value_as_number: { type: float, min: 45, max: 140 }
+      unit_source_value: { type: string, enum: [bpm] }
+  measurement_blood_pressure:
+    rows: 100
+    columns:
+      measurement_id: { type: integer, primaryKey: true }
+      visit_occurrence_id: { type: integer, ref: visit_occurrence.visit_occurrence_id }
+      measurement_date: { type: date, after: visit_occurrence_id.visit_start_date, within: 14 }
+      systolic: { type: float, min: 100, max: 180 }   # concept 3004249; ranges never overlap diastolic
+      diastolic: { type: float, min: 50, max: 95 }   # concept 3012888
+      unit_source_value: { type: string, enum: [mmHg] }
+  measurement_bmi:
+    rows: 60
+    columns:
+      measurement_id: { type: integer, primaryKey: true }
+      visit_occurrence_id: { type: integer, ref: visit_occurrence.visit_occurrence_id }
+      measurement_concept_id: { type: integer, enum: [3038553] }   # body mass index
+      measurement_date: { type: date, after: visit_occurrence_id.visit_start_date, within: 14 }
+      value_as_number: { type: float, min: 15, max: 45 }
+      unit_source_value: { type: string, enum: [kg/m2] }
   death:
     rows: 5
     columns:

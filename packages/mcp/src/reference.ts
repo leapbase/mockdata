@@ -30,6 +30,7 @@ Relationships
 Cross-column rules
   after: other_column           date/datetime is >= that column in the same row
   after: fkColumn.parentColumn  date/datetime is >= a column on the parent row reached via fkColumn
+  within: 14                    with after: at most 14 days after that date (bounded gap, e.g. a hospital stay)
 
 LLM columns (semantic free text)
   type: string
