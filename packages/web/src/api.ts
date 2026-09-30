@@ -155,6 +155,7 @@ export interface Me {
 
 export const getMe = () => json<Me>("GET", "/api/auth/me");
 export const login = async (email: string, password: string) => (await json<{ user: AuthUser }>("POST", "/api/auth/login", { email, password })).user;
+export const verifyEmail = async (token: string, password: string) => (await json<{ user: AuthUser }>("POST", "/api/auth/verify-email", { token, password })).user;
 export const register = (email: string, password: string) => json<{ pending: true }>("POST", "/api/auth/register", { email, password });
 export const logoutAll = () => json<{ ok: true }>("POST", "/api/auth/logout-all", {});
 export const logout = () => json<{ ok: true }>("POST", "/api/auth/logout", {});

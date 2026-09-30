@@ -23,6 +23,8 @@ export function statusFor(e: unknown): number {
 }
 
 const GENERIC = "Something went wrong. Try again, and tell the operator if it keeps happening.";
+const MODEL_DOWN = "The model service could not complete the request. Try again later.";
+export const MODELS_OFF = "Model-written columns are not available on this server";
 
 /**
  * What a caller is told about a failure. Messages from the errors above name variables, never values, so they are
@@ -31,7 +33,18 @@ const GENERIC = "Something went wrong. Try again, and tell the operator if it ke
  */
 export function publicMessage(e: unknown, hideInternals: boolean): string {
   const err = e as Error;
-  if (!hideInternals || statusFor(e) !== 500) return err.message;
+  if (!hideInternals) return err.message;
+  const status = statusFor(e);
+  if (status === 502) {
+    // The text carries the operator's model address and whatever the provider said (balances, account names).
+    process.stderr.write(`model error: ${err.message}\n`);
+    return MODEL_DOWN;
+  }
+  if (e instanceof LlmConfigError) {
+    process.stderr.write(`model configuration: ${err.message}\n`);
+    return MODELS_OFF;
+  }
+  if (status !== 500) return err.message;
   process.stderr.write(`internal error: ${err.stack ?? err.message}\n`);
   return GENERIC;
 }

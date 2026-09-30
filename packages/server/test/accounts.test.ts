@@ -31,7 +31,7 @@ describe("accounts: sign up, verify, sign in", () => {
     expect(sent).toHaveLength(before);
     expect(sent[0]!.to).toBe("ann@example.com");
     expect(sent[0]!.subject).toMatch(/verify/i);
-    expect(sent[0]!.text).toContain("https://mockdata.example.com/api/auth/verify-email?token=");
+    expect(sent[0]!.text).toContain("https://mockdata.example.com/#verify_token=");
   });
 
   it("rejects a bad email, a weak password and an oversized body without echoing input", async () => {
@@ -60,19 +60,40 @@ describe("accounts: sign up, verify, sign in", () => {
     expect(wrong.headers.getSetCookie()).toEqual([]);
   });
 
-  it("verifies by link, does not sign in, and the link works once", async () => {
-    const { post, sent, linkIn, pathOf, url } = await bootAccounts();
+  it("links to a confirm screen through the URL fragment, so the token never reaches a server log or a mail scanner", async () => {
+    const { post, sent, linkIn } = await bootAccounts();
     await post("/api/auth/register", { email: "ann@example.com", password: PASSWORD });
-    const link = pathOf(linkIn(sent[0]!));
-    const ok = await fetch(url + link, { redirect: "manual" });
-    expect(ok.status).toBe(302);
-    expect(ok.headers.get("location")).toBe("/?verified=1");
-    expect(ok.headers.get("referrer-policy")).toBe("no-referrer");
-    expect(ok.headers.getSetCookie()).toEqual([]); // verifying must not log anyone in
-    const replay = await fetch(url + link, { redirect: "manual" });
-    expect(replay.headers.get("location")).toBe("/?error=verify_failed");
-    const junk = await fetch(`${url}/api/auth/verify-email?token=nope`, { redirect: "manual" });
-    expect(junk.headers.get("location")).toBe("/?error=verify_failed");
+    const link = new URL(linkIn(sent[0]!));
+    expect(link.origin).toBe("https://mockdata.example.com");
+    expect(link.pathname).toBe("/");
+    expect(link.search).toBe("");
+    expect(link.hash).toMatch(/^#verify_token=[A-Za-z0-9_-]{40,}$/);
+  });
+
+  it("verifies only when the mailbox owner also gives the sign-up password, then signs them in; the link works once", async () => {
+    const { post, sent, tokenOf, as, cookieOf } = await bootAccounts();
+    await post("/api/auth/register", { email: "ann@example.com", password: PASSWORD });
+    const token = tokenOf(sent[0]!);
+    const wrong = await post("/api/auth/verify-email", { token, password: "Wr0ng$ecretPassw0rd" });
+    expect(wrong.status).toBe(400);
+    expect(wrong.json.error.code).toBe("verify_password");
+    expect(wrong.headers.getSetCookie()).toEqual([]);
+    expect((await post("/api/auth/login", { email: "ann@example.com", password: PASSWORD })).json.error.code).toBe("email_unverified"); // a wrong guess did not verify anything
+    const ok = await post("/api/auth/verify-email", { token, password: PASSWORD }); // and did not burn the link
+    expect(ok.status).toBe(200);
+    expect(ok.json.user.email).toBe("ann@example.com");
+    expect((await as(cookieOf(ok.headers)).get("/api/auth/me")).json.user.email).toBe("ann@example.com");
+    const replay = await post("/api/auth/verify-email", { token, password: PASSWORD });
+    expect(replay.status).toBe(400);
+    expect(replay.json.error.code).toBe("verify_invalid");
+    expect((await post("/api/auth/verify-email", { token: "nope", password: PASSWORD })).json.error.code).toBe("verify_invalid");
+  });
+
+  it("no longer verifies on a plain GET (a mail scanner opening the link changes nothing)", async () => {
+    const { get, post, sent, tokenOf } = await bootAccounts();
+    await post("/api/auth/register", { email: "ann@example.com", password: PASSWORD });
+    expect((await get(`/api/auth/verify-email?token=${tokenOf(sent[0]!)}`)).status).toBe(404);
+    expect((await post("/api/auth/login", { email: "ann@example.com", password: PASSWORD })).status).toBe(403); // still unverified
   });
 
   it("signs in with a session cookie (HttpOnly, SameSite=Lax, Secure), which me and logout honour", async () => {

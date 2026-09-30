@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { parseCookies, sessionCookieName } from "@mockdata/accounts";
 import { loadEnv, needsToken, peerAllowed, presentedToken, TOKEN_COOKIE, tokensEqual, type NetworkAccess } from "@mockdata/cli";
-import { assertLocal, HttpError, sendJson, type Ctx, type Handler } from "./http.js";
+import { assertLocal, HttpError, sendJson, setBodyLimit, type Ctx, type Handler } from "./http.js";
 import { publicMessage, statusFor } from "./errors.js";
 import { serveStatic } from "./static.js";
 import type { AccountsRuntime } from "./accounts/runtime.js";
@@ -53,7 +53,7 @@ function sendError(res: ServerResponse, e: unknown, hideInternals: boolean): voi
   }
   // Error messages in this codebase name variables, never values.
   const status = statusFor(e);
-  sendJson(res, status, { error: { name: hideInternals && status === 500 ? "Error" : err.name, message: publicMessage(e, hideInternals), ...(e instanceof HttpError && e.code ? { code: e.code } : {}) } });
+  sendJson(res, status, { error: { name: hideInternals && status >= 500 ? "Error" : err.name, message: publicMessage(e, hideInternals), ...(e instanceof HttpError && e.code ? { code: e.code } : {}) } });
 }
 
 export function createApp(opts: AppOptions = {}): (req: IncomingMessage, res: ServerResponse) => void {
@@ -87,7 +87,10 @@ export function createApp(opts: AppOptions = {}): (req: IncomingMessage, res: Se
       res.setHeader("www-authenticate", 'Bearer realm="mockdata"');
       throw new HttpError(401, "A token is required: send Authorization: Bearer <token>, or open the UI once with ?token=<token>");
     }
-    if (accounts && url.pathname.startsWith("/api/") && Number(req.headers["content-length"]) > ACCOUNT_BODY_MAX) throw new HttpError(413, "Request body is too large"); // refused before it is read
+    if (accounts && url.pathname.startsWith("/api/")) {
+      if (Number(req.headers["content-length"]) > ACCOUNT_BODY_MAX) throw new HttpError(413, "Request body is too large"); // refused before it is read
+      setBodyLimit(req, ACCOUNT_BODY_MAX); // and capped while it is read, for a body with no Content-Length
+    }
     if (accounts && url.pathname.startsWith("/api/auth/")) {
       const route = AUTH_ROUTES[`${req.method} ${url.pathname}`];
       if (!route) throw new HttpError(404, "No such API route");

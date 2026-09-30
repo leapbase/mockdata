@@ -69,6 +69,8 @@ export interface AuthAdapter<TUser extends { id: number }, TTx = unknown> {
   updatePasswordHash(userId: number, newHash: string, opts?: { previousHash?: string }): Promise<void>;
 
   createEmailVerificationToken(userId: number, tokenHash: string, expiresAtEpochSeconds: number): Promise<void>;
+  /** Whose token this is, if it is unused and unexpired, without using it up. */
+  peekEmailVerificationToken(tokenHash: string, nowEpochSeconds: number): Promise<number | null>;
   consumeEmailVerificationToken(tokenHash: string, nowEpochSeconds: number): Promise<number | null>;
   markEmailVerified(userId: number, nowEpochSeconds: number): Promise<void>;
   deleteEmailVerificationTokensForUser(userId: number): Promise<void>;

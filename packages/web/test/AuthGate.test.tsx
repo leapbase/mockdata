@@ -193,19 +193,57 @@ describe("sign-up and email flows", () => {
     expect(calls.find((c) => c.key === "POST /api/auth/reset-password")!.body).toEqual({ token: "tok123", password: "N3w$ecretPassw0rd!" });
   });
 
-  it("explains the outcome of a verification link or a Google attempt from the address", async () => {
+  it("opens the confirm screen from #verify_token=, asks for the sign-up password, cleans the address bar, and signs in", async () => {
+    window.history.replaceState({}, "", "/#verify_token=vt123");
+    let signedIn = false;
+    const calls = stubApi({
+      "GET /api/auth/me": () => me(signedIn ? USER : null),
+      "POST /api/auth/verify-email": () => {
+        signedIn = true;
+        return { user: USER };
+      },
+    });
+    render(app());
+    expect(await screen.findByRole("heading", { name: /confirm your email/i })).toBeTruthy();
+    expect(window.location.hash).toBe("");
+    expect(screen.queryByLabelText("Email")).toBeNull(); // the link already says whose it is
+    await userEvent.type(screen.getByLabelText("Password"), PASSWORD);
+    await userEvent.click(screen.getByRole("button", { name: "Confirm email" }));
+    expect(await screen.findByText("the app")).toBeTruthy();
+    expect(calls.find((c) => c.key === "POST /api/auth/verify-email")!.body).toEqual({ token: "vt123", password: PASSWORD });
+  });
+
+  it("explains a wrong confirm password and points to Forgot password, without losing the screen", async () => {
+    window.history.replaceState({}, "", "/#verify_token=vt123");
+    stubApi({
+      "GET /api/auth/me": () => me(null),
+      "POST /api/auth/verify-email": () => fail(400, "That is not the password used to sign up. If you signed up earlier with a different password, use Forgot password.", "verify_password"),
+    });
+    render(app());
+    await userEvent.type(await screen.findByLabelText("Password"), PASSWORD);
+    await userEvent.click(screen.getByRole("button", { name: "Confirm email" }));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/forgot password/i);
+    expect(screen.getByRole("button", { name: "Forgot password?" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Confirm email" })).toBeTruthy(); // can try again
+  });
+
+  it("says when the confirm link is no longer valid", async () => {
+    window.history.replaceState({}, "", "/#verify_token=old");
+    stubApi({ "GET /api/auth/me": () => me(null), "POST /api/auth/verify-email": () => fail(400, "This verification link is invalid or has expired", "verify_invalid") });
+    render(app());
+    await userEvent.type(await screen.findByLabelText("Password"), PASSWORD);
+    await userEvent.click(screen.getByRole("button", { name: "Confirm email" }));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/invalid or has expired/);
+    await userEvent.click(screen.getByRole("button", { name: "Back to sign in" }));
+    expect(await screen.findByLabelText("Email")).toBeTruthy();
+  });
+
+  it("explains a failed Google attempt from the address", async () => {
     stubApi({ "GET /api/auth/me": () => me(null) });
-    for (const [search, text] of [
-      ["?verified=1", /email (is )?verified/i],
-      ["?error=verify_failed", /verification link/i],
-      ["?error=google_failed", /google sign-in/i],
-    ] as const) {
-      window.history.replaceState({}, "", `/${search}`);
-      const { unmount } = render(app());
-      expect(await screen.findByText(text)).toBeTruthy();
-      expect(window.location.search).toBe("");
-      unmount();
-    }
+    window.history.replaceState({}, "", "/?error=google_failed");
+    render(app());
+    expect(await screen.findByText(/google sign-in/i)).toBeTruthy();
+    expect(window.location.search).toBe("");
   });
 
   it("links to Google sign-in (a full-page redirect) only when the server has it configured", async () => {

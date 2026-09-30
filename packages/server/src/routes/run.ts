@@ -1,7 +1,7 @@
 import { assertRowBudget, parseSchemaText, UserError } from "@mockdata/cli";
 import { CycleError, generate, llmColumns, parseSchema, planGeneration, SchemaError, type DataSchemaT } from "@mockdata/core";
 import { LlmCancelledError, generateWithLlm } from "@mockdata/llm";
-import { assertSchemaShape, beginRun, throttleRun } from "../accounts/guards.js";
+import { assertSchemaShape, beginRun, throttleRun, throttleValidate } from "../accounts/guards.js";
 import { publicMessage, statusFor } from "../errors.js";
 import { llmStatus } from "./config.js";
 import { optInt, optStringArray, readJson, reqString, sendJson, type Handler } from "../http.js";
@@ -23,6 +23,7 @@ function parseText(text: string): unknown {
 }
 
 export const validateRoute: Handler = async (ctx, req, res) => {
+  throttleValidate(ctx);
   const body = await readJson(req);
   const text = reqString(body, "text");
   try {
@@ -108,7 +109,7 @@ export const streamRoute: Handler = async (ctx, req, res) => {
     send("done", { ...buildPreview(schema, data, { seed, rows: previewRows, tables }), report });
   } catch (e) {
     // A cancelled run has no listener left; anything else is reported (messages name variables, never values).
-    if (!(e instanceof LlmCancelledError)) send("error", { name: statusFor(e) === 500 && ctx.accounts ? "Error" : (e as Error).name, message: publicMessage(e, !!ctx.accounts) });
+    if (!(e instanceof LlmCancelledError)) send("error", { name: statusFor(e) >= 500 && ctx.accounts ? "Error" : (e as Error).name, message: publicMessage(e, !!ctx.accounts) });
   } finally {
     run.done();
     res.end();

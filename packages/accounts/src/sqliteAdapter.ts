@@ -200,6 +200,14 @@ export class SqliteAuthAdapter implements AuthAdapter<AccountUser, AccountsDb["r
   createEmailVerificationToken(userId: number, tokenHash: string, expiresAt: number): Promise<void> {
     return this.createToken("email_verification_tokens", userId, tokenHash, expiresAt);
   }
+  peekEmailVerificationToken(tokenHash: string, now: number): Promise<number | null> {
+    return this.call(() => {
+      const r = this.db
+        .prepare("select user_id from email_verification_tokens where token_hash = ? and used_at is null and expires_at > ?")
+        .get(tokenHash, now) as { user_id: number } | undefined;
+      return r ? r.user_id : null;
+    });
+  }
   consumeEmailVerificationToken(tokenHash: string, now: number): Promise<number | null> {
     return this.consumeToken("email_verification_tokens", tokenHash, now);
   }

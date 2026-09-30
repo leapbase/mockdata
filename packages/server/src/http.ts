@@ -35,7 +35,14 @@ export function assertLocal(req: IncomingMessage, access?: NetworkAccess): void 
   if (problem) throw new HttpError(403, problem);
 }
 
+const bodyLimits = new WeakMap<IncomingMessage, number>();
+/** Lower the body limit for one request (accounts mode), however the body is framed. */
+export function setBodyLimit(req: IncomingMessage, bytes: number): void {
+  bodyLimits.set(req, bytes);
+}
+
 export async function readJson(req: IncomingMessage, maxBytes = MAX_BODY): Promise<Record<string, unknown>> {
+  maxBytes = Math.min(maxBytes, bodyLimits.get(req) ?? Infinity);
   if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) {
     throw new HttpError(415, "Send JSON with Content-Type: application/json");
   }

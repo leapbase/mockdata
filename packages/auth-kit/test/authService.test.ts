@@ -266,4 +266,17 @@ describe('password policy', () => {
     const { service } = makeService({ passwordPolicy: { requireSpecialChar: false } });
     expect(service.validateRegistrationPassword('Valid1Password')).toBe('Valid1Password');
   });
+
+  it('peeks at a verification token without using it up', async () => {
+    const adapter = new FakeAuthAdapter();
+    const service = new AuthService({ adapter, enumerationTimingFloorMs: 0 });
+    const user = await service.register({ email: 'peek@example.com', password: 'Sup3r$ecretPassw0rd' });
+    const raw = await service.createEmailVerificationToken(user.id);
+    expect(await service.peekEmailVerificationToken(raw)).toBe(user.id);
+    expect(await service.peekEmailVerificationToken(raw)).toBe(user.id); // still there
+    expect(await service.peekEmailVerificationToken('not-a-token')).toBeNull();
+    expect(await service.peekEmailVerificationToken('')).toBeNull();
+    expect(await service.consumeEmailVerificationToken(raw)).toBe(user.id);
+    expect(await service.peekEmailVerificationToken(raw)).toBeNull(); // used now
+  });
 });

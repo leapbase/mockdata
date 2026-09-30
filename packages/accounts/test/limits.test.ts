@@ -181,3 +181,33 @@ describe("server-wide usage and file counts", () => {
     expect(() => assertWithinDiskQuota(root, 1, 1000, { newFiles: 2, maxFiles: 4 })).toThrow(/files/i);
   });
 });
+
+describe("UsageStore.reserveLlmRows", () => {
+  it("checks both limits and charges in one step, so concurrent runs cannot overshoot", async () => {
+    const accounts = await AccountsDb.open(":memory:");
+    const adapter = new SqliteAuthAdapter(accounts);
+    const users = [];
+    for (const n of ["a", "b", "c"]) users.push(await adapter.createUserWithPasswordIdentity({ normalizedEmail: `${n}@example.com`, passwordHash: "h", displayName: n }));
+    const usage = new UsageStore(accounts, { today: () => "2026-01-01" });
+    // three users each ask for 6 at once against a server-wide 15: exactly two can be served
+    const results = await Promise.all(users.map((u) => usage.reserveLlmRows(u.id, 6, 100, 15)));
+    expect(results.filter((r) => r.ok)).toHaveLength(2);
+    expect(results.find((r) => !r.ok)).toMatchObject({ ok: false, reason: "server" });
+    expect(await usage.llmRowsAllUsersToday()).toBe(12);
+    // the per-user limit is reported with what is left
+    expect(await usage.reserveLlmRows(users[0]!.id, 10, 8, 1000)).toEqual({ ok: false, reason: "user", left: 2 });
+    expect(await usage.llmRowsToday(users[0]!.id)).toBe(6); // a refused reservation charges nothing
+  });
+});
+
+describe("RateLimiter trimming is amortised", () => {
+  it("makes room in bulk so a stream of new keys does not sort the table on every hit", () => {
+    const now = { t: 0 };
+    const rl = new RateLimiter({ max: 1, windowMs: 1_000_000, now: () => now.t, maxKeys: 1000 });
+    for (let i = 0; i <= 1000; i++) {
+      now.t++;
+      rl.hit(`k${i}`);
+    }
+    expect(rl.size()).toBeLessThanOrEqual(900); // trimmed to 90%, not by one
+  });
+});

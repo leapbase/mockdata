@@ -70,8 +70,10 @@ export class RateLimiter {
     if (this.hits.size <= this.maxKeys) return;
     const entries = [...this.hits].map(([key, list]) => ({ key, limited: list.length >= this.opts.max, last: list[list.length - 1] ?? 0 }));
     entries.sort((a, b) => Number(a.limited) - Number(b.limited) || a.last - b.last);
+    // Make room in bulk (down to 90%), so a stream of new keys pays for one sort per maxKeys/10 hits, not one per hit.
+    const target = Math.floor(this.maxKeys * 0.9);
     for (const { key } of entries) {
-      if (this.hits.size <= this.maxKeys) return;
+      if (this.hits.size <= target) return;
       this.hits.delete(key);
     }
   }

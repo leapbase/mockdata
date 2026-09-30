@@ -69,6 +69,24 @@ export class UsageStore {
     });
   }
 
+  /**
+   * Check the user's and the server's daily budgets and charge the rows, in one step under the database gate, so runs
+   * started at the same moment cannot each see room that only one of them can have. A refusal charges nothing.
+   */
+  reserveLlmRows(userId: number, rows: number, userLimit: number, serverLimit: number): Promise<{ ok: true } | { ok: false; reason: "user"; left: number } | { ok: false; reason: "server" }> {
+    return this.accounts.gated(() => {
+      const db = this.accounts.raw;
+      const day = this.day();
+      const mine = (db.prepare("select llm_rows from usage where user_id = ? and day = ?").get(userId, day) as { llm_rows: number } | undefined)?.llm_rows ?? 0;
+      const userLeft = userLimit - mine;
+      if (rows > userLeft) return { ok: false as const, reason: "user" as const, left: Math.max(0, userLeft) };
+      const all = (db.prepare("select coalesce(sum(llm_rows), 0) as n from usage where day = ?").get(day) as { n: number }).n;
+      if (rows > serverLimit - all) return { ok: false as const, reason: "server" as const };
+      db.prepare("insert into usage (user_id, day, llm_rows) values (?, ?, ?) on conflict (user_id, day) do update set llm_rows = llm_rows + excluded.llm_rows").run(userId, day, rows);
+      return { ok: true as const };
+    });
+  }
+
   addLlmRows(userId: number, rows: number): Promise<void> {
     return this.accounts.gated(() => {
       this.accounts.raw

@@ -217,6 +217,12 @@ export class AuthService<TUser extends { id: number }, TTx = unknown> {
     return rawToken;
   }
 
+  /** Whose token this is, without using it up (so a wrong password on the confirm screen does not burn the link). */
+  peekEmailVerificationToken(rawToken: string): Promise<number | null> {
+    if (!rawToken) return Promise.resolve(null);
+    return this.adapter.peekEmailVerificationToken(hashOpaqueToken(rawToken), nowEpoch());
+  }
+
   consumeEmailVerificationToken(rawToken: string): Promise<number | null> {
     if (!rawToken) return Promise.resolve(null);
     return this.adapter.consumeEmailVerificationToken(hashOpaqueToken(rawToken), nowEpoch());

@@ -37,6 +37,11 @@ function emailOf(acc: AccountsRuntime, body: Record<string, unknown>): string {
   return email;
 }
 
+/** The emailed link opens the confirm screen. The token sits in the fragment, so no server, proxy log or mail scanner ever sees it. */
+function verificationLink(acc: AccountsRuntime, token: string): string {
+  return `${acc.config.publicUrl.origin}/#verify_token=${token}`;
+}
+
 /** Never put an email address in a log line (SMTP errors usually repeat the recipient). */
 const redactEmails = (text: string): string => text.replace(/[^\s<>"',;]+@[^\s<>"',;]+/g, "<address>");
 
@@ -93,21 +98,20 @@ const register: AuthHandler = async (acc, _caller, req, res) => {
   const password = field(acc.auth.validateRegistrationPassword(body.password));
   if (!acc.limiters.signupIp.hit(ip)) throw tooMany(res, acc.limiters.signupIp.retryAfterSeconds(ip));
   const started = Date.now();
-  const verifyLink = (token: string) => `${acc.config.publicUrl.origin}/api/auth/verify-email?token=${token}`;
+  const verifyLink = (token: string) => verificationLink(acc, token);
   try {
     const user = await hashing(acc, res, () => acc.auth.register({ email, password }));
     const token = await acc.auth.createEmailVerificationToken(user.id);
+    acc.limiters.mailEmail.record(acc.auth.normalizeEmail(email)); // the first mail counts towards this mailbox's hourly allowance too
     queueMail(acc, () => sendVerificationEmail(acc.mailer, user.email!, verifyLink(token)));
   } catch (e) {
     if (!(e instanceof EmailTakenError)) throw e;
-    // An address nobody has verified has no owner yet, so the newest sign-up wins: whoever squatted it (or abandoned
-    // it) loses the password, the sessions and the old link, and the address gets a fresh link. A verified address is
-    // left alone and mailed nothing; the answer is the same either way.
+    // Nothing changes for an address that is already registered: not its password, not its sessions, not its earlier
+    // link. An unverified one is mailed one more link (limited per mailbox, so this cannot be used to mail-bomb), and
+    // confirming any link needs the password that was stored at sign-up, so whoever signed up first cannot be handed
+    // the account by a link: the real owner recovers with Forgot password, which proves the mailbox.
     const identity = await acc.auth.findEmailIdentity(email);
-    if (identity && !identity.verified) {
-      await hashing(acc, res, () => acc.auth.setPassword(identity.userId, password));
-      await acc.auth.revokeSessions(identity.userId);
-      await acc.auth.clearEmailVerificationTokens(identity.userId);
+    if (identity && !identity.verified && acc.limiters.mailEmail.hit(acc.auth.normalizeEmail(email))) {
       const token = await acc.auth.createEmailVerificationToken(identity.userId);
       queueMail(acc, () => sendVerificationEmail(acc.mailer, email, verifyLink(token)));
     }
@@ -163,15 +167,42 @@ const me: AuthHandler = async (acc, caller, _req, res) => {
   });
 };
 
-const verifyEmail: AuthHandler = async (acc, _caller, _req, res, url) => {
-  const userId = await acc.auth.consumeEmailVerificationToken(url.searchParams.get("token") ?? "");
-  if (userId !== null) {
-    await acc.auth.markEmailVerified(userId);
-    await acc.auth.clearEmailVerificationTokens(userId);
+/**
+ * Confirm an address. The link proves the mailbox; the password proves this is the sign-up that was meant, so a
+ * stranger who signed up first with someone else's address cannot be handed that account when the owner clicks. A wrong
+ * password does not use the link up. Verifying signs the person in, since both proofs have just been given.
+ */
+const verifyEmail: AuthHandler = async (acc, _caller, req, res) => {
+  const body = await readJson(req, AUTH_BODY_MAX);
+  const ip = throttle(acc, req, res);
+  if (!acc.limiters.loginIp.hit(ip)) throw tooMany(res, acc.limiters.loginIp.retryAfterSeconds(ip));
+  if (acc.limiters.ipFail.isLimited(ip)) throw tooMany(res, acc.limiters.ipFail.retryAfterSeconds(ip));
+  const token = reqString(body, "token");
+  const password = field(acc.auth.validateLoginPasswordShape(body.password));
+  const invalid = () => new HttpError(400, "This verification link is invalid or has expired", "verify_invalid");
+  const userId = await acc.auth.peekEmailVerificationToken(token);
+  if (userId === null) {
+    acc.limiters.ipFail.record(ip);
+    throw invalid();
   }
-  // Verifying never signs anyone in: a link alone must not create a session.
-  res.writeHead(302, { location: userId !== null ? "/?verified=1" : "/?error=verify_failed", "referrer-policy": "no-referrer", "cache-control": "no-store" });
-  res.end();
+  const user = await acc.auth.findUserById(userId);
+  if (!user?.email) throw invalid();
+  const mailbox = `${user.email}|${ip}`;
+  if (acc.limiters.emailIpFail.isLimited(mailbox)) throw tooMany(res, acc.limiters.emailIpFail.retryAfterSeconds(mailbox));
+  if (acc.limiters.emailFail.isLimited(user.email)) throw tooMany(res, acc.limiters.emailFail.retryAfterSeconds(user.email));
+  const checked = await hashing(acc, res, () => acc.auth.login(user.email!, password));
+  if (!checked) {
+    acc.limiters.ipFail.record(ip);
+    acc.limiters.emailIpFail.record(mailbox);
+    acc.limiters.emailFail.record(user.email);
+    throw new HttpError(400, "That is not the password used to sign up. If you signed up earlier with a different password, use Forgot password.", "verify_password");
+  }
+  if ((await acc.auth.consumeEmailVerificationToken(token)) !== userId) throw invalid();
+  await acc.auth.markEmailVerified(userId);
+  await acc.auth.clearEmailVerificationTokens(userId);
+  acc.limiters.emailIpFail.reset(mailbox);
+  await startSession(acc, res, userId);
+  sendJson(res, 200, { user: publicUser(user) });
 };
 
 /** Mail-sending routes answer `{ok:true}` whether or not the address exists, and take the same time. */
@@ -203,7 +234,7 @@ const resendVerification = mailRoute(async (acc, email) => {
   if (!identity || identity.verified) return;
   await acc.auth.clearEmailVerificationTokens(identity.userId);
   const token = await acc.auth.createEmailVerificationToken(identity.userId);
-  queueMail(acc, () => sendVerificationEmail(acc.mailer, email, `${acc.config.publicUrl.origin}/api/auth/verify-email?token=${token}`));
+  queueMail(acc, () => sendVerificationEmail(acc.mailer, email, verificationLink(acc, token)));
 });
 
 const resetPassword: AuthHandler = async (acc, _caller, req, res) => {
@@ -212,12 +243,17 @@ const resetPassword: AuthHandler = async (acc, _caller, req, res) => {
   if (acc.limiters.ipFail.isLimited(ip)) throw tooMany(res, acc.limiters.ipFail.retryAfterSeconds(ip));
   const token = reqString(body, "token");
   const password = field(acc.auth.validateRegistrationPassword(body.password)); // before consuming: a weak password must not burn the link
-  const userId = await acc.auth.consumePasswordResetToken(token);
+  // Take the hashing slot first and use the link up inside it: a "server busy" answer must not burn the link.
+  const userId = await hashing(acc, res, async () => {
+    const id = await acc.auth.consumePasswordResetToken(token);
+    if (id === null) return null;
+    await acc.auth.setPassword(id, password);
+    return id;
+  });
   if (userId === null) {
     acc.limiters.ipFail.record(ip);
     throw new HttpError(400, "This reset link is invalid or has expired", "reset_invalid");
   }
-  await hashing(acc, res, () => acc.auth.setPassword(userId, password));
   await acc.auth.markEmailVerified(userId); // reading the emailed link proves the address
   await acc.auth.clearEmailVerificationTokens(userId);
   await acc.auth.clearPasswordResetTokens(userId);
@@ -232,6 +268,8 @@ const changePassword: AuthHandler = async (acc, caller, req, res) => {
   if (!caller.user) throw new HttpError(401, "Sign in required");
   const user = caller.user;
   const body = await readJson(req, AUTH_BODY_MAX);
+  // Two password hashes per call, and a signed-in user's successes are not failures: bound them per user, before hashing.
+  if (!acc.limiters.changePasswordUser.hit(String(user.id))) throw tooMany(res, acc.limiters.changePasswordUser.retryAfterSeconds(String(user.id)));
   const newPassword = field(acc.auth.validateRegistrationPassword(body.newPassword));
   const current = field(acc.auth.validateLoginPasswordShape(body.currentPassword));
   if (!user.email || !(await acc.auth.hasPasswordIdentity(user.id))) throw new HttpError(400, "This account has no password to change");
@@ -250,7 +288,7 @@ export const AUTH_ROUTES: Record<string, AuthHandler> = {
   "POST /api/auth/register": register,
   "POST /api/auth/login": login,
   "POST /api/auth/logout": logout,
-  "GET /api/auth/verify-email": verifyEmail,
+  "POST /api/auth/verify-email": verifyEmail,
   "POST /api/auth/resend-verification": resendVerification,
   "POST /api/auth/forgot-password": forgotPassword,
   "POST /api/auth/reset-password": resetPassword,

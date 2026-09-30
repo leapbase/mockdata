@@ -165,6 +165,12 @@ export class FakeAuthAdapter implements AuthAdapter<FakeUser, FakeState> {
     this.state.verificationTokens.set(tokenHash, { userId, expiresAt: expiresAtEpochSeconds, usedAt: null });
   }
 
+  async peekEmailVerificationToken(tokenHash: string, nowEpochSeconds: number): Promise<number | null> {
+    const token = this.state.verificationTokens.get(tokenHash);
+    if (!token || token.usedAt !== null || token.expiresAt <= nowEpochSeconds) return null;
+    return token.userId;
+  }
+
   async consumeEmailVerificationToken(tokenHash: string, nowEpochSeconds: number): Promise<number | null> {
     const token = this.state.verificationTokens.get(tokenHash);
     if (!token || token.usedAt !== null || token.expiresAt <= nowEpochSeconds) return null;

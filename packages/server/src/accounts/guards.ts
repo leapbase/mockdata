@@ -8,6 +8,8 @@ export const MAX_TABLES = 50;
 export const MAX_COLUMNS_PER_TABLE = 100;
 /** A column's instruction is re-sent with every batch, so its length multiplies spend. */
 export const MAX_LLM_PROMPT = 500;
+/** Table and column names are re-sent with every row of every model batch, so their length multiplies spend. */
+export const MAX_NAME_LENGTH = 64;
 /** Batches smaller than this, and retries beyond this, multiply the number of model requests. */
 const MIN_BATCH = 10;
 const MAX_RETRIES = 2;
@@ -43,6 +45,12 @@ export function assertSchemaShape(ctx: Ctx, schema: DataSchemaT): void {
   const tables = Object.values(schema.tables);
   if (tables.length > MAX_TABLES) throw new HttpError(400, `Schemas are limited to ${MAX_TABLES} tables`);
   let cells = 0;
+  for (const [tableName, t] of Object.entries(schema.tables)) {
+    if (tableName.length > MAX_NAME_LENGTH) throw new HttpError(400, `Table and column names are limited to ${MAX_NAME_LENGTH} characters`);
+    for (const columnName of Object.keys(t.columns)) {
+      if (columnName.length > MAX_NAME_LENGTH) throw new HttpError(400, `Table and column names are limited to ${MAX_NAME_LENGTH} characters`);
+    }
+  }
   for (const t of tables) {
     const columns = Object.values(t.columns);
     if (columns.length > MAX_COLUMNS_PER_TABLE) throw new HttpError(400, `Tables are limited to ${MAX_COLUMNS_PER_TABLE} columns`);
@@ -65,6 +73,13 @@ export function throttleRun(ctx: Ctx): void {
   if (!ctx.accounts || !ctx.user) return;
   const key = String(ctx.user.id);
   if (!ctx.accounts.limiters.runUser.hit(key)) throw new QuotaError(`You are sending runs too quickly: wait ${ctx.accounts.limiters.runUser.retryAfterSeconds(key)} seconds`);
+}
+
+/** Checking a schema is cheap but parses up to 2 MB each time, so it has its own, higher, per-user limit. */
+export function throttleValidate(ctx: Ctx): void {
+  if (!ctx.accounts || !ctx.user) return;
+  const key = String(ctx.user.id);
+  if (!ctx.accounts.limiters.validateUser.hit(key)) throw new QuotaError(`You are checking schemas too quickly: wait ${ctx.accounts.limiters.validateUser.retryAfterSeconds(key)} seconds`);
 }
 
 export interface Run {
@@ -91,13 +106,11 @@ export async function beginRun(ctx: Ctx, schema: DataSchemaT): Promise<Run> {
   try {
     const cells = llmCellCount(schema);
     if (cells > 0) {
-      const left = accounts.limits.llmDailyRows - (await accounts.usage.llmRowsToday(user.id));
-      if (cells > left) {
-        throw new QuotaError(`Daily LLM limit: this run needs ${cells} model-written rows and you have ${Math.max(0, left)} left today (limit ${accounts.limits.llmDailyRows}, resets at midnight UTC)`);
+      const taken = await accounts.usage.reserveLlmRows(user.id, cells, accounts.limits.llmDailyRows, accounts.limits.llmGlobalDailyRows);
+      if (!taken.ok && taken.reason === "user") {
+        throw new QuotaError(`Daily LLM limit: this run needs ${cells} model-written rows and you have ${taken.left} left today (limit ${accounts.limits.llmDailyRows}, resets at midnight UTC)`);
       }
-      const serverLeft = accounts.limits.llmGlobalDailyRows - (await accounts.usage.llmRowsAllUsersToday());
-      if (cells > serverLeft) throw new QuotaError("The server's model budget for today is used up: try again after midnight UTC");
-      await accounts.usage.addLlmRows(user.id, cells);
+      if (!taken.ok) throw new QuotaError("The server's model budget for today is used up: try again after midnight UTC");
     }
   } catch (e) {
     release();

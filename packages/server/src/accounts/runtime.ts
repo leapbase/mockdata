@@ -58,6 +58,10 @@ export interface AccountsRuntime {
     oauthIp: RateLimiter;
     /** Expensive requests (generate, run, export, infer) per signed-in user. */
     runUser: RateLimiter;
+    /** Schema checks per signed-in user (the editor checks as you type, so this is generous). */
+    validateUser: RateLimiter;
+    /** Password changes per signed-in user (each costs two hashes). */
+    changePasswordUser: RateLimiter;
   };
   /** Run password hashing through this: at most two at once, a short queue, then `BusyError`. */
   readonly hashing: Semaphore;
@@ -117,6 +121,8 @@ export async function createAccounts(config: AccountsConfig): Promise<AccountsRu
       mailEmail: new RateLimiter({ max: 5, windowMs: 60 * MINUTE }),
       oauthIp: new RateLimiter({ max: 30, windowMs: 15 * MINUTE }),
       runUser: new RateLimiter({ max: 30, windowMs: MINUTE }),
+      validateUser: new RateLimiter({ max: 120, windowMs: MINUTE }),
+      changePasswordUser: new RateLimiter({ max: 5, windowMs: 15 * MINUTE }),
     },
     hashing: new Semaphore(2, 16),
     queueMail(job) {
@@ -156,6 +162,11 @@ export async function createAccounts(config: AccountsConfig): Promise<AccountsRu
 function rateLimitKey(address: string): string {
   const v4 = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address);
   if (v4) return v4[1]!;
+  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(address); // the same mapping written as two hex groups
+  if (hex) {
+    const [hi, lo] = [parseInt(hex[1]!, 16), parseInt(hex[2]!, 16)];
+    return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+  }
   if (isIP(address) !== 6) return address;
   const [head = "", tail = ""] = address.toLowerCase().split("%")[0]!.split("::");
   const left = head ? head.split(":") : [];

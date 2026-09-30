@@ -135,18 +135,18 @@ export async function bootAccounts(
     const u = new URL(link);
     return u.pathname + u.search;
   };
+  /** The one-time value in an emailed link (they travel in the URL fragment: #verify_token=... or #reset_token=...). */
+  const tokenOf = (m: MailerMessage, name: "verify_token" | "reset_token" = "verify_token"): string => new URLSearchParams(new URL(linkIn(m)).hash.slice(1)).get(name)!;
 
   /** Register, click the emailed link, sign in: returns the session cookie. */
   async function signUp(email: string, password = PASSWORD): Promise<string> {
     const before = sent.length;
     const reg = await app.post("/api/auth/register", { email, password });
     if (reg.status !== 202) throw new Error(`register gave ${reg.status}: ${reg.raw}`);
-    const verify = await fetch(app.url + pathOf(linkIn(sent[before]!)), { redirect: "manual" });
-    if (verify.status !== 302) throw new Error(`verify gave ${verify.status}`);
-    const login = await app.post("/api/auth/login", { email, password });
-    if (login.status !== 200) throw new Error(`login gave ${login.status}: ${login.raw}`);
-    return cookieOf(login.headers);
+    const verify = await app.post("/api/auth/verify-email", { token: tokenOf(sent[before]!), password }); // confirming proves the mailbox AND the password
+    if (verify.status !== 200) throw new Error(`verify gave ${verify.status}: ${verify.raw}`);
+    return cookieOf(verify.headers);
   }
 
-  return { ...app, accounts, dataDir, configRoot, sent, as, cookieOf, linkIn, pathOf, signUp };
+  return { ...app, accounts, dataDir, configRoot, sent, as, cookieOf, linkIn, pathOf, tokenOf, signUp };
 }

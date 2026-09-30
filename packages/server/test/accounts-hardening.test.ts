@@ -69,20 +69,50 @@ describe("a shared reverse proxy must not collapse everyone into one rate-limit 
   });
 });
 
-describe("registering over an address nobody has verified", () => {
-  it("lets the real owner take over an abandoned or squatted signup, and kills the squatter's password and link", async () => {
-    const { post, sent, linkIn, pathOf, url } = await bootAccounts();
-    const SQUATTER = "Squ4tter$ecretPassw0rd";
-    await post("/api/auth/register", { email: "victim@example.com", password: SQUATTER }); // someone signs up with another person's address
-    await post("/api/auth/register", { email: "victim@example.com", password: PASSWORD }); // the real owner signs up
+describe("nobody can take an address by signing up for it first, or again", () => {
+  const SQUATTER = "Squ4tter$ecretPassw0rd";
+
+  it("a link alone cannot hand the account to whoever typed the password first: the owner recovers through Forgot password", async () => {
+    const { post, sent, tokenOf } = await bootAccounts();
+    await post("/api/auth/register", { email: "victim@example.com", password: SQUATTER }); // a stranger signs up with someone's address
+    await post("/api/auth/register", { email: "victim@example.com", password: PASSWORD }); // the real owner signs up; the stranger's password is still the stored one
     expect(sent).toHaveLength(2);
     expect(sent.every((m) => m.to === "victim@example.com")).toBe(true);
-    const oldLink = pathOf(linkIn(sent[0]!));
-    const newLink = pathOf(linkIn(sent[1]!));
-    expect((await fetch(url + oldLink, { redirect: "manual" })).headers.get("location")).toBe("/?error=verify_failed"); // the squatter's link is dead
-    expect((await fetch(url + newLink, { redirect: "manual" })).headers.get("location")).toBe("/?verified=1");
+    // the owner clicks the link they were sent and types the password they chose: it does not match, so nothing is verified
+    const attempt = await post("/api/auth/verify-email", { token: tokenOf(sent[1]!), password: PASSWORD });
+    expect(attempt.status).toBe(400);
+    expect(attempt.json.error.code).toBe("verify_password");
+    expect(attempt.json.error.message).toMatch(/forgot password/i);
+    expect((await post("/api/auth/login", { email: "victim@example.com", password: SQUATTER })).json.error.code).toBe("email_unverified");
+    // recovery proves the mailbox: the password is replaced, the address verified, and the stranger's password is dead
+    await post("/api/auth/forgot-password", { email: "victim@example.com" });
+    const reset = await post("/api/auth/reset-password", { token: tokenOf(sent.at(-1)!, "reset_token"), password: PASSWORD });
+    expect(reset.status).toBe(200);
     expect((await post("/api/auth/login", { email: "victim@example.com", password: SQUATTER })).status).toBe(401);
     expect((await post("/api/auth/login", { email: "victim@example.com", password: PASSWORD })).status).toBe(200);
+  });
+
+  it("re-registering a half-finished sign-up does not change its password or cancel its link", async () => {
+    const { post, sent, tokenOf } = await bootAccounts();
+    await post("/api/auth/register", { email: "ann@example.com", password: PASSWORD }); // the owner starts signing up
+    const first = tokenOf(sent[0]!);
+    const again = await post("/api/auth/register", { email: "ann@example.com", password: SQUATTER }); // someone else tries the same address
+    expect(again.status).toBe(202);
+    expect(again.json).toEqual({ pending: true });
+    expect((await post("/api/auth/login", { email: "ann@example.com", password: SQUATTER })).status).toBe(401);
+    const ok = await post("/api/auth/verify-email", { token: first, password: PASSWORD }); // the owner's original link and password still work
+    expect(ok.status).toBe(200);
+  });
+
+  it("limits how often an unverified address can be mailed by re-registering (no mail bombing)", async () => {
+    const { post, sent } = await bootAccounts({ trustProxy: true });
+    for (let i = 0; i < 12; i++) await post("/api/auth/register", { email: "target@example.com", password: PASSWORD }); // same client: the sign-up limit also applies
+    expect(sent.length).toBeLessThanOrEqual(5);
+    const other = await bootAccounts({ trustProxy: true });
+    const answers = new Set<string>();
+    for (let i = 0; i < 9; i++) answers.add((await other.call("POST", "/api/auth/register", { email: "target@example.com", password: PASSWORD }, { "x-forwarded-for": `203.0.113.${i + 1}` })).raw);
+    expect(other.sent.length).toBe(5); // many addresses still get only 5 mails an hour for one mailbox
+    expect(answers.size).toBe(1); // and every answer is identical
   });
 
   it("does nothing to a verified address: same answer, no email, password unchanged", async () => {
@@ -95,6 +125,19 @@ describe("registering over an address nobody has verified", () => {
     expect(sent).toHaveLength(before);
     expect((await post("/api/auth/login", { email: "ann@example.com", password: PASSWORD })).status).toBe(200);
     expect((await post("/api/auth/login", { email: "ann@example.com", password: "Att4cker$ecretPassw0rd" })).status).toBe(401);
+  });
+
+  it("the unverified and verified cases cost the same hashing, so they do not differ in timing", async () => {
+    const { post, signUp } = await bootAccounts();
+    await signUp("done@example.com");
+    await post("/api/auth/register", { email: "half@example.com", password: PASSWORD });
+    const timed = async (email: string) => {
+      const t = Date.now();
+      await post("/api/auth/register", { email, password: PASSWORD });
+      return Date.now() - t;
+    };
+    const [verified, unverified, fresh] = [await timed("done@example.com"), await timed("half@example.com"), await timed("new@example.com")];
+    for (const ms of [verified, unverified, fresh]) expect(ms).toBeLessThan(2000);
   });
 });
 
@@ -281,5 +324,115 @@ describe("one user cannot stall the server by repeating expensive runs", () => {
     expect((await ann.post("/api/export", { text: SHOP_YAML, zip: true })).status).toBe(429); // the same budget covers every heavy route
     expect((await ann.post("/api/validate", { text: SHOP_YAML })).status).toBe(200); // editing is not limited
     expect((await bob.post("/api/generate", { text: SHOP_YAML })).status).toBe(200);
+  });
+});
+
+describe("a busy server does not burn a reset link, and password changes are limited per user", () => {
+  it("answers 503 before using the reset link up, so the link still works afterwards", async () => {
+    const { post, signUp, sent, tokenOf, accounts } = await bootAccounts();
+    await signUp("ann@example.com");
+    await post("/api/auth/forgot-password", { email: "ann@example.com" });
+    const token = tokenOf(sent.at(-1)!, "reset_token");
+    const releases: (() => void)[] = [];
+    const jobs = Array.from({ length: 18 }, () => accounts.hashing.run(() => new Promise<void>((r) => releases.push(r)))); // 2 running + 16 queued: full
+    await new Promise((r) => setTimeout(r, 20));
+    const busy = await post("/api/auth/reset-password", { token, password: "N3w$ecretPassw0rd!" });
+    expect(busy.status).toBe(503);
+    expect(busy.headers.get("retry-after")).toBeTruthy();
+    while (releases.length) {
+      releases.shift()!();
+      await new Promise((r) => setTimeout(r, 2));
+    }
+    await Promise.all(jobs);
+    expect((await post("/api/auth/reset-password", { token, password: "N3w$ecretPassw0rd!" })).status).toBe(200); // the link was not burned
+  });
+
+  it("limits password changes per user even when every one succeeds", async () => {
+    const { signUp, as } = await bootAccounts();
+    const ann = as(await signUp("ann@example.com"));
+    let current = PASSWORD;
+    const codes: number[] = [];
+    for (let i = 0; i < 7; i++) {
+      const next = `Str0ng$ecret${i}Passw0rd!`;
+      const r = await ann.post("/api/auth/change-password", { currentPassword: current, newPassword: next });
+      codes.push(r.status);
+      if (r.status === 200) current = next;
+    }
+    expect(codes).toEqual([200, 200, 200, 200, 200, 429, 429]);
+  });
+});
+
+describe("what a schema may ask for, and what the operator is never told", () => {
+  it("limits table and column names, which are re-sent with every row of every model batch", async () => {
+    const { signUp, as } = await bootAccounts();
+    const ann = as(await signUp("ann@example.com"));
+    const longTable = `tables:\n  ${"t".repeat(65)}:\n    rows: 1\n    columns:\n      id: { type: integer, primaryKey: true }\n`;
+    const longColumn = `tables:\n  t:\n    rows: 1\n    columns:\n      id: { type: integer, primaryKey: true }\n      ${"c".repeat(65)}: { type: integer }\n`;
+    for (const text of [longTable, longColumn]) {
+      const r = await ann.post("/api/validate", { text });
+      expect(r.status).toBe(400);
+      expect(r.json.error.message).toMatch(/64 characters/);
+    }
+  });
+
+  it("limits validate requests too (it parses up to 2 MB of schema each time)", async () => {
+    const { signUp, as } = await bootAccounts();
+    const ann = as(await signUp("ann@example.com"));
+    const codes: number[] = [];
+    for (let i = 0; i < 125; i++) codes.push((await ann.post("/api/validate", { text: "tables: {}\n" })).status);
+    expect(codes.slice(0, 120).every((c) => c !== 429)).toBe(true);
+    expect(codes.slice(120).every((c) => c === 429)).toBe(true);
+  });
+
+  it("caps a chunked request body too, where there is no Content-Length to refuse early", async () => {
+    const { signUp, url } = await bootAccounts();
+    const cookie = await signUp("ann@example.com");
+    const status = await new Promise<number>((resolve, reject) => {
+      const u = new URL(url);
+      const req = http.request({ host: u.hostname, port: u.port, path: "/api/validate", method: "POST", headers: { "content-type": "application/json", "transfer-encoding": "chunked", cookie } }, (res) => {
+        res.resume();
+        resolve(res.statusCode!);
+        req.destroy();
+      });
+      req.on("error", (e) => ((e as NodeJS.ErrnoException).code === "ECONNRESET" || (e as NodeJS.ErrnoException).code === "EPIPE" ? undefined : reject(e)));
+      const chunk = Buffer.alloc(256 * 1024, 97);
+      let sent = 0;
+      const write = () => {
+        while (sent < 6 * 1024 * 1024) {
+          sent += chunk.length;
+          if (!req.write(chunk)) return void req.once("drain", write);
+        }
+        req.end();
+      };
+      write();
+    });
+    expect(status).toBe(413);
+  });
+
+  it("does not tell users about the operator's model service, base URL or variables", async () => {
+    const failing = (async () => new Response("credit balance is too low on account acme-prod", { status: 500 })) as unknown as typeof fetch;
+    const { signUp, as } = await bootAccounts({ env: { AI_PROVIDER: "ollama", OLLAMA_MODEL: "m", OLLAMA_BASE_URL: "http://10.9.8.7:11434" }, llm: { fetch: failing, sleep: async () => undefined } });
+    const ann = as(await signUp("ann@example.com"));
+    const text = `tables:\n  t:\n    rows: 2\n    columns:\n      id: { type: integer, primaryKey: true }\n      note: { type: string, llm: true }\n`;
+    const r = await ann.post("/api/generate/stream", { text });
+    expect(r.status).toBe(200);
+    expect(r.raw).toContain("event: error");
+    expect(r.raw).not.toMatch(/credit balance|acme-prod|10\.9\.8\.7|11434/);
+    expect(r.raw).toMatch(/model service/i);
+
+    const unset = await bootAccounts();
+    const ann2 = unset.as(await unset.signUp("bob@example.com"));
+    const status = await ann2.post("/api/validate", { text });
+    expect(status.json.llm).toEqual({ ok: false, reason: "Model-written columns are not available on this server" });
+    expect(JSON.stringify(status.json)).not.toMatch(/AI_PROVIDER|OLLAMA|ANTHROPIC|OPENAI/);
+    const run = await ann2.post("/api/generate/stream", { text });
+    expect(run.raw).not.toMatch(/AI_PROVIDER|OLLAMA|ANTHROPIC|OPENAI/);
+  });
+
+  it("puts an IPv4-mapped address sent in hex form in the IPv4 bucket, not a shared one", async () => {
+    const acc = await accountsFromEnv({ MOCKDATA_PUBLIC_URL: "http://localhost:4747", MOCKDATA_TRUST_PROXY: "0", GOOGLE_CLIENT_ID: "id", GOOGLE_CLIENT_SECRET: "s" }, { configRoot: mkdtempSync(join(tmpdir(), "mockdata-hex-")), dataDir: join(mkdtempSync(join(tmpdir(), "mockdata-hex-")), "d") });
+    expect(acc!.clientIp(fakeReq("::ffff:0102:0304"))).toBe("1.2.3.4");
+    expect(acc!.clientIp(fakeReq("::ffff:1.2.3.4"))).toBe("1.2.3.4");
+    acc!.close();
   });
 });

@@ -2,6 +2,7 @@ import { dbEnvNames } from "@mockdata/cli";
 import { createProvider, resolveLlmConfig } from "@mockdata/llm";
 import type { LlmConfig } from "@mockdata/core";
 import { lockedLlmConfig } from "../accounts/guards.js";
+import { MODELS_OFF } from "../errors.js";
 import { sendJson, type Ctx, type Handler } from "../http.js";
 
 export type LlmStatus = { ok: true; provider: string } | { ok: false; reason: string };
@@ -18,8 +19,8 @@ export function llmStatus(ctx: Ctx, fromSchema?: LlmConfig): LlmStatus {
     const config = ctx.accounts ? lockedLlmConfig(fromSchema) : fromSchema; // accounts mode: the operator's settings, whatever the schema says
     return { ok: true, provider: createProvider(resolveLlmConfig(config, env), { env }).name };
   } catch (e) {
-    // Config errors name variables, never values.
-    return { ok: false, reason: (e as Error).message };
+    // Config errors name variables, never values; on a public server even the names are the operator's business.
+    return { ok: false, reason: ctx.accounts ? MODELS_OFF : (e as Error).message };
   }
 }
 

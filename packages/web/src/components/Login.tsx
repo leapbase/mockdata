@@ -1,30 +1,28 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { ApiError, forgotPassword, login, register, resendVerification, resetPassword, type AuthUser, type Me } from "../api";
+import { ApiError, forgotPassword, login, register, resendVerification, resetPassword, verifyEmail, type AuthUser, type Me } from "../api";
 import { messageOf } from "../hooks";
 
-type Mode = "login" | "register" | "forgot" | "reset" | "checkEmail" | "unverified" | "forgotSent";
+type Mode = "login" | "register" | "forgot" | "reset" | "verify" | "checkEmail" | "unverified" | "forgotSent";
 
 /** The same rules the server enforces, so most mistakes are caught before a request. */
 const PASSWORD_HINT = "At least 12 characters with an upper-case letter, a lower-case letter, a number and a symbol.";
 
 const NOTICES: Record<string, { text: string; error: boolean }> = {
-  "verified=1": { text: "Email verified. You can sign in now.", error: false },
-  "error=verify_failed": { text: "That verification link is invalid or has expired. Sign in to get a new one.", error: true },
   "error=google_failed": { text: "Google sign-in did not complete. Try again, or use your email.", error: true },
 };
 
-/** Read what the page was opened with (an emailed link, or a return from Google), then clean the address bar. */
-function readLanding(): { notice?: { text: string; error: boolean }; resetToken?: string } {
+/** Read what the page was opened with (an emailed link, or a return from Google); the effect below then cleans the address bar. */
+function readLanding(): { notice?: { text: string; error: boolean }; resetToken?: string; verifyToken?: string } {
   const params = new URLSearchParams(window.location.search);
-  // The emailed reset link carries its token in the fragment, which is never sent to a server or written to a proxy log.
-  const resetToken = new URLSearchParams(window.location.hash.slice(1)).get("reset_token") ?? undefined;
-  const key = params.has("verified") ? `verified=${params.get("verified")}` : params.has("error") ? `error=${params.get("error")}` : "";
-  return { notice: NOTICES[key], resetToken };
+  // Emailed links carry their one-time token in the fragment, which is never sent to a server or written to a proxy log.
+  const fragment = new URLSearchParams(window.location.hash.slice(1));
+  const key = params.has("error") ? `error=${params.get("error")}` : "";
+  return { notice: NOTICES[key], resetToken: fragment.get("reset_token") ?? undefined, verifyToken: fragment.get("verify_token") ?? undefined };
 }
 
 export default function Login({ auth, onSignedIn }: { auth: Me["auth"]; onSignedIn: (user: AuthUser) => void }) {
   const [landing] = useState(readLanding);
-  const [mode, setMode] = useState<Mode>(landing.resetToken ? "reset" : "login");
+  const [mode, setMode] = useState<Mode>(landing.resetToken ? "reset" : landing.verifyToken ? "verify" : "login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | undefined>();
@@ -163,6 +161,17 @@ export default function Login({ auth, onSignedIn }: { auth: Me["auth"]; onSigned
           <p role="status">If that address has an account, we have sent a link to reset the password.</p>
           <button type="button" className="link" onClick={() => go("login")}>Back to sign in</button>
         </div>
+      )}
+      {mode === "verify" && (
+        <form onSubmit={submit(async () => onSignedIn(await verifyEmail(landing.verifyToken!, password)))}>
+          <h2>Confirm your email</h2>
+          {banner}
+          <p className="hint">Enter the password you chose when you signed up to finish.</p>
+          {passwordField("Password", false, "current-password")}
+          <button type="submit" disabled={busy}>Confirm email</button>
+          {auth.emailEnabled && <button type="button" className="link" onClick={() => go("forgot")}>Forgot password?</button>}
+          <button type="button" className="link" onClick={() => go("login")}>Back to sign in</button>
+        </form>
       )}
       {mode === "reset" && (
         <form onSubmit={submit(async () => onSignedIn(await resetPassword(landing.resetToken!, password)))}>
