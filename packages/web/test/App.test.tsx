@@ -3,7 +3,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App";
-import { errorResponse, stubApi } from "./stub";
+import { errorResponse, sseResponse, stubApi } from "./stub";
 
 // CodeMirror needs real layout; the App only depends on value/onChange/errors.
 vi.mock("../src/components/Editor", () => ({
@@ -140,5 +140,73 @@ describe("generate", () => {
     render(<App debounceMs={0} />);
     const box = (await screen.findByLabelText(/Fill LLM columns/)) as HTMLInputElement;
     expect(box.disabled).toBe(true);
+  });
+});
+
+describe("LLM run", () => {
+  const CONFIG_LLM = { llm: { ok: true, provider: "ollama:m" }, dbEnv: [] };
+  const FILLED = { seed: 1, counts: { notes: 5 }, pending: [], tables: { notes: { columns: ["id", "body"], refs: {}, rows: [{ id: 1, body: "hello" }] } } };
+  const PROGRESS = { column: "notes.body", done: 2, total: 5, calls: 1, inputTokens: 10, outputTokens: 20 };
+
+  it("streams progress, then shows the filled preview", async () => {
+    const calls = stubApi({
+      "GET /api/config": () => CONFIG_LLM,
+      "GET /api/files": () => ({ files: [] }),
+      "POST /api/validate": () => ({ ...OK, llmColumns: ["notes.body"] }),
+      "POST /api/generate/stream": () => sseResponse([{ event: "progress", data: PROGRESS }, { event: "done", data: FILLED }], { end: true }),
+    });
+    render(<App debounceMs={0} />);
+    const box = (await screen.findByLabelText(/Fill LLM columns/)) as HTMLInputElement;
+    await waitFor(() => expect(box.disabled).toBe(false));
+    await userEvent.click(box);
+    await userEvent.click(screen.getByRole("button", { name: "Generate" }));
+    expect(await screen.findByText("hello")).toBeTruthy();
+    expect(calls.some((c) => c.key === "POST /api/generate/stream")).toBe(true);
+    expect(calls.some((c) => c.key === "POST /api/generate")).toBe(false);
+  });
+
+  it("shows live progress and Cancel aborts the request, keeping the previous preview", async () => {
+    let signal: AbortSignal | undefined;
+    stubApi({
+      "GET /api/config": () => CONFIG_LLM,
+      "GET /api/files": () => ({ files: [] }),
+      "POST /api/validate": () => OK,
+      "POST /api/generate": () => ({ seed: 1, counts: { a: 1 }, pending: [], tables: { a: { columns: ["id"], refs: {}, rows: [{ id: 1 }] } } }),
+      "POST /api/generate/stream": (_b, _u, init) => {
+        signal = init.signal as AbortSignal;
+        return sseResponse([{ event: "progress", data: PROGRESS }], { signal });
+      },
+    });
+    render(<App debounceMs={0} />);
+    // A first, plain run gives us a preview to keep.
+    await userEvent.click(await screen.findByRole("button", { name: "Generate" }));
+    await screen.findByRole("tab", { name: /a/ });
+
+    const box = screen.getByLabelText(/Fill LLM columns/) as HTMLInputElement;
+    await waitFor(() => expect(box.disabled).toBe(false));
+    await userEvent.click(box);
+    await userEvent.click(screen.getByRole("button", { name: "Generate" }));
+    expect((await screen.findByRole("status")).textContent).toContain("notes.body: 2 / 5");
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(signal!.aborted).toBe(true));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/cancelled/i);
+    expect(screen.getByRole("tab", { name: /a/ })).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByRole("button", { name: "Generate" })).toBeTruthy();
+  });
+
+  it("shows a model failure from the stream", async () => {
+    stubApi({
+      "GET /api/config": () => CONFIG_LLM,
+      "GET /api/files": () => ({ files: [] }),
+      "POST /api/validate": () => OK,
+      "POST /api/generate/stream": () => sseResponse([{ event: "error", data: { message: "model down" } }], { end: true }),
+    });
+    render(<App debounceMs={0} />);
+    const box = (await screen.findByLabelText(/Fill LLM columns/)) as HTMLInputElement;
+    await waitFor(() => expect(box.disabled).toBe(false));
+    await userEvent.click(box);
+    await userEvent.click(screen.getByRole("button", { name: "Generate" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("model down");
   });
 });

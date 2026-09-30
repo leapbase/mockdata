@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "./api";
 import Editor from "./components/Editor";
 import GenerateBar from "./components/GenerateBar";
@@ -34,6 +34,9 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
   const [rows, setRows] = useState("");
   const [preview, setPreview] = useState<api.Preview | null>(null);
   const [running, setRunning] = useState(false);
+  const [llmOn, setLlmOn] = useState(false);
+  const [progress, setProgress] = useState<api.Progress | null>(null);
+  const abort = useRef<AbortController | null>(null);
 
   const fail = useCallback((e: unknown) => setError(messageOf(e)), []);
 
@@ -93,11 +96,27 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
   async function generate() {
     setError(null);
     setRunning(true);
+    if (!llmOn) {
+      try {
+        setPreview(await api.generate(runBody()));
+      } catch (e) {
+        fail(e);
+      } finally {
+        setRunning(false);
+      }
+      return;
+    }
+    const controller = new AbortController();
+    abort.current = controller;
+    setProgress(null);
     try {
-      setPreview(await api.generate(runBody()));
+      setPreview(await api.streamGenerate(runBody(), setProgress, controller.signal));
     } catch (e) {
-      fail(e);
+      // A cancelled run is discarded; the previous preview stays.
+      setError(controller.signal.aborted ? "Cancelled: the tables shown are from the previous run." : messageOf(e));
     } finally {
+      abort.current = null;
+      setProgress(null);
       setRunning(false);
     }
   }
@@ -156,11 +175,11 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
             available: config?.llm.ok === true,
             reason: config && !config.llm.ok ? config.llm.reason : undefined,
             provider: config?.llm.ok ? config.llm.provider : undefined,
-            on: false,
-            onToggle: () => undefined,
+            on: llmOn,
+            onToggle: setLlmOn,
           }}
-          progress={null}
-          onCancel={() => undefined}
+          progress={progress}
+          onCancel={() => abort.current?.abort()}
         />
         {preview ? <Preview data={preview} /> : <p className="muted pad">Press Generate to preview the tables.</p>}
       </section>
