@@ -8,6 +8,7 @@ import { assertLocal, HttpError, sendJson, type Ctx, type Handler } from "./http
 import { serveStatic } from "./static.js";
 import { getConfig } from "./routes/config.js";
 import { listFiles, readFile, writeFile } from "./routes/files.js";
+import { exportRoute } from "./routes/export.js";
 import { inferRoute } from "./routes/infer.js";
 import { generateRoute, streamRoute, validateRoute } from "./routes/run.js";
 
@@ -31,6 +32,7 @@ const ROUTES: Record<string, Handler> = {
   "POST /api/generate": generateRoute,
   "POST /api/generate/stream": streamRoute,
   "POST /api/infer": inferRoute,
+  "POST /api/export": exportRoute,
 };
 
 /** Errors caused by the caller's schema or input are 400; failures talking to a model are 502. */
