@@ -1,0 +1,45 @@
+# A multi-site clinical trial. Synthetic data: identifiers and values are
+# illustrative. Shows chained date rules (consent -> visit, onset -> resolution),
+# an optional end date, a per-subject cap and enrolment skewed towards a few sites.
+seed: 23
+tables:
+  sites:
+    rows: 5
+    columns:
+      id: { type: integer, primaryKey: true }
+      code: { type: string, pattern: "SITE-[0-9]{3}", unique: true }
+      name: { type: string, faker: company.name }
+      country: { type: string, enum: [US, CA, GB, DE, JP] }
+  investigators:
+    rows: 8
+    columns:
+      id: { type: integer, primaryKey: true }
+      site_id: { type: integer, ref: sites.id }
+      name: { type: string, faker: person.fullName }
+      npi: { type: string, pattern: "[0-9]{10}", unique: true }
+  subjects:
+    rows: 40
+    columns:
+      id: { type: integer, primaryKey: true }
+      site_id: { type: integer, ref: sites.id, distribution: zipf }   # a few sites enrol most subjects
+      subject_code: { type: string, pattern: "[A-Z]{3}-[0-9]{4}", unique: true }
+      arm: { type: string, enum: [placebo, low dose, high dose] }
+      age: { type: integer, min: 18, max: 85 }
+      consented_on: { type: date, min: "2023-01-01", max: "2024-06-30" }
+  visits:
+    rows: 120
+    columns:
+      id: { type: integer, primaryKey: true }
+      subject_id: { type: integer, ref: subjects.id }
+      visit_type: { type: string, enum: [screening, baseline, week 4, week 12] }
+      visit_date: { type: date, after: subject_id.consented_on }   # never before consent
+  adverse_events:
+    rows: 30
+    columns:
+      id: { type: integer, primaryKey: true }
+      subject_id: { type: integer, ref: subjects.id, maxPerParent: 4 }   # at most 4 per subject
+      term: { type: string, enum: [headache, nausea, fatigue, rash, dizziness, insomnia, elevated ALT] }
+      severity: { type: integer, min: 1, max: 5 }   # CTCAE-style grade
+      serious: { type: boolean }
+      onset: { type: date, after: subject_id.consented_on }
+      resolved_on: { type: date, after: onset, nullable: true, nullRate: 0.4 }   # ongoing when empty

@@ -1,0 +1,38 @@
+# Insurance claims. Synthetic data: codes and amounts are illustrative. Shows a
+# date chain (service -> submission -> payment), an optional payment date, a cap
+# on lines per claim and members concentrated on a few payers.
+# The DSL has no numeric cross-column rule, so only the billed amount is modelled
+# (an "allowed <= billed" relationship cannot be expressed).
+seed: 31
+tables:
+  payers:
+    rows: 4
+    columns:
+      id: { type: integer, primaryKey: true }
+      name: { type: string, enum: [Northwind Health, Bluebird Care, Summit Mutual, Harbor Assurance] }
+      payer_code: { type: string, pattern: "PAY[0-9]{5}", unique: true }
+  members:
+    rows: 30
+    columns:
+      id: { type: integer, primaryKey: true }
+      payer_id: { type: integer, ref: payers.id, distribution: zipf }
+      member_no: { type: string, pattern: "M[0-9]{9}", unique: true }
+      name: { type: string, faker: person.fullName }
+      dob: { type: date, min: "1940-01-01", max: "2010-12-31" }
+  claims:
+    rows: 80
+    columns:
+      id: { type: integer, primaryKey: true }
+      member_id: { type: integer, ref: members.id, distribution: zipf }   # a few heavy users
+      service_date: { type: date, min: "2024-01-01", max: "2024-12-31" }
+      submitted_at: { type: date, after: service_date }
+      paid_at: { type: date, after: submitted_at, nullable: true, nullRate: 0.35 }   # unpaid when empty
+      status: { type: string, enum: [submitted, paid, denied] }
+  claim_lines:
+    rows: 200
+    columns:
+      id: { type: integer, primaryKey: true }
+      claim_id: { type: integer, ref: claims.id, maxPerParent: 6 }   # at most 6 lines per claim
+      cpt: { type: string, enum: ["99213", "99214", "93000", "80053", "85025", "71046", "36415"] }
+      units: { type: integer, min: 1, max: 4 }
+      billed_amount: { type: float, min: 20, max: 1500 }

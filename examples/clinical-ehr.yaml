@@ -1,0 +1,63 @@
+# A small electronic health record. Synthetic data: names, codes and values are
+# illustrative, never real patients. Shows date rules that reach from an encounter
+# back to the patient, a one-to-one link, per-parent caps and a skewed foreign key.
+seed: 11
+tables:
+  patients:
+    rows: 25
+    columns:
+      id: { type: integer, primaryKey: true }
+      mrn: { type: string, pattern: "MRN-[0-9]{7}", unique: true }   # medical record number
+      name: { type: string, faker: person.fullName }
+      dob: { type: date, min: "1940-01-01", max: "2010-12-31" }
+      sex: { type: string, enum: [female, male, other, unknown] }
+      city: { type: string, faker: location.city }
+      state: { type: string, faker: location.state }
+      phone: { type: string, faker: phone.number }
+  providers:
+    rows: 6
+    columns:
+      id: { type: integer, primaryKey: true }
+      npi: { type: string, pattern: "[0-9]{10}", unique: true }   # national provider identifier
+      name: { type: string, faker: person.fullName }
+      specialty: { type: string, enum: [cardiology, oncology, pediatrics, emergency medicine, internal medicine, neurology] }
+  insurance_policies:
+    rows: 20
+    columns:
+      id: { type: integer, primaryKey: true }
+      patient_id: { type: integer, ref: patients.id, unique: true }   # unique foreign key = one-to-one
+      plan: { type: string, enum: [HMO, PPO, Medicare, Medicaid, self-pay] }
+      member_no: { type: string, pattern: "M[0-9]{9}", unique: true }
+  encounters:
+    rows: 60
+    columns:
+      id: { type: integer, primaryKey: true }
+      patient_id: { type: integer, ref: patients.id, distribution: zipf }   # a few frequent patients
+      provider_id: { type: integer, ref: providers.id }
+      type: { type: string, enum: [inpatient, outpatient, emergency] }
+      admitted_at: { type: date, after: patient_id.dob }   # never before the patient was born
+      discharged_at: { type: date, after: admitted_at, nullable: true, nullRate: 0.3 }   # still admitted when empty
+  diagnoses:
+    rows: 120
+    columns:
+      id: { type: integer, primaryKey: true }
+      encounter_id: { type: integer, ref: encounters.id, maxPerParent: 5 }   # at most 5 per encounter
+      icd10: { type: string, enum: [I10, E11.9, J45.909, N39.0, M54.5, F32.9, J18.9, K21.9, I25.10, R07.9] }
+      is_primary: { type: boolean }
+  medications:
+    rows: 90
+    columns:
+      id: { type: integer, primaryKey: true }
+      encounter_id: { type: integer, ref: encounters.id }
+      drug: { type: string, enum: [lisinopril, metformin, atorvastatin, amoxicillin, albuterol, omeprazole, sertraline, ibuprofen] }
+      dose_mg: { type: integer, min: 5, max: 1000 }
+      started_at: { type: date, after: encounter_id.admitted_at }
+  lab_results:
+    rows: 150
+    columns:
+      id: { type: integer, primaryKey: true }
+      encounter_id: { type: integer, ref: encounters.id }
+      test: { type: string, enum: [glucose, hemoglobin, creatinine, sodium, potassium, cholesterol] }
+      value: { type: float, min: 1, max: 250 }
+      collected_at: { type: date, after: encounter_id.admitted_at }
+      abnormal: { type: boolean }

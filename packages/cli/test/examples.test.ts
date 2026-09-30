@@ -36,6 +36,66 @@ describe("shop.yaml", () => {
   });
 });
 
+const perParent = (rows: Record<string, any>[], key: string) => {
+  const counts = new Map<number, number>();
+  for (const r of rows) counts.set(r[key], (counts.get(r[key]) ?? 0) + 1);
+  return Math.max(...counts.values());
+};
+const byId = (rows: Record<string, any>[]) => new Map(rows.map((r) => [r.id, r]));
+
+describe("clinical-ehr.yaml", () => {
+  it("produces data that satisfies every feature it demonstrates", async () => {
+    const d = await json("generate", join(examples, "clinical-ehr.yaml"));
+    expect(Object.fromEntries(Object.entries(d).map(([t, r]) => [t, (r as unknown[]).length]))).toEqual({
+      patients: 25, providers: 6, insurance_policies: 20, encounters: 60, diagnoses: 120, medications: 90, lab_results: 150,
+    });
+    const mrns = d.patients.map((p: any) => p.mrn);
+    for (const m of mrns) expect(m).toMatch(/^MRN-[0-9]{7}$/);
+    expect(new Set(mrns).size).toBe(mrns.length);
+    // dates reach through a foreign key to the parent row
+    const patients = byId(d.patients);
+    for (const e of d.encounters) expect(e.admitted_at >= patients.get(e.patient_id).dob).toBe(true);
+    const encounters = byId(d.encounters);
+    for (const e of d.encounters) if (e.discharged_at) expect(e.discharged_at >= e.admitted_at).toBe(true);
+    for (const m of d.medications) expect(m.started_at >= encounters.get(m.encounter_id).admitted_at).toBe(true);
+    for (const l of d.lab_results) expect(l.collected_at >= encounters.get(l.encounter_id).admitted_at).toBe(true);
+    // one-to-one and per-parent cap
+    const covered = d.insurance_policies.map((p: any) => p.patient_id);
+    expect(new Set(covered).size).toBe(covered.length);
+    expect(perParent(d.diagnoses, "encounter_id")).toBeLessThanOrEqual(5);
+  });
+});
+
+describe("clinical-trial.yaml", () => {
+  it("produces data that satisfies every feature it demonstrates", async () => {
+    const d = await json("generate", join(examples, "clinical-trial.yaml"));
+    const codes = d.subjects.map((s: any) => s.subject_code);
+    for (const c of codes) expect(c).toMatch(/^[A-Z]{3}-[0-9]{4}$/);
+    expect(new Set(codes).size).toBe(codes.length);
+    const subjects = byId(d.subjects);
+    for (const v of d.visits) expect(v.visit_date >= subjects.get(v.subject_id).consented_on).toBe(true);
+    for (const a of d.adverse_events) {
+      expect(a.onset >= subjects.get(a.subject_id).consented_on).toBe(true);
+      if (a.resolved_on) expect(a.resolved_on >= a.onset).toBe(true);
+    }
+    expect(d.adverse_events.some((a: any) => a.resolved_on === null)).toBe(true);
+    expect(perParent(d.adverse_events, "subject_id")).toBeLessThanOrEqual(4);
+  });
+});
+
+describe("clinical-claims.yaml", () => {
+  it("produces data that satisfies every feature it demonstrates", async () => {
+    const d = await json("generate", join(examples, "clinical-claims.yaml"));
+    for (const c of d.claims) {
+      expect(c.submitted_at >= c.service_date).toBe(true);
+      if (c.paid_at) expect(c.paid_at >= c.submitted_at).toBe(true);
+      expect(["submitted", "paid", "denied"]).toContain(c.status);
+    }
+    expect(d.claims.some((c: any) => c.paid_at === null)).toBe(true);
+    expect(perParent(d.claim_lines, "claim_id")).toBeLessThanOrEqual(6);
+  });
+});
+
 describe("hr.yaml", () => {
   it("produces data that satisfies every feature it demonstrates", async () => {
     const d = await json("generate", join(examples, "hr.yaml"));
