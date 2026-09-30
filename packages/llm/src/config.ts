@@ -5,6 +5,8 @@ import { LlmConfigError } from "./errors.js";
 export type ResolvedLlmConfig = Omit<LlmConfig, "provider" | "model"> & {
   provider: NonNullable<LlmConfig["provider"]>;
   model: string;
+  /** baseUrl came from the environment (or the localhost default), not from the schema, so a private address is the user's own choice. */
+  trustedBaseUrl?: boolean;
 };
 
 type Provider = ResolvedLlmConfig["provider"];
@@ -56,6 +58,7 @@ export function resolveLlmConfig(
   }
 
   let baseUrl = fromSchema?.baseUrl;
+  const trustedBaseUrl = provider === "ollama" && !baseUrl ? true : undefined;
   if (provider === "ollama") {
     baseUrl = ollamaApiUrl(baseUrl ?? env.OLLAMA_BASE_URL?.trim() ?? OLLAMA_DEFAULT_URL);
   }
@@ -70,5 +73,5 @@ export function resolveLlmConfig(
     }
   }
 
-  return { ...fromSchema, provider, model, baseUrl };
+  return { ...fromSchema, provider, model, baseUrl, ...(trustedBaseUrl ? { trustedBaseUrl } : {}) };
 }

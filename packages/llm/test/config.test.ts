@@ -45,4 +45,10 @@ describe("ollama provider", () => {
     expect(url).toBe("http://h:11434/v1/chat/completions");
     expect(auth).toBeUndefined();
   });
+
+  it("marks a base URL from the environment as trusted and one from the schema as not", () => {
+    const env = { AI_PROVIDER: "ollama", OLLAMA_MODEL: "m", OLLAMA_BASE_URL: "http://100.100.1.24:11434" };
+    expect(resolveLlmConfig(undefined, env).trustedBaseUrl).toBe(true);
+    expect(resolveLlmConfig({ baseUrl: "http://10.0.0.5:11434" }, env).trustedBaseUrl).toBeFalsy();
+  });
 });

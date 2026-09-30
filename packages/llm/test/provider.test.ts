@@ -121,6 +121,26 @@ describe("timeouts", () => {
       expect(() => createProvider({ provider: "openai-compatible", model: "m", baseUrl: "http://169.254.169.254/latest" }, { env })).toThrow(LlmConfigError);
     });
 
+    it("refuses schema-chosen private, internal and non-public hosts (SSRF)", () => {
+      const bad = [
+        "http://10.0.0.5/v1", "https://192.168.1.10/v1", "https://172.16.0.1/v1", "https://172.31.255.255/v1", "https://100.100.1.24/v1",
+        "https://0.0.0.0/v1", "https://[fd00::1]/v1", "https://[fe80::1]/v1", "https://[::ffff:10.0.0.1]/v1", "https://[::ffff:192.168.0.1]/v1",
+        "https://2130706433.evil/v1".replace("2130706433.evil", "0x0a000001"), "https://intranet/v1", "https://db.internal/v1", "https://printer.local/v1",
+        "https://localhost.localdomain/v1",
+      ];
+      for (const baseUrl of bad) {
+        expect(() => createProvider({ provider: "openai-compatible", model: "m", baseUrl }, { env }), baseUrl).toThrow(LlmConfigError);
+      }
+      for (const baseUrl of ["https://api.example.com/v1", "https://8.8.8.8/v1", "https://172.32.0.1/v1", "http://localhost:11434/v1", "http://127.0.0.1:8000/v1", "http://[::1]:8000/v1"]) {
+        expect(() => createProvider({ provider: "openai-compatible", model: "m", baseUrl }, { env }), baseUrl).not.toThrow();
+      }
+    });
+
+    it("trusts a private base URL that came from the environment (Ollama on a LAN host)", () => {
+      expect(() => createProvider({ provider: "ollama", model: "m", baseUrl: "http://100.100.1.24:11434/v1", trustedBaseUrl: true }, { env: {} })).not.toThrow();
+      expect(() => createProvider({ provider: "ollama", model: "m", baseUrl: "http://100.100.1.24:11434/v1" }, { env: {} })).toThrow(LlmConfigError);
+    });
+
     it("does not echo a remote response body or URL credentials in errors", async () => {
       const { f } = fakeFetch(500, "INTERNAL-SECRET-BODY");
       const p = createProvider({ provider: "openai-compatible", model: "m", baseUrl: "https://user:pw@api.example.com/v1?token=abc" }, { fetch: f, env: {} });

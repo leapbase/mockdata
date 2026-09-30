@@ -72,6 +72,26 @@ function isLinkLocal(host: string): boolean {
   return /^169\.254\./.test(host) || /^fe[89ab][0-9a-f]:/.test(host) || host === "metadata.google.internal";
 }
 
+/** Addresses and names that only make sense inside a network: a schema must not aim the client at them. */
+function isNonPublic(host: string): boolean {
+  if (isLoopback(host)) return false;
+  // IPv4-mapped IPv6 (the URL parser writes ::ffff:10.0.0.1 as ::ffff:a00:1): judge the embedded IPv4.
+  const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
+  if (mapped) {
+    const hi = parseInt(mapped[1]!, 16);
+    const lo = parseInt(mapped[2]!, 16);
+    return isNonPublic(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`) || isLoopback(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
+  }
+  const v4 = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(host);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return a === 10 || a === 0 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) || a >= 224;
+  }
+  if (host.includes(":")) return host === "::" || /^f[cd][0-9a-f]{2}:/.test(host) || /^fe[89ab][0-9a-f]:/.test(host);
+  // A name with no dot is a LAN short name; these suffixes are never public DNS.
+  return !host.includes(".") || /\.(internal|local|localdomain|lan|home|corp|intranet)$/.test(host);
+}
+
 /** Origin and path only: no credentials or query string from the configured URL. */
 function redactUrl(url: string): string {
   try {
@@ -90,6 +110,9 @@ function assertSafeTarget(config: ResolvedLlmConfig, apiKey: string | undefined)
   if (config.baseUrl) {
     const host = hostname(config.baseUrl);
     if (isLinkLocal(host)) throw new LlmConfigError(`"llm.baseUrl" points at a link-local or metadata address`);
+    if (!config.trustedBaseUrl && isNonPublic(host)) {
+      throw new LlmConfigError(`"llm.baseUrl" points at a private or internal address; set OLLAMA_BASE_URL in the environment/.env to use a server on your network`);
+    }
     if (config.provider === "anthropic" || config.provider === "openai") {
       throw new LlmConfigError(`"llm.baseUrl" is not allowed for provider "${config.provider}" (its key is only sent to the official API); use "openai-compatible" for a custom endpoint`);
     }
