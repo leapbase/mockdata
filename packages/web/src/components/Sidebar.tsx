@@ -60,7 +60,7 @@ export default function Sidebar({ files, active, dirty, forceNaming, onOpen, onC
       <ul className="files">
         {files.map((f) => (
           <li key={f}>
-            <button className={f === active ? "file active" : "file"} onClick={() => onOpen(f)}>
+            <button className={f === active ? "file active" : "file"} title={f} aria-current={f === active ? "true" : undefined} onClick={() => onOpen(f)}>
               {f}
             </button>
             {f === active && dirty && <span className="dot">unsaved</span>}

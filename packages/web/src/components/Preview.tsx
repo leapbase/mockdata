@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Preview as PreviewData } from "../api";
+import { navigateTabs } from "../tabs";
 
 const show = (v: unknown): string => (v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
 
@@ -43,13 +44,15 @@ export default function Preview({ data }: { data: PreviewData }) {
           {data.pending.length} LLM column{data.pending.length === 1 ? "" : "s"} not filled yet ({data.pending.join(", ")}): turn on “Fill LLM columns” to generate them.
         </div>
       )}
-      <div className="tabs" role="tablist">
+      <div className="preview-toolbar">
+      <div className="tabs" role="tablist" aria-label="Generated tables" onKeyDown={navigateTabs}>
         {names.map((n) => (
-          <button key={n} role="tab" aria-selected={n === tab} className={n === tab ? "tab active" : "tab"} onClick={() => setTab(n)}>
+          <button key={n} role="tab" tabIndex={n === tab ? 0 : -1} aria-selected={n === tab} className={n === tab ? "tab active" : "tab"} onClick={() => setTab(n)}>
             {n} <small>{data.counts[n] ?? 0}</small>
           </button>
         ))}
-        <button className="tab-raw" onClick={() => setRaw(!raw)}>
+      </div>
+        <button className="tab-raw" aria-pressed={raw} onClick={() => setRaw(!raw)}>
           {raw ? "Grid" : "Raw JSON"}
         </button>
       </div>
@@ -61,7 +64,7 @@ export default function Preview({ data }: { data: PreviewData }) {
             <pre className="raw">{JSON.stringify(table.rows, null, 2)}</pre>
           ) : (
             <div className="grid">
-              <table>
+              <table aria-label={`${tab} preview`}>
                 <thead>
                   <tr>
                     {table.columns.map((c) => (

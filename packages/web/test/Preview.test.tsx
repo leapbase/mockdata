@@ -30,6 +30,18 @@ const data = (over: Partial<PreviewData> = {}): PreviewData => ({
 });
 
 describe("Preview", () => {
+  it("moves between result tables with arrow keys and keeps one keyboard tab stop", async () => {
+    render(<Preview data={data()} />);
+    const customers = screen.getByRole("tab", { name: /customers/ });
+    const orders = screen.getByRole("tab", { name: /orders/ });
+    expect(customers.tabIndex).toBe(0);
+    expect(orders.tabIndex).toBe(-1);
+    customers.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(document.activeElement).toBe(orders);
+    expect(orders.getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("table", { name: "orders preview" })).toBeTruthy();
+  });
   it("shows a tab per table with the total row count and the shown rows", () => {
     render(<Preview data={data()} />);
     expect(screen.getByRole("tab", { name: /customers/ }).textContent).toContain("100");
