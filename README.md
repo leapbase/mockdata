@@ -347,6 +347,8 @@ npm run loadtest      # dev-only: ramps sign-ins, page loads and generation agai
 
 A live MySQL test runs when `MOCKDATA_TEST_MYSQL_URL` is set. See `CLAUDE.md` for the architecture notes.
 
+Run `npm run build` before `npm test` to include the production bundle checks (they skip when no Vite manifest exists). These guard the 250 kB startup JavaScript budget, the 500 kB per-chunk limit, and lazy-loading boundaries for the workspace, editor, and diagram. The sign-in screen does not load workspace code; the diagram loads on first selection, while the editor stays mounted to preserve undo history.
+
 ## Git setup
 
 ```

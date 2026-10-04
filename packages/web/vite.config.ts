@@ -6,5 +6,5 @@ export default defineConfig({
   plugins: [react()],
   // Preserve the browser's Host so the backend can verify it matches Origin.
   server: { proxy: { "/api": { target: "http://127.0.0.1:4747", changeOrigin: false } } },
-  build: { outDir: "dist" },
+  build: { outDir: "dist", manifest: true },
 });

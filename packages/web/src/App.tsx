@@ -1,15 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import * as api from "./api";
-import Editor from "./components/Editor";
 import ExportDialog from "./components/ExportDialog";
 import GenerateBar from "./components/GenerateBar";
 import InferDialog from "./components/InferDialog";
 import Preview from "./components/Preview";
 import Sidebar from "./components/Sidebar";
-import SchemaDiagram from "./components/SchemaDiagram";
 import { useDrawer, useNarrow } from "./drawers";
 import { navigateTabs } from "./tabs";
 import { messageOf, useDebounced } from "./hooks";
+
+const Editor = lazy(() => import("./components/Editor"));
+const SchemaDiagram = lazy(() => import("./components/SchemaDiagram"));
 
 const STARTER = `seed: 1
 tables:
@@ -211,9 +212,9 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
           <button role="tab" tabIndex={schemaView === "diagram" ? 0 : -1} aria-selected={schemaView === "diagram"} aria-controls="schema-diagram" id="diagram-tab" onClick={() => setSchemaView("diagram")}>Diagram</button>
           <span className="view-hint">{schemaView === "editor" ? "Edit your schema in YAML or JSON" : "Explore tables and relationships"}</span>
         </div>
-        <div className="schema-surface" id="schema-editor" role="tabpanel" aria-labelledby="editor-tab" hidden={schemaView !== "editor"}><Editor value={text} onChange={setText} errors={errors} /></div>
+        <div className="schema-surface" id="schema-editor" role="tabpanel" aria-labelledby="editor-tab" hidden={schemaView !== "editor"}><Suspense fallback={<div className="workspace-empty" role="status">Loading editor…</div>}><Editor value={text} onChange={setText} errors={errors} /></Suspense></div>
         {schemaView === "diagram" && <div className="schema-surface" id="schema-diagram" role="tabpanel" aria-labelledby="diagram-tab">
-          {validationError ? <div className="workspace-empty"><h2>Validation unavailable</h2><p>{validationError}</p><button onClick={() => { setError(null); setValidationAttempt((n) => n + 1); }}>Retry validation</button></div> : validating || validatedText !== text ? <div className="workspace-empty"><p>Updating diagram…</p></div> : check?.ok && check.diagram ? <SchemaDiagram data={check.diagram} /> : <div className="workspace-empty"><h2>Diagram unavailable</h2><p>{check?.ok ? "Diagram metadata is unavailable. Rebuild and restart the server." : "Fix the schema in the editor to view its diagram."}</p><button onClick={() => setSchemaView("editor")}>Return to editor</button></div>}
+          {validationError ? <div className="workspace-empty"><h2>Validation unavailable</h2><p>{validationError}</p><button onClick={() => { setError(null); setValidationAttempt((n) => n + 1); }}>Retry validation</button></div> : validating || validatedText !== text ? <div className="workspace-empty"><p>Updating diagram…</p></div> : check?.ok && check.diagram ? <Suspense fallback={<div className="workspace-empty" role="status">Loading diagram…</div>}><SchemaDiagram data={check.diagram} /></Suspense> : <div className="workspace-empty"><h2>Diagram unavailable</h2><p>{check?.ok ? "Diagram metadata is unavailable. Rebuild and restart the server." : "Fix the schema in the editor to view its diagram."}</p><button onClick={() => setSchemaView("editor")}>Return to editor</button></div>}
         </div>}
         <div className="status">
           {check?.ok ? (
