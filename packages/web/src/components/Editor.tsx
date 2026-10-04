@@ -10,8 +10,6 @@ export interface EditorProps {
   errors: { message: string; line?: number }[];
 }
 
-const dark = typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches;
-
 export default function Editor({ value, onChange, errors }: EditorProps) {
   const view = useRef<EditorView | null>(null);
 
@@ -30,7 +28,7 @@ export default function Editor({ value, onChange, errors }: EditorProps) {
     <CodeMirror
       value={value}
       height="100%"
-      theme={dark ? "dark" : "light"}
+      theme="light"
       extensions={[yaml()]}
       onChange={onChange}
       onCreateEditor={(v: EditorView) => {

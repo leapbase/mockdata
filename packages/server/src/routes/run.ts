@@ -33,6 +33,13 @@ export const validateRoute: Handler = async (ctx, req, res) => {
     sendJson(res, 200, {
       ok: true,
       tables: Object.entries(schema.tables).map(([name, t]) => ({ name, rows: t.rows, columns: Object.keys(t.columns) })),
+      diagram: { tables: Object.entries(schema.tables).map(([name, t]) => ({
+        name, rows: t.rows,
+        columns: Object.entries(t.columns).map(([name, c]) => ({
+          name, type: c.type, primaryKey: !!c.primaryKey, unique: !!c.unique,
+          nullable: !!c.nullable, ...(c.ref ? { ref: c.ref } : {}),
+        })),
+      })) },
       order: plan.levels,
       deferred: plan.deferred,
       llmColumns: llmColumns(schema).map((c) => `${c.table}.${c.column}`),

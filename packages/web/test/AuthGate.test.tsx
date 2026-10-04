@@ -79,6 +79,7 @@ describe("AuthGate", () => {
       },
     });
     render(app());
+    await userEvent.click(await screen.findByText("ann@example.com"));
     await userEvent.click(await screen.findByRole("button", { name: "Sign out" }));
     expect(await screen.findByLabelText("Email")).toBeTruthy();
     expect(screen.queryByText("the app")).toBeNull();
@@ -265,6 +266,7 @@ describe("account menu", () => {
       },
     });
     render(app());
+    await userEvent.click(await screen.findByText("ann@example.com"));
     await userEvent.click(await screen.findByRole("button", { name: "Sign out everywhere" }));
     expect(await screen.findByLabelText("Email")).toBeTruthy();
     expect(calls.map((c) => c.key)).toContain("POST /api/auth/logout-all");
@@ -273,6 +275,7 @@ describe("account menu", () => {
   it("changes the password with the current one and reports the result", async () => {
     const calls = stubApi({ "GET /api/auth/me": () => me(USER), "POST /api/auth/change-password": () => ({ ok: true }) });
     render(app());
+    await userEvent.click(await screen.findByText("ann@example.com"));
     await userEvent.click(await screen.findByRole("button", { name: "Change password" }));
     const dialog = await screen.findByRole("dialog", { name: "Change password" });
     await userEvent.type(within(dialog).getByLabelText("Current password"), PASSWORD);
@@ -285,6 +288,7 @@ describe("account menu", () => {
   it("shows the server's message when the current password is wrong", async () => {
     stubApi({ "GET /api/auth/me": () => me(USER), "POST /api/auth/change-password": () => fail(400, "Current password is incorrect") });
     render(app());
+    await userEvent.click(await screen.findByText("ann@example.com"));
     await userEvent.click(await screen.findByRole("button", { name: "Change password" }));
     const dialog = await screen.findByRole("dialog", { name: "Change password" });
     await userEvent.type(within(dialog).getByLabelText("Current password"), PASSWORD);

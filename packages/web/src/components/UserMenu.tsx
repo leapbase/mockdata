@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { changePassword, logout, logoutAll, type AuthUser } from "../api";
 import { messageOf } from "../hooks";
 import Modal from "./Modal";
@@ -11,6 +11,7 @@ export default function UserMenu({ user, onSignedOut }: { user: AuthUser; onSign
   const [error, setError] = useState<string | undefined>();
   const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
+  const menu = useRef<HTMLDetailsElement>(null);
 
   const close = () => {
     setOpen(false);
@@ -38,9 +39,11 @@ export default function UserMenu({ user, onSignedOut }: { user: AuthUser; onSign
   }
 
   return (
-    <div className="account-chip">
-      <span title={user.email ?? undefined}>{user.email ?? user.displayName}</span>
-      <button onClick={() => setOpen(true)}>Change password</button>
+    <div className="user-menu">
+      <details ref={menu} onKeyDown={(e) => { if (e.key === "Escape" && menu.current) { menu.current.open = false; menu.current.querySelector("summary")?.focus(); } }}>
+      <summary><span className="avatar">{(user.displayName || user.email || "U").slice(0, 1).toUpperCase()}</span><span title={user.email ?? undefined}>{user.email ?? user.displayName}</span><span aria-hidden="true">⌄</span></summary>
+      <div className="account-actions">
+      <button onClick={() => { if (menu.current) menu.current.open = false; setOpen(true); }}>Change password</button>
       <button
         onClick={() =>
           void logout()
@@ -59,6 +62,8 @@ export default function UserMenu({ user, onSignedOut }: { user: AuthUser; onSign
       >
         Sign out everywhere
       </button>
+      </div>
+      </details>
       {open && (
         <Modal title="Change password" onClose={close}>
           <form onSubmit={submit} className="stack">

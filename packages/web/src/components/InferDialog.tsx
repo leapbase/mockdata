@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as api from "../api";
 import { messageOf } from "../hooks";
 import Modal from "./Modal";
+import { navigateTabs } from "../tabs";
 
 type Source = "File" | "Paste" | "Database";
 
-export default function InferDialog({ dbEnv, onResult, onClose }: { dbEnv: string[]; onResult: (r: api.InferResult) => void; onClose: () => void }) {
+export default function InferDialog({ dbEnv, onResult, onClose, embedded = false }: { dbEnv: string[]; onResult: (r: api.InferResult) => void; onClose?: () => void; embedded?: boolean }) {
   const [source, setSource] = useState<Source>("File");
   const [path, setPath] = useState("");
   const [content, setContent] = useState("");
@@ -15,6 +16,8 @@ export default function InferDialog({ dbEnv, onResult, onClose }: { dbEnv: strin
   const envName = chosenEnv ?? dbEnv[0] ?? "";
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const resultHandler = useRef(onResult);
+  useEffect(() => { resultHandler.current = onResult; }, [onResult]);
 
   const body: api.InferBody | null =
     source === "File"
@@ -34,7 +37,8 @@ export default function InferDialog({ dbEnv, onResult, onClose }: { dbEnv: strin
     setBusy(true);
     setError(null);
     try {
-      onResult(await api.infer(body));
+      const result = await api.infer(body);
+      resultHandler.current(result);
     } catch (e) {
       setError(messageOf(e));
     } finally {
@@ -42,11 +46,10 @@ export default function InferDialog({ dbEnv, onResult, onClose }: { dbEnv: strin
     }
   }
 
-  return (
-    <Modal title="Infer a schema from a source" onClose={onClose}>
-      <div className="tabs" role="tablist">
+  const formContent = <>
+      <div className="tabs" role="tablist" aria-label="Import source" onKeyDown={navigateTabs}>
         {(["File", "Paste", "Database"] as const).map((s) => (
-          <button key={s} role="tab" aria-selected={s === source} className={s === source ? "tab active" : "tab"} onClick={() => setSource(s)}>
+          <button key={s} role="tab" tabIndex={s === source ? 0 : -1} aria-selected={s === source} className={s === source ? "tab active" : "tab"} onClick={() => setSource(s)}>
             {s}
           </button>
         ))}
@@ -95,6 +98,6 @@ export default function InferDialog({ dbEnv, onResult, onClose }: { dbEnv: strin
           Infer
         </button>
       </footer>
-    </Modal>
-  );
+    </>;
+  return embedded ? <div className="import-form"><h2>Import a schema</h2><p className="muted">Start from a file, sample data, or database structure.</p>{formContent}</div> : <Modal title="Infer a schema from a source" onClose={onClose!}>{formContent}</Modal>;
 }

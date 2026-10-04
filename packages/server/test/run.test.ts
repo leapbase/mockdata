@@ -2,6 +2,17 @@ import { describe, expect, it } from "vitest";
 import { boot, SHOP_YAML } from "./helpers.js";
 
 describe("POST /api/validate", () => {
+  it("returns diagram types and references without model configuration", async () => {
+    const { post } = await boot();
+    const text = SHOP_YAML.replace("name: { type: string, faker: person.fullName }", "name: { type: string, llm: { prompt: SENTINEL_PROMPT } }") + '\nllm: { provider: openai, model: SENTINEL_MODEL, apiKeyEnv: SENTINEL_API_KEY }\n';
+    const r = await post("/api/validate", { text });
+    expect(r.json.diagram).toMatchObject({ tables: [
+      { name: "customers", rows: 6, columns: [{ name: "id", type: "integer", primaryKey: true }, { name: "name", type: "string" }] },
+      { name: "orders", rows: 15, columns: [{ name: "id" }, { name: "customer_id", ref: "customers.id" }, { name: "total", type: "float" }] },
+    ] });
+    expect(JSON.stringify(r.json.diagram)).not.toContain("apiKeyEnv");
+    expect(JSON.stringify(r.json.diagram)).not.toContain("SENTINEL");
+  });
   it("summarises a valid schema with its generation order", async () => {
     const { post } = await boot();
     const r = await post("/api/validate", { text: SHOP_YAML });

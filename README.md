@@ -225,11 +225,14 @@ npm run ui -- examples          # or: node packages/server/dist/bin.js <folder> 
 
 Open http://127.0.0.1:4747. The folder you pass is the root: schema files are listed in the sidebar, `.env` is read from there, and nothing outside it is ever read or written.
 
-- **Edit**: YAML with live validation (errors appear inline and in the status strip, which also shows the generation order). Save writes the file back.
-- **Preview**: Generate shows the first 50 rows of every table. Set a seed or a row count for all tables. Foreign key values are links to the parent row.
+- **Schemas**: select, create, and save schemas in the left sidebar. The top bar holds account actions, or shows Local workspace when accounts are disabled.
+- **Editor / Diagram**: edit YAML or JSON with live validation, or switch to a read-only table and relationship diagram with pan, zoom, and fit controls. Errors appear inline and in the status strip, which also shows the generation order. Switching views preserves edits.
+- **Generate data**: open the collapsible right panel for seed, row count, and generation controls. Generate shows the first 50 rows of every table; foreign key values link to the parent row. Collapsing preserves settings and results and keeps a run going. Cancel stops a run and retains the previous preview.
 - **Fill LLM columns**: turn it on to run `llm` columns with progress and a Cancel button. It is only enabled when a provider is configured in `.env` (see LLM setup); the toggle shows which one. Cancelling discards the partial run.
-- **Infer from source**: pick a file under the root, paste sample rows or a JSON Schema/OpenAPI document, or choose a database variable by name. The result opens as an unsaved draft with the warnings listed.
-- **Export**: write json/ndjson/csv files to a folder under the root (existing files are kept unless you tick Overwrite) or download a zip.
+- **Import**: use the left sidebar's Import tab to pick a file under the root, paste sample rows or a JSON Schema/OpenAPI document, or choose a database variable by name. The result opens as an unsaved draft with the warnings listed.
+- **Export**: from the generation panel, write json/ndjson/csv files to a folder under the root (existing files are kept unless you tick Overwrite) or download a zip.
+
+On smaller screens the generation panel opens over the schema; on phones the schema sidebar also becomes a drawer. Escape closes a drawer and returns focus to its opening button.
 
 The server listens on 127.0.0.1 only (unless you use `--allow`, below) and rejects requests from other hosts or origins. Connection strings are never typed into the browser: keep them in `.env` and pick the variable name. For development run `npm run dev -w packages/web` (Vite on its own port, proxying `/api` to a running `mockdata-ui`).
 

@@ -27,6 +27,11 @@ afterEach(() => {
 export const OK = { ok: true, tables: [{ name: "a", rows: 2, columns: ["id"] }], order: [["a"]], deferred: [], llmColumns: [] };
 export const CONFIG_NO_LLM = { llm: { ok: false, reason: "No LLM provider: set AI_PROVIDER" }, dbEnv: [] };
 
+async function renderWorkspace() {
+  render(<App debounceMs={0} />);
+  await userEvent.click(screen.getByRole("button", { name: "Generate data" }));
+}
+
 describe("shell", () => {
   it("lists files, opens one into the editor, validates it and shows the summary", async () => {
     stubApi({
@@ -35,7 +40,7 @@ describe("shell", () => {
       "GET /api/file": (_b, url) => ({ path: url.searchParams.get("path"), text: "tables:\n  a: {}\n" }),
       "POST /api/validate": () => OK,
     });
-    render(<App debounceMs={0} />);
+    await renderWorkspace();
     await userEvent.click(await screen.findByRole("button", { name: "shop.yaml" }));
     await waitFor(() => expect((screen.getByLabelText("schema") as HTMLTextAreaElement).value).toBe("tables:\n  a: {}\n"));
     expect(await screen.findByText(/1 table/)).toBeTruthy();
@@ -50,7 +55,7 @@ describe("shell", () => {
       "POST /api/validate": () => OK,
       "PUT /api/file": () => ({ path: "shop.yaml" }),
     });
-    render(<App debounceMs={0} />);
+    await renderWorkspace();
     await userEvent.click(await screen.findByRole("button", { name: "shop.yaml" }));
     await waitFor(() => expect((screen.getByLabelText("schema") as HTMLTextAreaElement).value).toBe("v1"));
     expect(screen.queryByText("unsaved")).toBeNull();
@@ -67,7 +72,7 @@ describe("shell", () => {
       "GET /api/files": () => ({ files: [] }),
       "POST /api/validate": () => ({ ok: false, errors: [{ message: "bad ref", line: 3 }] }),
     });
-    render(<App debounceMs={0} />);
+    await renderWorkspace();
     expect(await screen.findAllByText("bad ref")).toHaveLength(2);
   });
 
@@ -78,7 +83,7 @@ describe("shell", () => {
       "POST /api/validate": () => OK,
       "PUT /api/file": () => ({ path: "fresh.yaml" }),
     });
-    render(<App debounceMs={0} />);
+    await renderWorkspace();
     await userEvent.click(await screen.findByRole("button", { name: "New" }));
     await userEvent.type(screen.getByLabelText("New file name"), "fresh{Enter}");
     await waitFor(() => expect(calls.find((c) => c.key === "PUT /api/file")).toBeTruthy());
@@ -94,7 +99,7 @@ describe("shell", () => {
       },
       "POST /api/validate": () => OK,
     });
-    render(<App debounceMs={0} />);
+    await renderWorkspace();
     expect(await screen.findByRole("alert")).toBeTruthy();
   });
 });
@@ -109,11 +114,11 @@ describe("generate", () => {
       "POST /api/validate": () => OK,
       "POST /api/generate": () => PREVIEW,
     });
-    render(<App debounceMs={0} />);
+    await renderWorkspace();
     await userEvent.type(await screen.findByLabelText("Seed"), "42");
     await userEvent.type(screen.getByLabelText("Rows per table"), "3");
     await userEvent.click(screen.getByRole("button", { name: "Generate" }));
-    expect(await screen.findByRole("tab", { name: /a/ })).toBeTruthy();
+    expect(await screen.findByRole("tab", { name: /^a / })).toBeTruthy();
     const body = calls.find((c) => c.key === "POST /api/generate")!.body;
     expect(body).toMatchObject({ seed: 42, rows: 3 });
     expect(typeof body.text).toBe("string");
@@ -127,17 +132,17 @@ describe("generate", () => {
       "POST /api/validate": () => OK,
       "POST /api/generate": () => (++n === 1 ? PREVIEW : errorResponse(400, "Invalid schema: x")),
     });
-    render(<App debounceMs={0} />);
+    await renderWorkspace();
     await userEvent.click(await screen.findByRole("button", { name: "Generate" }));
-    await screen.findByRole("tab", { name: /a/ });
+    await screen.findByRole("tab", { name: /^a / });
     await userEvent.click(screen.getByRole("button", { name: "Generate" }));
     expect((await screen.findByRole("alert")).textContent).toContain("Invalid schema: x");
-    expect(screen.getByRole("tab", { name: /a/ })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: /^a / })).toBeTruthy();
   });
 
   it("disables the LLM toggle with the server's reason", async () => {
     stubApi({ "GET /api/config": () => CONFIG_NO_LLM, "GET /api/files": () => ({ files: [] }), "POST /api/validate": () => OK });
-    render(<App debounceMs={0} />);
+    await renderWorkspace();
     const box = (await screen.findByLabelText(/Fill LLM columns/)) as HTMLInputElement;
     expect(box.disabled).toBe(true);
   });
@@ -155,7 +160,7 @@ describe("LLM run", () => {
       "POST /api/validate": () => ({ ...OK, llmColumns: ["notes.body"] }),
       "POST /api/generate/stream": () => sseResponse([{ event: "progress", data: PROGRESS }, { event: "done", data: FILLED }], { end: true }),
     });
-    render(<App debounceMs={0} />);
+    await renderWorkspace();
     const box = (await screen.findByLabelText(/Fill LLM columns/)) as HTMLInputElement;
     await waitFor(() => expect(box.disabled).toBe(false));
     await userEvent.click(box);
@@ -177,10 +182,10 @@ describe("LLM run", () => {
         return sseResponse([{ event: "progress", data: PROGRESS }], { signal });
       },
     });
-    render(<App debounceMs={0} />);
+    await renderWorkspace();
     // A first, plain run gives us a preview to keep.
     await userEvent.click(await screen.findByRole("button", { name: "Generate" }));
-    await screen.findByRole("tab", { name: /a/ });
+    await screen.findByRole("tab", { name: /^a / });
 
     const box = screen.getByLabelText(/Fill LLM columns/) as HTMLInputElement;
     await waitFor(() => expect(box.disabled).toBe(false));
@@ -190,7 +195,7 @@ describe("LLM run", () => {
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(signal!.aborted).toBe(true));
     expect((await screen.findByRole("alert")).textContent).toMatch(/cancelled/i);
-    expect(screen.getByRole("tab", { name: /a/ })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: /^a / })).toBeTruthy();
     expect(screen.queryByRole("status")).toBeNull();
     expect(screen.getByRole("button", { name: "Generate" })).toBeTruthy();
   });
@@ -202,7 +207,7 @@ describe("LLM run", () => {
       "POST /api/validate": () => OK,
       "POST /api/generate/stream": () => sseResponse([{ event: "error", data: { message: "model down" } }], { end: true }),
     });
-    render(<App debounceMs={0} />);
+    await renderWorkspace();
     const box = (await screen.findByLabelText(/Fill LLM columns/)) as HTMLInputElement;
     await waitFor(() => expect(box.disabled).toBe(false));
     await userEvent.click(box);
@@ -224,8 +229,8 @@ describe("infer", () => {
       ...base,
       "POST /api/infer": () => ({ schemaText: "tables:\n  people: {}\n", tables: ["people"], warnings: ["skipped nested array x"] }),
     });
-    render(<App debounceMs={0} />);
-    await userEvent.click(await screen.findByRole("button", { name: /Infer from source/ }));
+    await renderWorkspace();
+    await userEvent.click(screen.getByRole("tab", { name: "Import" }));
     await userEvent.click(screen.getByRole("tab", { name: "Paste" }));
     await userEvent.type(screen.getByLabelText("Sample or schema text"), "id,name");
     await userEvent.type(screen.getByLabelText("File name"), "people.csv");
@@ -239,8 +244,8 @@ describe("infer", () => {
 
   it("offers only the database variable names the server reported and sends the name, never a URL", async () => {
     const calls = stubApi({ ...base, "POST /api/infer": () => ({ schemaText: "tables: {}", tables: [], warnings: [] }) });
-    render(<App debounceMs={0} />);
-    await userEvent.click(await screen.findByRole("button", { name: /Infer from source/ }));
+    await renderWorkspace();
+    await userEvent.click(screen.getByRole("tab", { name: "Import" }));
     await userEvent.click(screen.getByRole("tab", { name: "Database" }));
     const select = (await screen.findByLabelText("Database variable")) as HTMLSelectElement;
     expect([...select.options].map((o) => o.value)).toEqual(["DATABASE_URL"]);
@@ -251,8 +256,8 @@ describe("infer", () => {
 
   it("explains when no database variable is configured", async () => {
     stubApi({ ...base, "GET /api/config": () => ({ llm: { ok: false, reason: "r" }, dbEnv: [] }) });
-    render(<App debounceMs={0} />);
-    await userEvent.click(await screen.findByRole("button", { name: /Infer from source/ }));
+    await renderWorkspace();
+    await userEvent.click(screen.getByRole("tab", { name: "Import" }));
     await userEvent.click(screen.getByRole("tab", { name: "Database" }));
     expect(screen.getByText(/DATABASE_URL/)).toBeTruthy();
     expect((screen.getByRole("button", { name: "Infer" }) as HTMLButtonElement).disabled).toBe(true);
@@ -260,12 +265,12 @@ describe("infer", () => {
 
   it("keeps the dialog open and shows the error when inference fails", async () => {
     stubApi({ ...base, "POST /api/infer": () => errorResponse(400, "Path is outside the server root") });
-    render(<App debounceMs={0} />);
-    await userEvent.click(await screen.findByRole("button", { name: /Infer from source/ }));
+    await renderWorkspace();
+    await userEvent.click(screen.getByRole("tab", { name: "Import" }));
     await userEvent.type(screen.getByLabelText("Path under the folder"), "../x.csv");
     await userEvent.click(screen.getByRole("button", { name: "Infer" }));
     expect(await screen.findByText(/outside the server root/)).toBeTruthy();
-    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Import" }).getAttribute("aria-selected")).toBe("true");
   });
 });
 
@@ -278,7 +283,7 @@ describe("export", () => {
 
   it("writes files to the chosen folder and lists them", async () => {
     const calls = stubApi({ ...base, "POST /api/export": () => ({ files: ["out/a.csv"], rows: { a: 2 } }) });
-    render(<App debounceMs={0} />);
+    await renderWorkspace();
     await userEvent.click(await screen.findByRole("button", { name: "Export…" }));
     await userEvent.selectOptions(screen.getByLabelText("Format"), "csv");
     await userEvent.click(screen.getByRole("button", { name: "Write files" }));
@@ -290,7 +295,7 @@ describe("export", () => {
 
   it("passes the overwrite choice and shows a conflict error without closing", async () => {
     stubApi({ ...base, "POST /api/export": () => errorResponse(400, "Refusing to overwrite existing files: out/a.csv") });
-    render(<App debounceMs={0} />);
+    await renderWorkspace();
     await userEvent.click(await screen.findByRole("button", { name: "Export…" }));
     await userEvent.click(screen.getByRole("button", { name: "Write files" }));
     expect(await screen.findByText(/Refusing to overwrite/)).toBeTruthy();
@@ -303,7 +308,7 @@ describe("export", () => {
     const created: Blob[] = [];
     vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: (b: Blob) => (created.push(b), "blob:x"), revokeObjectURL: () => {} }));
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
-    render(<App debounceMs={0} />);
+    await renderWorkspace();
     await userEvent.click(await screen.findByRole("button", { name: "Export…" }));
     await userEvent.click(screen.getByRole("button", { name: "Download zip" }));
     await waitFor(() => expect(click).toHaveBeenCalled());
@@ -314,7 +319,7 @@ describe("export", () => {
 
   it("warns that a schema with LLM columns spends model calls", async () => {
     stubApi({ ...base, "POST /api/validate": () => ({ ...OK, llmColumns: ["a.b"] }) });
-    render(<App debounceMs={0} />);
+    await renderWorkspace();
     await userEvent.click(await screen.findByRole("button", { name: "Export…" }));
     expect(await screen.findByText(/model calls/i)).toBeTruthy();
   });
@@ -325,7 +330,7 @@ describe("review fixes", () => {
 
   it("enables the LLM toggle when the schema's own llm block is usable, even though the environment has no provider", async () => {
     stubApi({ ...files, "POST /api/validate": () => ({ ...OK, llmColumns: ["a.b"], llm: { ok: true, provider: "ollama:llama3" } }) });
-    render(<App debounceMs={0} />);
+    await renderWorkspace();
     const box = (await screen.findByLabelText(/Fill LLM columns/)) as HTMLInputElement;
     await waitFor(() => expect(box.disabled).toBe(false));
   });
@@ -333,7 +338,7 @@ describe("review fixes", () => {
   it("asks before replacing unsaved edits when opening another file, and keeps them on Cancel", async () => {
     stubApi({ ...files, "GET /api/file": (_b, url) => ({ path: url.searchParams.get("path"), text: `text of ${url.searchParams.get("path")}` }) });
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-    render(<App debounceMs={0} />);
+    await renderWorkspace();
     await userEvent.type(await screen.findByLabelText("schema"), "!");
     await userEvent.click(screen.getByRole("button", { name: "b.yaml" }));
     expect(confirm).toHaveBeenCalled();
@@ -347,7 +352,7 @@ describe("review fixes", () => {
   it("does not ask when there is nothing unsaved", async () => {
     stubApi({ ...files, "GET /api/file": () => ({ path: "a.yaml", text: "saved" }) });
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-    render(<App debounceMs={0} />);
+    await renderWorkspace();
     await userEvent.click(await screen.findByRole("button", { name: "a.yaml" }));
     await waitFor(() => expect((screen.getByLabelText("schema") as HTMLTextAreaElement).value).toBe("saved"));
     await userEvent.click(screen.getByRole("button", { name: "b.yaml" }));

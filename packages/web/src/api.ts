@@ -12,8 +12,20 @@ export class ApiError extends Error {
   }
 }
 
+export interface DiagramColumn {
+  name: string;
+  type: string;
+  primaryKey: boolean;
+  unique: boolean;
+  nullable: boolean;
+  ref?: string;
+}
+export interface SchemaDiagram {
+  tables: { name: string; rows: number; columns: DiagramColumn[] }[];
+}
 export interface ValidateResult {
   ok: boolean;
+  diagram?: SchemaDiagram;
   tables?: { name: string; rows: number; columns: string[] }[];
   order?: string[][];
   deferred?: string[];
@@ -109,8 +121,8 @@ async function send(method: string, url: string, body?: unknown, signal?: AbortS
   return res;
 }
 
-async function json<T>(method: string, url: string, body?: unknown): Promise<T> {
-  const res = await send(method, url, body);
+async function json<T>(method: string, url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  const res = await send(method, url, body, signal);
   if (!res.ok) throw await failure(res);
   return (await res.json()) as T;
 }
@@ -120,7 +132,7 @@ export const getFiles = async () => (await json<{ files: string[] }>("GET", "/ap
 export const getFile = async (path: string) => (await json<{ text: string }>("GET", `/api/file?path=${encodeURIComponent(path)}`)).text;
 export const putFile = (path: string, text: string, create = false) => json<{ path: string }>("PUT", "/api/file", { path, text, create });
 export const validate = (text: string) => json<ValidateResult>("POST", "/api/validate", { text });
-export const generate = (body: GenerateBody) => json<Preview>("POST", "/api/generate", body);
+export const generate = (body: GenerateBody, signal?: AbortSignal) => json<Preview>("POST", "/api/generate", body, signal);
 export const infer = (body: InferBody) => json<InferResult>("POST", "/api/infer", body);
 export const exportFiles = (body: ExportBody) => json<ExportResult>("POST", "/api/export", body);
 
