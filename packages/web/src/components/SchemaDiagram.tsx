@@ -1,7 +1,9 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { Background, Controls, Handle, MarkerType, Position, ReactFlow, useNodesInitialized, useNodesState, useReactFlow, useStore, type Node, type NodeProps, type Edge } from "@xyflow/react";
 import dagre from "@dagrejs/dagre";
 import type { SchemaDiagram as DiagramData } from "../api";
+import { DdlDialog, TableMenu, copyTableName, type MenuState } from "./DiagramMenu";
+import type { Dialect } from "../ddl";
 import "@xyflow/react/dist/style.css";
 
 type TableNode = Node<{ table: DiagramData["tables"][number] }, "table">;
@@ -59,12 +61,35 @@ export default function SchemaDiagram({ data }: { data: DiagramData }) {
   // Controlled nodes must retain React Flow's measured dimensions before fitting.
   const [nodes, setNodes, onNodesChange] = useNodesState(layoutNodes);
   useEffect(() => setNodes(layoutNodes), [layoutNodes, setNodes]);
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const [ddl, setDdl] = useState<{ table: string; dialect: Dialect } | null>(null);
+  // A re-validated schema may drop the table a menu or dialog was opened for.
+  const ddlTable = ddl && data.tables.find((t) => t.name === ddl.table);
+  useEffect(() => { if (menu && !data.tables.some((t) => t.name === menu.table)) setMenu(null); }, [data, menu]);
   if (!nodes.length) return <div className="workspace-empty"><h2>No tables yet</h2><p>Add tables in the editor to see their relationships.</p></div>;
-  return <div className="diagram-canvas" aria-label="Schema relationship diagram">
-    <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} nodeTypes={nodeTypes} nodesDraggable={false} nodesConnectable={false} edgesReconnectable={false} elementsSelectable={false} fitView minZoom={0.1} maxZoom={2} fitViewOptions={fitOptions} proOptions={{ hideAttribution: true }}>
+
+  /** Shift+F10 / the context-menu key opens the menu for the focused table, like a right-click. */
+  function onKeyDown(e: ReactKeyboardEvent) {
+    if (e.key !== "ContextMenu" && !(e.shiftKey && e.key === "F10")) return;
+    const card = (e.target as HTMLElement).closest<HTMLElement>(".react-flow__node");
+    if (!card?.dataset.id) return;
+    e.preventDefault();
+    const r = card.getBoundingClientRect();
+    setMenu({ table: card.dataset.id, x: r.left + 16, y: r.top + 24 });
+  }
+
+  return <div className="diagram-canvas" aria-label="Schema relationship diagram" onKeyDown={onKeyDown}>
+    <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} nodeTypes={nodeTypes} nodesDraggable={false} nodesConnectable={false} edgesReconnectable={false} elementsSelectable fitView minZoom={0.1} maxZoom={2} fitViewOptions={fitOptions} proOptions={{ hideAttribution: true }}
+      onNodeContextMenu={(e: ReactMouseEvent, node: Node) => { e.preventDefault(); setMenu({ table: node.id, x: e.clientX, y: e.clientY }); }}
+      onPaneContextMenu={(e: ReactMouseEvent | MouseEvent) => { e.preventDefault(); setMenu(null); }}
+      onPaneClick={() => setMenu(null)} onNodeClick={() => setMenu(null)} onMoveStart={() => setMenu(null)}>
       <FitViewport nodes={layoutNodes} />
       <Background color="#d8d3c9" gap={22} size={1} /><Controls showInteractive={false} />
     </ReactFlow>
-    <div className="diagram-legend">PK Primary key <span>FK Foreign key</span><span>UQ Unique</span><span>? Nullable</span></div>
+    <div className="diagram-legend">PK Primary key <span>FK Foreign key</span><span>UQ Unique</span><span>? Nullable</span><span>Right-click a table for DDL</span></div>
+    {menu && <TableMenu menu={menu} onClose={() => setMenu(null)}
+      onDdl={(dialect) => { setDdl({ table: menu.table, dialect }); setMenu(null); }}
+      onCopyName={() => { void copyTableName(menu.table); setMenu(null); }} />}
+    {ddl && ddlTable && <DdlDialog table={ddlTable} all={data.tables} initial={ddl.dialect} onClose={() => setDdl(null)} />}
   </div>;
 }
