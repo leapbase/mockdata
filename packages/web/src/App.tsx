@@ -12,26 +12,11 @@ import { messageOf, useDebounced } from "./hooks";
 const Editor = lazy(() => import("./components/Editor"));
 const SchemaDiagram = lazy(() => import("./components/SchemaDiagram"));
 
-const STARTER = `seed: 1
-tables:
-  customers:
-    rows: 10
-    columns:
-      id: { type: integer, primaryKey: true }
-      name: { type: string, faker: person.fullName }
-  orders:
-    rows: 30
-    columns:
-      id: { type: integer, primaryKey: true }
-      customer_id: { type: integer, ref: customers.id }
-      total: { type: float, min: 5, max: 500 }
-`;
-
 export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
   const [files, setFiles] = useState<string[]>([]);
   const [path, setPath] = useState<string | null>(null);
-  const [text, setText] = useState(STARTER);
-  const [savedText, setSavedText] = useState(STARTER);
+  const [text, setText] = useState("");
+  const [savedText, setSavedText] = useState("");
   const [check, setCheck] = useState<api.ValidateResult | null>(null);
   const [config, setConfig] = useState<api.Config | null>(null);
   const [error, setError] = useState<string | null>(null);

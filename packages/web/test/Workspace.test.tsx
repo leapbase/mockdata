@@ -39,6 +39,20 @@ describe("workspace navigation", () => {
     expect((screen.getByLabelText("schema") as HTMLTextAreaElement).value).toContain("# my new edits");
     confirm.mockRestore();
   });
+  it("filters the schema list from the search box and clears it", async () => {
+    setup({ "GET /api/files": () => ({ files: ["people.yaml", "shop.yaml", "shop-llm.yaml"] }) });
+    render(<App debounceMs={0} />);
+    await screen.findByRole("button", { name: "people.yaml" });
+    const box = screen.getByLabelText("Search schemas");
+    await userEvent.type(box, "SHOP");
+    expect(screen.queryByRole("button", { name: "people.yaml" })).toBeNull();
+    expect(screen.getByRole("button", { name: "shop-llm.yaml" })).toBeTruthy();
+    expect(screen.getByText(/2 of 3 saved schemas/)).toBeTruthy();
+    await userEvent.type(box, "zzz");
+    expect(screen.getByText(/No schemas match/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(screen.getByRole("button", { name: "people.yaml" })).toBeTruthy();
+  });
   it("cancels an ordinary generation request", async () => {
     let signal: AbortSignal | undefined;
     setup({ "POST /api/generate": (_b: any, _u: any, init: RequestInit) => new Promise((_resolve, reject) => {

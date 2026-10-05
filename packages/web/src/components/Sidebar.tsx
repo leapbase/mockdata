@@ -24,6 +24,9 @@ export const withExtension = (name: string) => (/\.(ya?ml|json)$/i.test(name) ? 
 export default function Sidebar({ files, active, dirty, forceNaming, onOpen, onCreate, onSave, onInfer, onExport, tab = "schemas", onTab, importContent }: SidebarProps) {
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState("");
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const shown = q ? files.filter((f) => f.toLowerCase().includes(q)) : files;
 
   useEffect(() => {
     if (forceNaming) setNaming(true);
@@ -57,8 +60,22 @@ export default function Sidebar({ files, active, dirty, forceNaming, onOpen, onC
           <input autoFocus aria-label="New file name" placeholder="name.yaml" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setNaming(false)} />
         </form>
       )}
+      {files.length > 0 && (
+        <div className="search-wrap">
+          <input
+            type="search"
+            className="search"
+            aria-label="Search schemas"
+            placeholder="Search schemas"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Escape" && setQuery("")}
+          />
+          {query && <button type="button" className="clear-search" aria-label="Clear search" title="Clear search" onClick={() => setQuery("")}>×</button>}
+        </div>
+      )}
       <ul className="files">
-        {files.map((f) => (
+        {shown.map((f) => (
           <li key={f}>
             <button className={f === active ? "file active" : "file"} title={f} aria-current={f === active ? "true" : undefined} onClick={() => onOpen(f)}>
               {f}
@@ -67,9 +84,10 @@ export default function Sidebar({ files, active, dirty, forceNaming, onOpen, onC
           </li>
         ))}
       </ul>
+      {files.length > 0 && shown.length === 0 && <p className="empty-files muted">No schemas match “{query.trim()}”.</p>}
       {files.length === 0 && <p className="empty-files muted">No saved schemas yet. Create one or import a source.</p>}
       {active === null && dirty && <p className="hint">Draft not saved yet: press Save to name it.</p>}
-      <div className="sidebar-footer">{files.length} saved schema{files.length === 1 ? "" : "s"}<span>YAML / JSON</span></div>
+      <div className="sidebar-footer">{q ? `${shown.length} of ${files.length}` : files.length} saved schema{files.length === 1 ? "" : "s"}<span>YAML / JSON</span></div>
       </div>
     </div>
   );
