@@ -225,3 +225,6 @@ button.link { background: none; border: 0; padding: 0; text-decoration: underlin
 .context-menu-sep { height: 1px; background: var(--line); margin: 4px 0; }
 .ddl-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 10px 0; font-size: 12px; }
 .ddl-text { margin: 0; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; font: 12px/1.5 "Geist Mono", monospace; overflow: auto; max-height: 50vh; white-space: pre; user-select: text; }
+.context-menu button[aria-disabled="true"] { color: var(--muted); opacity: 0.55; cursor: not-allowed; }
+.context-menu button[aria-disabled="true"]:hover { background: transparent; }
+.context-menu button[aria-disabled="true"]:focus-visible { background: var(--panel); }

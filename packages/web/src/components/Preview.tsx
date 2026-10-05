@@ -4,7 +4,8 @@ import { navigateTabs } from "../tabs";
 
 const show = (v: unknown): string => (v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
 
-export default function Preview({ data }: { data: PreviewData }) {
+/** `select` asks for a table tab; a new `nonce` re-applies it after the user has clicked elsewhere. */
+export default function Preview({ data, select }: { data: PreviewData; select?: { table: string; nonce: number } }) {
   const names = Object.keys(data.tables);
   const [tab, setTab] = useState(names[0] ?? "");
   const [raw, setRaw] = useState(false);
@@ -17,6 +18,11 @@ export default function Preview({ data }: { data: PreviewData }) {
     setFocus(null);
     setNote("");
   }, [data]);
+
+  useEffect(() => {
+    if (select && select.table in data.tables) setTab(select.table);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [select?.nonce]);
 
   const table = data.tables[tab];
 

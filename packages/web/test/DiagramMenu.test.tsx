@@ -11,16 +11,31 @@ const people = { name: "people", rows: 2, columns: [col("id", { primaryKey: true
 const orders = { name: "orders", rows: 3, columns: [col("id", { primaryKey: true }), col("person_id", { ref: "people.id" })] };
 
 describe("TableMenu", () => {
-  const setup = () => {
-    const onDdl = vi.fn(), onCopyName = vi.fn(), onClose = vi.fn();
-    render(<div><button>outside</button><TableMenu menu={{ table: "orders", x: 10, y: 10 }} onDdl={onDdl} onCopyName={onCopyName} onClose={onClose} /></div>);
-    return { onDdl, onCopyName, onClose };
+  const setup = (hasData = true) => {
+    const onDdl = vi.fn(), onCopyName = vi.fn(), onClose = vi.fn(), onShowData = vi.fn();
+    render(<div><button>outside</button><TableMenu menu={{ table: "orders", x: 10, y: 10 }} hasData={hasData} onShowData={onShowData} onDdl={onDdl} onCopyName={onCopyName} onClose={onClose} /></div>);
+    return { onDdl, onCopyName, onClose, onShowData };
   };
-  it("lists the dialects and copy action, focusing the first item", () => {
+  it("lists show data, the dialects and copy, focusing the first item", () => {
     setup();
     expect(screen.getByRole("menu", { name: "Table orders" })).toBeTruthy();
-    expect(screen.getAllByRole("menuitem").map((e) => e.textContent)).toEqual(["PostgreSQL", "MySQL", "SQLite", "Copy table name"]);
-    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "PostgreSQL" }));
+    expect(screen.getAllByRole("menuitem").map((e) => e.textContent)).toEqual(["Show data", "PostgreSQL", "MySQL", "SQLite", "Copy table name"]);
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Show data" }));
+  });
+  it("runs show data when the table has data", async () => {
+    const { onShowData } = setup(true);
+    await userEvent.click(screen.getByRole("menuitem", { name: "Show data" }));
+    expect(onShowData).toHaveBeenCalledTimes(1);
+  });
+  it("disables show data without data: explained, still focusable, and a click does nothing", async () => {
+    const { onShowData, onClose } = setup(false);
+    const item = screen.getByRole("menuitem", { name: "Show data" });
+    expect(item.getAttribute("aria-disabled")).toBe("true");
+    expect(item.getAttribute("title")).toBe("Generate data first");
+    expect(document.activeElement).toBe(item);
+    await userEvent.click(item);
+    expect(onShowData).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
   });
   it("picks a dialect and a copy action", async () => {
     const { onDdl, onCopyName } = setup();
@@ -31,9 +46,9 @@ describe("TableMenu", () => {
   });
   it("moves with arrow keys and closes on Escape or an outside click", async () => {
     const { onClose } = setup();
-    await userEvent.keyboard("{ArrowDown}");
+    await userEvent.keyboard("{ArrowDown}{ArrowDown}");
     expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "MySQL" }));
-    await userEvent.keyboard("{ArrowUp}{ArrowUp}");
+    await userEvent.keyboard("{ArrowUp}{ArrowUp}{ArrowUp}");
     expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Copy table name" }));
     await userEvent.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalledTimes(1);

@@ -8,7 +8,7 @@ type Table = SchemaDiagram["tables"][number];
 export interface MenuState { table: string; x: number; y: number }
 
 /** Right-click menu for a table card. Closes on Escape, outside click, scroll or resize. */
-export function TableMenu({ menu, onDdl, onCopyName, onClose }: { menu: MenuState; onDdl: (d: Dialect) => void; onCopyName: () => void; onClose: () => void }) {
+export function TableMenu({ menu, hasData, onShowData, onDdl, onCopyName, onClose }: { menu: MenuState; hasData: boolean; onShowData: () => void; onDdl: (d: Dialect) => void; onCopyName: () => void; onClose: () => void }) {
   const root = useRef<HTMLDivElement | null>(null);
   const [pos, setPos] = useState({ left: menu.x, top: menu.y });
   const items = () => [...(root.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
@@ -38,6 +38,9 @@ export function TableMenu({ menu, onDdl, onCopyName, onClose }: { menu: MenuStat
 
   return <div className="context-menu" ref={root} role="menu" aria-label={`Table ${menu.table}`} style={pos} onKeyDown={key} onContextMenu={(e) => e.preventDefault()}>
     <div className="context-menu-title" role="presentation">{menu.table}</div>
+    {/* aria-disabled, not disabled: the item stays focusable so keyboard users find it and learn why it is off. */}
+    <button role="menuitem" tabIndex={-1} aria-disabled={!hasData} title={hasData ? undefined : "Generate data first"} onClick={() => hasData && onShowData()}>Show data</button>
+    <div className="context-menu-sep" role="separator" />
     <div className="context-menu-group" role="presentation">Get DDL</div>
     {DIALECTS.map((d) => <button key={d.id} role="menuitem" tabIndex={-1} onClick={() => onDdl(d.id)}>{d.label}</button>)}
     <div className="context-menu-sep" role="separator" />

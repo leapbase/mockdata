@@ -33,6 +33,7 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
   const [sidebarTab, setSidebarTab] = useState<"schemas" | "import">("schemas");
   const [schemaView, setSchemaView] = useState<"editor" | "diagram">("editor");
   const [generationOpen, setGenerationOpen] = useState(false);
+  const [selectTable, setSelectTable] = useState<{ table: string; nonce: number } | undefined>();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [validatedText, setValidatedText] = useState<string | null>(null);
   const [validating, setValidating] = useState(false);
@@ -126,6 +127,13 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
     }
   }
 
+  /** Open the data panel on a table of the current preview (the diagram menu only offers this when there is data). */
+  function showData(table: string) {
+    setSelectTable((s) => ({ table, nonce: (s?.nonce ?? 0) + 1 }));
+    setGenerationOpen(true);
+    setSidebarOpen(false);
+  }
+
   function save() {
     if (path) void saveAs(path, false);
     else setPendingSave(true);
@@ -214,7 +222,7 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
         </div>
         <div className="schema-surface" id="schema-editor" role="tabpanel" aria-labelledby="editor-tab" hidden={schemaView !== "editor"}><Suspense fallback={<div className="workspace-empty" role="status">Loading editor…</div>}><Editor value={text} onChange={setText} errors={errors} /></Suspense></div>
         {schemaView === "diagram" && <div className="schema-surface" id="schema-diagram" role="tabpanel" aria-labelledby="diagram-tab">
-          {validationError ? <div className="workspace-empty"><h2>Validation unavailable</h2><p>{validationError}</p><button onClick={() => { setError(null); setValidationAttempt((n) => n + 1); }}>Retry validation</button></div> : validating || validatedText !== text ? <div className="workspace-empty"><p>Updating diagram…</p></div> : check?.ok && check.diagram ? <Suspense fallback={<div className="workspace-empty" role="status">Loading diagram…</div>}><SchemaDiagram data={check.diagram} /></Suspense> : <div className="workspace-empty"><h2>Diagram unavailable</h2><p>{check?.ok ? "Diagram metadata is unavailable. Rebuild and restart the server." : "Fix the schema in the editor to view its diagram."}</p><button onClick={() => setSchemaView("editor")}>Return to editor</button></div>}
+          {validationError ? <div className="workspace-empty"><h2>Validation unavailable</h2><p>{validationError}</p><button onClick={() => { setError(null); setValidationAttempt((n) => n + 1); }}>Retry validation</button></div> : validating || validatedText !== text ? <div className="workspace-empty"><p>Updating diagram…</p></div> : check?.ok && check.diagram ? <Suspense fallback={<div className="workspace-empty" role="status">Loading diagram…</div>}><SchemaDiagram data={check.diagram} dataTables={preview ? Object.keys(preview.tables) : []} onShowData={showData} /></Suspense> : <div className="workspace-empty"><h2>Diagram unavailable</h2><p>{check?.ok ? "Diagram metadata is unavailable. Rebuild and restart the server." : "Fix the schema in the editor to view its diagram."}</p><button onClick={() => setSchemaView("editor")}>Return to editor</button></div>}
         </div>}
         <div className="status">
           {check?.ok ? (
@@ -260,7 +268,7 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
           progress={progress}
           onCancel={() => abort.current?.abort()}
         />
-        {preview ? <Preview data={preview} /> : <div className="generation-empty"><div className="empty-symbol" aria-hidden="true">▦</div><h3>Your data starts here</h3><p>Press Generate to preview the tables.</p><p className="muted">Keys and relationships follow your schema.</p></div>}
+        {preview ? <Preview data={preview} select={selectTable} /> : <div className="generation-empty"><div className="empty-symbol" aria-hidden="true">▦</div><h3>Your data starts here</h3><p>Press Generate to preview the tables.</p><p className="muted">Keys and relationships follow your schema.</p></div>}
         <footer className="generation-footer"><span className="muted">JSON · CSV · NDJSON</span><button onClick={() => setDialog("export")}>Export…</button></footer>
       </section>
       {dialog === "export" && (

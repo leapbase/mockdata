@@ -30,6 +30,20 @@ const data = (over: Partial<PreviewData> = {}): PreviewData => ({
 });
 
 describe("Preview", () => {
+  it("selects the requested table, again on a new request after the user switched tabs", async () => {
+    const { rerender } = render(<Preview data={data()} select={{ table: "orders", nonce: 1 }} />);
+    expect(screen.getByRole("tab", { name: /orders/ }).getAttribute("aria-selected")).toBe("true");
+    await userEvent.click(screen.getByRole("tab", { name: /customers/ }));
+    expect(screen.getByRole("tab", { name: /customers/ }).getAttribute("aria-selected")).toBe("true");
+    rerender(<Preview data={data()} select={{ table: "orders", nonce: 1 }} />);
+    expect(screen.getByRole("tab", { name: /customers/ }).getAttribute("aria-selected")).toBe("true");
+    rerender(<Preview data={data()} select={{ table: "orders", nonce: 2 }} />);
+    expect(screen.getByRole("tab", { name: /orders/ }).getAttribute("aria-selected")).toBe("true");
+  });
+  it("ignores a request for a table the preview does not have", () => {
+    render(<Preview data={data()} select={{ table: "ghost", nonce: 1 }} />);
+    expect(screen.getByRole("tab", { name: /customers/ }).getAttribute("aria-selected")).toBe("true");
+  });
   it("moves between result tables with arrow keys and keeps one keyboard tab stop", async () => {
     render(<Preview data={data()} />);
     const customers = screen.getByRole("tab", { name: /customers/ });
