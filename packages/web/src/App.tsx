@@ -99,6 +99,20 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
     }
   }
 
+  /** A blank untitled draft; it gets a file name when first saved. */
+  function newSchema() {
+    if (!okToDiscard()) return;
+    setPath(null);
+    setText("");
+    setSavedText("");
+    setPreview(null);
+    setWarnings([]);
+    setError(null);
+    setPendingSave(false);
+    setSchemaView("editor");
+    closeSidebar();
+  }
+
   async function saveAs(p: string, create: boolean) {
     try {
       await api.putFile(p, text, create);
@@ -174,6 +188,7 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
         dirty={dirty}
         forceNaming={pendingSave}
         onOpen={(p) => void open(p)}
+        onNew={newSchema}
         onCreate={(p) => void saveAs(p, true)}
         onSave={save}
         onInfer={() => setSidebarTab("import")}

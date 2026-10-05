@@ -9,6 +9,8 @@ export interface SidebarProps {
   /** Ask for a file name (a draft with no path is being saved). */
   forceNaming?: boolean;
   onOpen: (path: string) => void;
+  /** Start a new untitled draft in the editor (named when first saved). */
+  onNew: () => void;
   onCreate: (path: string) => void;
   onSave: () => void;
   onInfer: () => void;
@@ -21,7 +23,7 @@ export interface SidebarProps {
 /** "orders" -> "orders.yaml"; names that already end in .yaml/.yml/.json are kept. */
 export const withExtension = (name: string) => (/\.(ya?ml|json)$/i.test(name) ? name : `${name}.yaml`);
 
-export default function Sidebar({ files, active, dirty, forceNaming, onOpen, onCreate, onSave, onInfer, onExport, tab = "schemas", onTab, importContent }: SidebarProps) {
+export default function Sidebar({ files, active, dirty, forceNaming, onOpen, onNew, onCreate, onSave, onInfer, onExport, tab = "schemas", onTab, importContent }: SidebarProps) {
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState("");
   const [query, setQuery] = useState("");
@@ -41,7 +43,7 @@ export default function Sidebar({ files, active, dirty, forceNaming, onOpen, onC
       <div id="import-content" role={onTab ? "tabpanel" : undefined} aria-labelledby={onTab ? "import-tab" : undefined} hidden={tab !== "import"}>{importContent}</div>
       <div id="schemas-content" role={onTab ? "tabpanel" : undefined} aria-labelledby={onTab ? "schemas-tab" : undefined} hidden={tab !== "schemas"} className="schema-list-panel">
       <div className="toolbar">
-        <button onClick={() => setNaming(true)}>New</button>
+        <button onClick={onNew}>New</button>
         <button onClick={onSave} disabled={!dirty && active !== null}>
           Save
         </button>

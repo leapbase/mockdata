@@ -76,7 +76,7 @@ describe("shell", () => {
     expect(await screen.findAllByText("bad ref")).toHaveLength(2);
   });
 
-  it("creates a new file: asks for a name, adds .yaml, saves with create:true", async () => {
+  it("New opens an untitled draft; saving it asks for a name, adds .yaml, saves with create:true", async () => {
     const calls = stubApi({
       "GET /api/config": () => CONFIG_NO_LLM,
       "GET /api/files": () => ({ files: [] }),
@@ -85,6 +85,10 @@ describe("shell", () => {
     });
     await renderWorkspace();
     await userEvent.click(await screen.findByRole("button", { name: "New" }));
+    expect(screen.getByText("Untitled schema")).toBeTruthy();
+    expect((screen.getByLabelText("schema") as HTMLTextAreaElement).value).toBe("");
+    await userEvent.type(screen.getByLabelText("schema"), "seed: 1");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
     await userEvent.type(screen.getByLabelText("New file name"), "fresh{Enter}");
     await waitFor(() => expect(calls.find((c) => c.key === "PUT /api/file")).toBeTruthy());
     expect(calls.find((c) => c.key === "PUT /api/file")!.body).toMatchObject({ path: "fresh.yaml", create: true });
