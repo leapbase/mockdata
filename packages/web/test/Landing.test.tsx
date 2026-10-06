@@ -28,6 +28,13 @@ describe("Landing", () => {
     expect(screen.getByRole("link", { name: "Mockdata home" }).getAttribute("href")).toBe("/");
   });
 
+  it("links to the source code and the license (AGPL-3.0 section 13 for the hosted site)", () => {
+    stubApi({ "GET /api/auth/me": () => ME_OFF });
+    render(<Landing />);
+    expect(screen.getByRole("link", { name: "Source on GitHub" }).getAttribute("href")).toBe("https://github.com/leapbase/mockdata");
+    expect(screen.getByRole("link", { name: "AGPL-3.0" }).getAttribute("href")).toMatch(/\/LICENSE$/);
+  });
+
   it("asks a signed-out visitor to sign in when accounts are on", async () => {
     stubApi({ "GET /api/auth/me": () => ME_SIGNED_OUT });
     render(<Landing />);

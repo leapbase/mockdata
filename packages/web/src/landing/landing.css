@@ -85,6 +85,7 @@ a.button.large { padding: 11px 20px; font-size: 15px; border-radius: var(--radiu
 .closing a.button.primary:hover { opacity: 0.92; background: var(--primary-fg); color: var(--primary-bg); }
 
 .landing-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 24px max(20px, calc((100% - 1160px) / 2)); border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+.landing-footer-links { display: flex; flex-wrap: wrap; gap: 16px; }
 .landing-footer a { color: var(--muted); }
 .landing-footer a:hover { color: var(--accent-deep); }
 

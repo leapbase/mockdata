@@ -21,8 +21,18 @@ const json = async (...argv: string[]) => {
   return JSON.parse(r.out);
 };
 
+// Tracked files only, so git-ignored scratch schemas (examples/test*) left by manual testing cannot fail the suite.
+// Outside a git checkout (e.g. an unpacked tarball) fall back to the whole directory.
+function exampleFiles(): string[] {
+  try {
+    return execFileSync("git", ["ls-files", "."], { cwd: examples, encoding: "utf8" }).split("\n").filter((f) => f && !f.includes("/"));
+  } catch {
+    return readdirSync(examples);
+  }
+}
+
 describe("every example schema validates", () => {
-  const files = readdirSync(examples).filter((f) => f.endsWith(".yaml") && f !== "petstore-openapi.yaml");
+  const files = exampleFiles().filter((f) => f.endsWith(".yaml") && f !== "petstore-openapi.yaml");
   it.each(files)("%s", async (file) => {
     const r = await exec("validate", join(examples, file));
     expect(r.code, r.err).toBe(0);

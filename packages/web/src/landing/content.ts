@@ -35,6 +35,9 @@ npx mockdata generate examples/shop.yaml -s 123          # same seed = same data
 npx mockdata infer examples/samples -o my-schema.yaml    # CSVs -> schema
 npx mockdata infer env:DATABASE_URL                      # Postgres / MySQL catalog -> schema`;
 
+/** Public source repository. AGPL-3.0 section 13 asks a hosted copy to offer users its source; this link does that. */
+export const SOURCE_URL = "https://github.com/leapbase/mockdata";
+
 /** The hosted MCP endpoint (Streamable HTTP; API key from the account menu). */
 export const MCP_URL = "https://mockdata.com/mcp";
 
@@ -105,6 +108,10 @@ export const USE_CASES = [
 ];
 
 export const FAQ = [
+  {
+    q: "Is it free and open source?",
+    a: `Yes. mockdata.com is free to use, with the same per-account limits on rows and model-written text that keep it fair for everyone. The code is open source under the AGPL-3.0 at ${SOURCE_URL}, so you can also run it yourself.`,
+  },
   {
     q: "Is the output deterministic?",
     a: "Yes for everything except model-written text: keys, numbers, dates, enums and faker values come from a seeded generator, so the same schema and seed give the same data. Text written by an LLM is not reproducible by seed.",

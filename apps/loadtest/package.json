@@ -1,6 +1,7 @@
 {
   "name": "@mockdata/loadtest",
   "version": "0.0.1",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "description": "Dev-only load test for the accounts-mode web server (not part of the product build)",

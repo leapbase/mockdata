@@ -9,6 +9,8 @@ Generate realistic, **related** test data from a schema you write, or from a sch
 
 Inspired by [syda](https://github.com/syda-ai/syda), with the constraints enforced by code rather than by prompting.
 
+mockdata is open source ([AGPL-3.0](#license)) at https://github.com/leapbase/mockdata. A hosted copy at https://mockdata.com is free to use: sign in to use the web workspace and the [hosted MCP endpoint](#hosted-mcp-accounts-mode) without installing anything.
+
 ## Install
 
 Needs Node 22.5 or newer (24 is what it is tested on). `infer` from SQLite uses Node's built-in `node:sqlite`.
@@ -377,3 +379,9 @@ git config --add --bool push.autoSetupRemote true
 git config pull.rebase false
 git config --list
 ```
+
+## License
+
+[GNU Affero General Public License v3.0](LICENSE) (`AGPL-3.0-only`). You may use, change and share mockdata, including commercially. If you run a modified version as a network service, the AGPL requires you to offer its users the source code of your version.
+
+Data you generate with mockdata is yours and is not covered by the license.

@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { getMe, type Me } from "../api";
 import Header from "../components/Header";
 import { navigateTabs } from "../tabs";
-import { CLI_SNIPPET, FAQ, FEATURES, MCP_SNIPPET, SAMPLE_COLUMNS, SAMPLE_ROWS, SCHEMA_SNIPPET, STEPS, USE_CASES } from "./content";
+import { CLI_SNIPPET, FAQ, FEATURES, MCP_SNIPPET, SAMPLE_COLUMNS, SAMPLE_ROWS, SCHEMA_SNIPPET, SOURCE_URL, STEPS, USE_CASES } from "./content";
 import "./landing.css";
 
 const ICONS: Record<(typeof FEATURES)[number]["icon"], ReactNode> = {
@@ -192,7 +192,11 @@ export default function Landing() {
 
       <footer className="landing-footer">
         <span>mockdata · schema to synthetic data</span>
-        <a href="/app">Workspace</a>
+        <span className="landing-footer-links">
+          <a href="/app">Workspace</a>
+          <a href={SOURCE_URL}>Source on GitHub</a>
+          <a href={`${SOURCE_URL}/blob/develop/LICENSE`}>AGPL-3.0</a>
+        </span>
       </footer>
     </div>
   );

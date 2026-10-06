@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`mockdata` is a hybrid synthetic data generator (TypeScript/Node, React UI), modelled on `~/git/syda` but fixing its gaps. Deterministic generators handle structure, keys, numbers and dates; an LLM is meant to fill only semantic free-text columns. The approved plan is at `~/.claude/plans/i-want-to-create-woolly-sunrise.md`.
+`mockdata` is a hybrid synthetic data generator (TypeScript/Node, React UI), modelled on `~/git/syda` but fixing its gaps. Deterministic generators handle structure, keys, numbers and dates; an LLM is meant to fill only semantic free-text columns.
+
+Open source under AGPL-3.0-only (`LICENSE`; `license` field in every `package.json`) at https://github.com/leapbase/mockdata, and the hosted copy at https://mockdata.com is free to use, so README and landing copy are public. The landing footer's source link is how the hosted site meets AGPL section 13 (offer network users the source); keep it, and `Landing.test.tsx` checks it.
 
 Implemented so far (hosted MCP with per-user API keys included): `packages/core`, `packages/llm`, `packages/inputs`, `packages/cli`, `packages/mcp`, `packages/server`, `packages/web`, plus accounts (`packages/auth-kit`, `packages/accounts`, wired into `server` and `web`). Run history and a visual schema builder are not built.
 
