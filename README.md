@@ -177,7 +177,7 @@ The run prints how many calls and tokens it used. LLM output is not reproducible
 
 ## Use it from an AI agent (MCP)
 
-The MCP server exposes the same abilities to agents, over stdio or HTTP:
+The MCP server exposes the same abilities to agents: over stdio or local HTTP (below), or hosted by a site running in accounts mode, such as https://mockdata.com (see [Hosted MCP](#hosted-mcp-accounts-mode)):
 
 | Tool | Does |
 |---|---|
@@ -309,7 +309,22 @@ MOCKDATA_PUBLIC_URL=https://mockdata.example.com MOCKDATA_TRUST_PROXY=1 npm run 
 
 **What users cannot do**, because the server's keys and databases are the operator's: infer a schema from a database variable, or choose a model, provider, address or key in a schema's `llm:` block (the operator's settings are used; batch size is at least 10, retries at most 2, context depth at most 1, and a column's instruction at most 500 characters). Schemas are limited to 50 tables, 100 columns per table and 64-character names, plus the row and cell limits above. Password hashing is the costly part of an anonymous request, so at most two run at once (a short queue, then a 503), every sign-in attempt is counted before it is hashed, and failed sign-ins are tracked per mailbox and address so a stranger cannot lock the owner out from elsewhere. Sign-ups, mail requests and Google starts are rate limited per visitor (an IPv6 visitor by its /64), and each signed-in user has a row, cell, storage, file, daily model-row and concurrent-run limit, at most 30 runs (generate, run, export, infer) and 120 schema checks a minute, and 5 password changes per 15 minutes. Every unauthenticated request that hashes a password, and every sign-in attempt, is counted before the hash runs.
 
-**Known limits.** The same person signing in with email and with Google gets two separate accounts. Password hashing is bounded (two at once, a short queue), so a large distributed flood can still make sign-ins answer "busy" (503) for everyone until it stops; front the site with a CDN or firewall rate limit if you expect that. About 100 failed sign-ins a quarter-hour against one mailbox, spread over many addresses, will lock its owner out of password sign-in for a while (Forgot password still works). If the mail queue is full (a flood from many addresses) messages are dropped with a log line while the visitor is told to check their email. Model spend is charged per requested row up front (with the caps above), not per token, so the two daily row limits are the real ceiling; nothing stops someone making many accounts except those limits and the per-address sign-up limit (consider a verified-domain allowlist or a CAPTCHA if that matters to you). Empty folders are not counted against a user's limits. Rate limits and run slots live in memory, so they reset on restart and assume a single server process. The MCP server is not part of accounts mode (it keeps the shared-token setup). SMTP credentials and model keys sit in the operator's environment.
+**Known limits.** The same person signing in with email and with Google gets two separate accounts. Password hashing is bounded (two at once, a short queue), so a large distributed flood can still make sign-ins answer "busy" (503) for everyone until it stops; front the site with a CDN or firewall rate limit if you expect that. About 100 failed sign-ins a quarter-hour against one mailbox, spread over many addresses, will lock its owner out of password sign-in for a while (Forgot password still works). If the mail queue is full (a flood from many addresses) messages are dropped with a log line while the visitor is told to check their email. Model spend is charged per requested row up front (with the caps above), not per token, so the two daily row limits are the real ceiling; nothing stops someone making many accounts except those limits and the per-address sign-up limit (consider a verified-domain allowlist or a CAPTCHA if that matters to you). Empty folders are not counted against a user's limits. Rate limits and run slots live in memory, so they reset on restart and assume a single server process. SMTP credentials and model keys sit in the operator's environment.
+
+### Hosted MCP (accounts mode)
+
+In accounts mode the web server also serves MCP (Streamable HTTP) at `<MOCKDATA_PUBLIC_URL>/mcp`, for example `https://mockdata.com/mcp`. Clients authenticate with a per-user **API key**: sign in, open the account menu, choose **API keys**, and create one. The key is shown once; only its SHA-256 is stored, and the list shows each key's name, first characters and when it was last used.
+
+```
+claude mcp add --transport http mockdata https://mockdata.com/mcp --header "Authorization: Bearer <your API key>"
+```
+
+- The key goes in the `Authorization` header only. The session cookie is not accepted at `/mcp`, so a web page cannot use a signed-in browser to call it.
+- The tools work in that user's private folder, with everything in "What users cannot do" above: the operator's model settings, the row, cell, storage, file and daily model limits, and no inference from database variables. Generation runs in the worker pool, like the web UI's runs.
+- A session belongs to the user who opened it; a request for it with another user's key is answered as if it did not exist. At most 5 open sessions per user and 500 in total; idle ones close after 30 minutes. Each user may send 240 requests a minute, and an address that sends 30 wrong keys in 15 minutes is refused for a while.
+- Each user may hold 10 keys and revoke any of them at any time. Resetting a password through "Forgot password?" revokes all of that user's keys, because whoever knew the old password may have made one. Changing the password while signed in, or "Sign out everywhere", does not; revoke keys in the list if you need to.
+
+The local `--http` server (above) is separate and keeps its no-login, localhost-only setup.
 
 ## Use it as a library
 

@@ -52,6 +52,7 @@ describe("Landing", () => {
     await user.keyboard("{ArrowRight}");
     expect(tabs.getByRole("tab", { name: "MCP" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByRole("tabpanel").textContent).toContain("claude mcp add");
+    expect(screen.getByRole("tabpanel").textContent).toContain("--transport http mockdata https://mockdata.com/mcp");
   });
 
   it("answers questions in expandable FAQ items", async () => {

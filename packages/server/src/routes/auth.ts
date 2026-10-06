@@ -1,10 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { BusyError, clearCookie, sendPasswordResetEmail, sendVerificationEmail, sessionCookieName, type AccountUser } from "@mockdata/accounts";
+import { ApiKeyLimitError, BusyError, clearCookie, sendPasswordResetEmail, sendVerificationEmail, sessionCookieName, type AccountUser } from "@mockdata/accounts";
 import { EmailTakenError } from "@mockdata/auth-kit";
 import type { AccountsRuntime } from "../accounts/runtime.js";
 import { googleCallback, googleStart } from "../accounts/google.js";
 import { startSession } from "../accounts/session.js";
-import { HttpError, readJson, reqString, sendJson } from "../http.js";
+import { HttpError, optInt, optString, readJson, reqString, sendJson } from "../http.js";
 
 /** Who is calling an /api/auth/ route: nobody, or the user behind the session cookie. */
 export interface AuthCaller {
@@ -258,6 +258,7 @@ const resetPassword: AuthHandler = async (acc, _caller, req, res) => {
   await acc.auth.clearEmailVerificationTokens(userId);
   await acc.auth.clearPasswordResetTokens(userId);
   await acc.auth.revokeSessions(userId); // whoever had the old password is signed out everywhere
+  await acc.apiKeys.revokeAll(userId); // and loses any API key they made while they were in
   const user = await acc.auth.findUserById(userId);
   if (!user) throw new HttpError(400, "This reset link is invalid or has expired", "reset_invalid");
   await startSession(acc, res, userId);
@@ -283,7 +284,39 @@ const changePassword: AuthHandler = async (acc, caller, req, res) => {
   sendJson(res, 200, { ok: true });
 };
 
+/** The signed-in user's API keys (for the hosted MCP endpoint). The secret is never listed, only shown once on creation. */
+const listKeys: AuthHandler = async (acc, caller, _req, res) => {
+  if (!caller.user) throw new HttpError(401, "Sign in required");
+  sendJson(res, 200, { keys: await acc.apiKeys.list(caller.user.id) });
+};
+
+const createKey: AuthHandler = async (acc, caller, req, res) => {
+  if (!caller.user) throw new HttpError(401, "Sign in required");
+  const id = String(caller.user.id);
+  if (!acc.limiters.apiKeyUser.hit(id)) throw tooMany(res, acc.limiters.apiKeyUser.retryAfterSeconds(id));
+  const body = await readJson(req, AUTH_BODY_MAX);
+  try {
+    const { key, info } = await acc.apiKeys.create(caller.user.id, optString(body, "name") ?? "");
+    sendJson(res, 201, { key, info });
+  } catch (e) {
+    if (e instanceof ApiKeyLimitError) throw new HttpError(400, e.message, "too_many_keys");
+    throw e;
+  }
+};
+
+const revokeKey: AuthHandler = async (acc, caller, req, res) => {
+  if (!caller.user) throw new HttpError(401, "Sign in required");
+  const body = await readJson(req, AUTH_BODY_MAX);
+  const id = optInt(body, "id", 1, Number.MAX_SAFE_INTEGER);
+  if (id === undefined) throw new HttpError(400, '"id" must be a key id');
+  if (!(await acc.apiKeys.revoke(caller.user.id, id))) throw new HttpError(404, "No such API key");
+  sendJson(res, 200, { ok: true });
+};
+
 export const AUTH_ROUTES: Record<string, AuthHandler> = {
+  "GET /api/auth/keys": listKeys,
+  "POST /api/auth/keys": createKey,
+  "POST /api/auth/keys/revoke": revokeKey,
   "GET /api/auth/me": me,
   "POST /api/auth/register": register,
   "POST /api/auth/login": login,

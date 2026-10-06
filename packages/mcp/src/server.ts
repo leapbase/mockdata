@@ -3,7 +3,7 @@ import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { assertNotEnv, assertNotSymlink, assertRowBudget, checkSchemaPath, inferConfined, loadEnv, parseSchemaText, resolveInside, serialize, UserError, writeFileConfined } from "@mockdata/cli";
-import { llmColumns, parseSchema, type Dataset } from "@mockdata/core";
+import { llmColumns, parseSchema, type Dataset, type DataSchemaT } from "@mockdata/core";
 import { generateWithLlm, type GenerateWithLlmOptions, type LlmReport } from "@mockdata/llm";
 import { SCHEMA_REFERENCE } from "./reference.js";
 
@@ -14,7 +14,41 @@ export interface ServerOptions {
   env?: Record<string, string | undefined>;
   /** Test hooks for the LLM layer. */
   llm?: Pick<GenerateWithLlmOptions, "provider" | "fetch" | "sleep">;
+  /** Set when the server is shared (the hosted endpoint): where model settings come from, quotas, and where work runs. */
+  hosted?: HostedHooks;
 }
+
+export type Format = (typeof FORMATS)[number];
+
+export interface GenerateResult {
+  counts: Record<string, number>;
+  report: LlmReport;
+  /** The first rows of every table. */
+  sample: Dataset;
+  /** Every table serialized, when a format was asked for. */
+  texts?: Record<string, string>;
+}
+
+/**
+ * What a shared server changes. Without these hooks the server is the local one: .env under root, generation in this
+ * process, no quotas.
+ */
+export interface HostedHooks {
+  /** Model settings (the operator's), instead of .env under root, which belongs to the caller. */
+  env: () => Record<string, string | undefined>;
+  /** Before a schema is checked: throw to refuse (rate limits, size caps). */
+  beforeValidate(schema: DataSchemaT): void;
+  /** Before inference: throw to refuse (rate limits). */
+  beforeInfer(): void;
+  /** Whether infer_schema may read a database named by an environment variable. */
+  allowConnectionEnv: boolean;
+  /** Generate under the caller's quotas, somewhere other than this thread. */
+  generate(schema: DataSchemaT, opts: { seed?: number; sampleRows: number; format?: Format; signal?: AbortSignal }): Promise<GenerateResult>;
+  /** Before files are written (`bytes` replaces whatever is at `file`): throw to refuse (storage quota). */
+  beforeWrite(files: { file: string; bytes: number }[]): void;
+}
+
+const FORMATS = ["json", "ndjson", "csv"] as const;
 
 interface RunSummary {
   at: string;
@@ -25,7 +59,6 @@ interface RunSummary {
   llm?: LlmReport;
 }
 
-const FORMATS = ["json", "ndjson", "csv"] as const;
 
 const text = (value: unknown) => ({
   content: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }],
@@ -45,6 +78,8 @@ async function guarded(body: () => unknown | Promise<unknown>) {
 export function createServer(opts: ServerOptions = {}): McpServer {
   const root = path.resolve(opts.root ?? process.cwd());
   const baseEnv = opts.env ?? process.env;
+  const hosted = opts.hosted;
+  const modelEnv = () => (hosted ? hosted.env() : loadEnv(root, baseEnv));
   let lastRun: RunSummary | undefined;
 
   const server = new McpServer({ name: "mockdata", version: "0.0.1" });
@@ -94,6 +129,7 @@ export function createServer(opts: ServerOptions = {}): McpServer {
     (args) =>
       guarded(() => {
         const schema = parseSchema(loadRaw(args));
+        hosted?.beforeValidate(schema);
         return {
           ok: true,
           tables: Object.fromEntries(Object.entries(schema.tables).map(([n, t]) => [n, { rows: t.rows, columns: Object.keys(t.columns) }])),
@@ -127,7 +163,11 @@ export function createServer(opts: ServerOptions = {}): McpServer {
     },
     (args) =>
       guarded(async () => {
-        const result = await inferConfined(root, baseEnv, args);
+        if (hosted) {
+          hosted.beforeInfer();
+          if (!hosted.allowConnectionEnv && args.connectionEnv !== undefined) throw new UserError("Inferring from a database is not available on this server");
+        }
+        const result = await inferConfined(root, hosted ? hosted.env() : baseEnv, args);
         return { tables: Object.keys(result.schema.tables), warnings: result.warnings, schema: result.schema };
       }),
   );
@@ -150,7 +190,7 @@ export function createServer(opts: ServerOptions = {}): McpServer {
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
-    (args) =>
+    (args, extra) =>
       guarded(async () => {
         const started = Date.now();
         const schema = parseSchema(loadRaw(args));
@@ -170,19 +210,18 @@ export function createServer(opts: ServerOptions = {}): McpServer {
           }
         }
 
-        assertRowBudget(schema);
-        const env = loadEnv(root, baseEnv);
-        const { data, report } = await generateWithLlm(schema, { seed: args.seed, ...opts.llm, env });
+        const want = { seed: args.seed, sampleRows: args.previewRows, format: outDir ? args.format : undefined, signal: extra.signal };
+        const { counts: rows, report, sample, texts } = hosted ? await hosted.generate(schema, want) : await generateHere(schema, want, modelEnv(), opts.llm);
 
         const files: string[] = [];
         if (outDir) {
+          hosted?.beforeWrite(targets.map(({ table, file }) => ({ file, bytes: Buffer.byteLength(texts![table]!) })));
           for (const { table, file } of targets) {
-            writeFileConfined(root, file, serialize(data[table]!, Object.keys(schema.tables[table]!.columns), args.format), { overwrite: args.overwrite });
-            files.push(path.relative(root, file));
+            writeFileConfined(root, file, texts![table]!, { overwrite: args.overwrite });
+            files.push(path.relative(root, file).split(path.sep).join("/"));
           }
         }
 
-        const rows = Object.fromEntries(Object.entries(data).map(([t, r]) => [t, r.length]));
         lastRun = {
           at: new Date().toISOString(),
           seed: args.seed ?? schema.seed ?? 1,
@@ -191,7 +230,7 @@ export function createServer(opts: ServerOptions = {}): McpServer {
           ...(files.length ? { files } : {}),
           ...(report.calls > 0 ? { llm: report } : {}),
         };
-        return { ...lastRun, preview: preview(data, args.previewRows) };
+        return { ...lastRun, preview: sample };
       }),
   );
 
@@ -212,6 +251,20 @@ export function createServer(opts: ServerOptions = {}): McpServer {
   return server;
 }
 
-function preview(data: Dataset, n: number): Dataset {
-  return Object.fromEntries(Object.entries(data).map(([t, rows]) => [t, rows.slice(0, n)]));
+/** The local server: everything in this process, with the default row budget. */
+async function generateHere(
+  schema: DataSchemaT,
+  want: { seed?: number; sampleRows: number; format?: Format; signal?: AbortSignal },
+  env: Record<string, string | undefined>,
+  llm: ServerOptions["llm"],
+): Promise<GenerateResult> {
+  assertRowBudget(schema);
+  const { data, report } = await generateWithLlm(schema, { seed: want.seed, ...llm, env, signal: want.signal });
+  const format = want.format;
+  return {
+    counts: Object.fromEntries(Object.entries(data).map(([t, r]) => [t, r.length])),
+    report,
+    sample: Object.fromEntries(Object.entries(data).map(([t, rows]) => [t, rows.slice(0, want.sampleRows)])),
+    ...(format ? { texts: Object.fromEntries(Object.keys(schema.tables).map((t) => [t, serialize(data[t]!, Object.keys(schema.tables[t]!.columns), format)])) } : {}),
+  };
 }

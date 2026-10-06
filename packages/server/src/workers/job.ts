@@ -1,5 +1,5 @@
 import { serialize } from "@mockdata/cli";
-import { generate, type DataSchemaT } from "@mockdata/core";
+import { generate, type DataSchemaT, type Dataset } from "@mockdata/core";
 import { generateWithLlm, type GenerateWithLlmOptions, type LlmProgress, type LlmReport } from "@mockdata/llm";
 import { buildPreview, type Preview } from "../preview.js";
 import { zip } from "../zip.js";
@@ -33,12 +33,24 @@ export interface ExportJob {
   zip: boolean;
   env: Record<string, string | undefined>;
 }
-export type Job = PreviewJob | RunJob | ExportJob;
+/** The MCP generate_data tool: every row is generated, but only counts, the first rows and (optionally) the files come back. */
+export interface SampleJob {
+  kind: "sample";
+  schema: DataSchemaT;
+  seed?: number;
+  /** Rows per table to return as they are. */
+  sampleRows: number;
+  /** Also serialize every table in this format. */
+  format?: "json" | "ndjson" | "csv";
+  env: Record<string, string | undefined>;
+}
+export type Job = PreviewJob | RunJob | ExportJob | SampleJob;
 
 export interface JobResults {
   preview: { preview: Preview };
   run: { preview: Preview; report: LlmReport };
   export: { counts: Record<string, number>; report: LlmReport; texts?: Record<string, string>; archive?: Uint8Array };
+  sample: { counts: Record<string, number>; report: LlmReport; sample: Dataset; texts?: Record<string, string> };
 }
 export type ResultOf<J extends Job> = JobResults[J["kind"]];
 
@@ -62,6 +74,13 @@ export async function runJob<J extends Job>(job: J, hooks: JobHooks = {}): Promi
     return { preview: buildPreview(j.schema, data, { seed: j.seed, rows: j.previewRows, tables: j.tables }) } as ResultOf<J>;
   }
   const { data, report } = await generateWithLlm(j.schema, { seed: j.seed, ...hooks.llm, env: j.env, signal: hooks.signal, onProgress: hooks.onProgress });
+  if (j.kind === "sample") {
+    const counts = Object.fromEntries(Object.entries(data).map(([t, rows]) => [t, rows.length]));
+    const sample = Object.fromEntries(Object.entries(data).map(([t, rows]) => [t, rows.slice(0, j.sampleRows)]));
+    const format = j.format;
+    const texts = format && Object.fromEntries(Object.keys(j.schema.tables).map((table) => [table, serialize(data[table]!, Object.keys(j.schema.tables[table]!.columns), format)]));
+    return { counts, report, sample, ...(texts ? { texts } : {}) } as ResultOf<J>;
+  }
   if (j.kind === "run") {
     return { preview: buildPreview(j.schema, data, { seed: j.seed, rows: j.previewRows, tables: j.tables }), report } as ResultOf<J>;
   }

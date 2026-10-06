@@ -7,6 +7,7 @@ import { assertLocal, HttpError, sendJson, setBodyLimit, type Ctx, type Handler 
 import { publicMessage, statusFor } from "./errors.js";
 import { serveStatic } from "./static.js";
 import type { AccountsRuntime } from "./accounts/runtime.js";
+import { createHostedMcp } from "./accounts/mcp.js";
 import { InlineRunner } from "./workers/inline.js";
 import type { Runner } from "./workers/runner.js";
 import { AUTH_ROUTES, meWithoutAccounts } from "./routes/auth.js";
@@ -66,6 +67,8 @@ export function createApp(opts: AppOptions = {}): (req: IncomingMessage, res: Se
   const baseEnv = opts.env ?? process.env;
   const staticDir = opts.staticDir ?? fileURLToPath(new URL("../../web/dist", import.meta.url));
   const ctx: Ctx = { root, env: () => loadEnv(root, baseEnv), llm: opts.llm ?? {}, runner: opts.runner ?? new InlineRunner(opts.llm) };
+  // Accounts mode also serves MCP at /mcp for clients holding one of the user's API keys.
+  const mcp = opts.accounts ? createHostedMcp({ ...ctx, accounts: opts.accounts }) : undefined;
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     assertLocal(req, opts.access);
@@ -92,6 +95,7 @@ export function createApp(opts: AppOptions = {}): (req: IncomingMessage, res: Se
       res.setHeader("www-authenticate", 'Bearer realm="mockdata"');
       throw new HttpError(401, "A token is required: send Authorization: Bearer <token>, or open the UI once with ?token=<token>");
     }
+    if (mcp && url.pathname === "/mcp") return mcp.handle(req, res);
     if (accounts && url.pathname.startsWith("/api/")) {
       if (Number(req.headers["content-length"]) > ACCOUNT_BODY_MAX) throw new HttpError(413, "Request body is too large"); // refused before it is read
       setBodyLimit(req, ACCOUNT_BODY_MAX); // and capped while it is read, for a body with no Content-Length

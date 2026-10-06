@@ -48,7 +48,7 @@ export function TableMenu({ menu, hasData, onShowData, onDdl, onCopyName, onClos
   </div>;
 }
 
-async function copyText(text: string): Promise<boolean> {
+export async function copyText(text: string): Promise<boolean> {
   try { await navigator.clipboard.writeText(text); return true; } catch { return false; }
 }
 export const copyTableName = copyText;

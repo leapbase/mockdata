@@ -14,6 +14,7 @@ export default defineConfig({
       "@mockdata/auth-kit": src("auth-kit"),
       "@mockdata/accounts": src("accounts"),
       "@mockdata/inputs": src("inputs"),
+      "@mockdata/mcp": src("mcp"),
       "@mockdata/cli": fileURLToPath(new URL("./packages/cli/src/cli.ts", import.meta.url)),
     },
   },

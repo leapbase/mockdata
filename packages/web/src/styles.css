@@ -296,3 +296,16 @@ button.link { background: none; border: 0; padding: 0; text-decoration: underlin
 .context-menu button[aria-disabled="true"] { color: var(--muted); opacity: 0.55; cursor: not-allowed; }
 .context-menu button[aria-disabled="true"]:hover { background: transparent; }
 .context-menu button[aria-disabled="true"]:focus-visible { background: var(--panel); }
+
+/* Account: API keys */
+.api-keys code { font-family: var(--mono); font-size: 12px; }
+.new-key { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--tint-line); border-radius: var(--radius-md); background: var(--tint); }
+.new-key .secret { display: block; padding: 8px 10px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); overflow-wrap: anywhere; user-select: all; }
+.new-key .row { display: flex; gap: 8px; }
+.key-form { display: flex; align-items: flex-end; gap: 8px; }
+.key-form label { flex: 1; display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 500; }
+.key-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.key-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); }
+.key-list li > div { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.key-list .muted { flex-basis: 100%; font-size: 11px; }
+.api-keys pre.ddl-text { white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -1,0 +1,110 @@
+import { existsSync, lstatSync } from "node:fs";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { assertWithinDiskQuota } from "@mockdata/accounts";
+import { UserError } from "@mockdata/cli";
+import { createServer, McpSessions, mcpReply, type HostedHooks } from "@mockdata/mcp";
+import { publicMessage } from "../errors.js";
+import type { Ctx } from "../http.js";
+import { assertSchemaShape, beginRun, throttleRun, throttleValidate } from "./guards.js";
+import type { AccountsRuntime } from "./runtime.js";
+
+/** Sessions the whole server keeps open, and per user. Each holds an MCP server (a few kB) until it idles out. */
+const MAX_SESSIONS = 500;
+const MAX_SESSIONS_PER_USER = 5;
+const SESSION_IDLE_MS = 30 * 60_000;
+/** The same ceiling as a signed-in request to /api/ (a run carries the schema text). */
+const MAX_BODY = 2 * 1024 * 1024;
+
+const NEEDS_KEY = "An API key is required: create one under API keys in your account menu and send Authorization: Bearer <key>";
+
+function bearer(header: string | string[] | undefined): string | undefined {
+  const m = /^Bearer\s+(\S+)\s*$/i.exec([header].flat()[0] ?? "");
+  return m?.[1];
+}
+
+/** Anything not caused by the caller becomes a generic line (the detail stays in the server log). */
+async function publicErrors<T>(body: () => Promise<T>): Promise<T> {
+  try {
+    return await body();
+  } catch (e) {
+    const message = publicMessage(e, true);
+    if (message !== (e as Error).message) process.stderr.write(`mcp: ${(e as Error).stack ?? String(e)}\n`);
+    throw new UserError(message);
+  }
+}
+
+/** The tools' view of a shared server: the operator's model settings, this user's quotas, and the worker pool. */
+export function hostedHooks(ctx: Ctx & { accounts: AccountsRuntime }): HostedHooks {
+  const acc = ctx.accounts;
+  return {
+    env: ctx.env,
+    allowConnectionEnv: false, // a variable named by a user would read the operator's database
+    beforeValidate(schema) {
+      throttleValidate(ctx);
+      assertSchemaShape(ctx, schema);
+    },
+    beforeInfer() {
+      throttleRun(ctx);
+    },
+    generate: (schema, want) =>
+      publicErrors(async () => {
+        const run = await beginRun(ctx, schema); // rate, size and row caps, daily model budget, run slot
+        try {
+          const result = await ctx.runner.run({ kind: "sample", schema: run.schema, seed: want.seed, sampleRows: want.sampleRows, format: want.format, env: ctx.env() }, { signal: want.signal });
+          return { counts: result.counts, report: result.report, sample: result.sample, texts: result.texts };
+        } finally {
+          run.done();
+        }
+      }),
+    beforeWrite(files) {
+      const incoming = files.reduce((n, f) => n + f.bytes, 0);
+      const replaced = files.reduce((n, f) => n + (existsSync(f.file) ? lstatSync(f.file).size : 0), 0);
+      assertWithinDiskQuota(ctx.root, Math.max(0, incoming - replaced), acc.limits.userQuotaBytes, {
+        newFiles: files.filter((f) => !existsSync(f.file)).length,
+        maxFiles: acc.limits.maxFiles,
+      });
+    },
+  };
+}
+
+/**
+ * The hosted MCP endpoint (accounts mode only): Streamable HTTP at /mcp, authenticated by a per-user API key in the
+ * Authorization header (never a cookie, so a web page cannot ride a signed-in browser). Each user works in their own
+ * folder, with the same quotas as the web UI; a session can only be used with a key of the user who opened it.
+ */
+export function createHostedMcp(base: Ctx & { accounts: AccountsRuntime }) {
+  const acc = base.accounts;
+  const sessions = new McpSessions({ maxSessions: MAX_SESSIONS, maxPerOwner: MAX_SESSIONS_PER_USER, sessionIdleMs: SESSION_IDLE_MS, maxBody: MAX_BODY });
+
+  async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    res.setHeader("cache-control", "no-store");
+    const ip = acc.clientIp(req);
+    if (acc.limiters.apiKeyFail.isLimited(ip)) {
+      res.setHeader("retry-after", String(Math.max(1, acc.limiters.apiKeyFail.retryAfterSeconds(ip))));
+      return mcpReply(res, 429, "Too many requests with a wrong API key. Try again later.");
+    }
+    const key = bearer(req.headers.authorization);
+    const user = await acc.apiKeys.lookup(key);
+    if (!user) {
+      if (key) acc.limiters.apiKeyFail.record(ip);
+      res.setHeader("www-authenticate", 'Bearer realm="mockdata"');
+      return mcpReply(res, 401, key ? "This API key is not valid (it may have been revoked)" : NEEDS_KEY);
+    }
+    const owner = String(user.id);
+    if (!acc.limiters.mcpUser.hit(owner)) {
+      res.setHeader("retry-after", String(Math.max(1, acc.limiters.mcpUser.retryAfterSeconds(owner))));
+      return mcpReply(res, 429, "You are sending requests too quickly. Try again in a moment.");
+    }
+    const ctx = { ...base, root: acc.userRoot(user), user };
+    return sessions.handle(req, res, owner, () => createServer({ root: ctx.root, hosted: hostedHooks(ctx) }));
+  }
+
+  return {
+    handle: (req: IncomingMessage, res: ServerResponse) =>
+      handle(req, res).catch((e) => {
+        process.stderr.write(`mcp: ${(e as Error).stack ?? String(e)}\n`);
+        mcpReply(res, 500, "Something went wrong. Try again, and tell the operator if it keeps happening.");
+      }),
+    close: () => sessions.close(),
+  };
+}

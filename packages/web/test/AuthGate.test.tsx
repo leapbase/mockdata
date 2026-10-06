@@ -285,6 +285,31 @@ describe("account menu", () => {
     expect(calls.find((c) => c.key === "POST /api/auth/change-password")!.body).toEqual({ currentPassword: PASSWORD, newPassword: "N3w$ecretPassw0rd!" });
   });
 
+  it("makes an API key, shows it once with the connect command, and revokes keys", async () => {
+    const KEY = "md_" + "k".repeat(43);
+    const existing = { id: 1, name: "ci", prefix: "md_abcdefg", createdAt: 1_700_000_000, lastUsedAt: null };
+    const calls = stubApi({
+      "GET /api/auth/me": () => me(USER),
+      "GET /api/auth/keys": () => ({ keys: [existing] }),
+      "POST /api/auth/keys": (b) => new Response(JSON.stringify({ key: KEY, info: { id: 2, name: b.name, prefix: KEY.slice(0, 10), createdAt: 1_700_000_100, lastUsedAt: null } }), { status: 201 }),
+      "POST /api/auth/keys/revoke": () => ({ ok: true }),
+    });
+    render(app());
+    await userEvent.click(await screen.findByText("ann@example.com"));
+    await userEvent.click(await screen.findByRole("button", { name: "API keys" }));
+    const dialog = await screen.findByRole("dialog", { name: "API keys" });
+    expect(await within(dialog).findByText("ci")).toBeTruthy();
+    expect(dialog.textContent).toContain(`${window.location.origin}/mcp`);
+    await userEvent.type(within(dialog).getByLabelText("New key name"), "laptop");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Create key" }));
+    expect((await within(dialog).findByRole("status")).textContent).toContain(KEY);
+    expect(dialog.textContent).toContain(`--header "Authorization: Bearer ${KEY}"`);
+    expect(calls.find((c) => c.key === "POST /api/auth/keys")!.body).toEqual({ name: "laptop" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Revoke ci" }));
+    await waitFor(() => expect(within(dialog).queryByText("ci")).toBeNull());
+    expect(calls.find((c) => c.key === "POST /api/auth/keys/revoke")!.body).toEqual({ id: 1 });
+  });
+
   it("shows the server's message when the current password is wrong", async () => {
     stubApi({ "GET /api/auth/me": () => me(USER), "POST /api/auth/change-password": () => fail(400, "Current password is incorrect") });
     render(app());

@@ -2,10 +2,12 @@ import { useRef, useState, type FormEvent } from "react";
 import { changePassword, logout, logoutAll, type AuthUser } from "../api";
 import { messageOf } from "../hooks";
 import Modal from "./Modal";
+import ApiKeys from "./ApiKeys";
 
 /** Who is signed in, with sign-out and change-password. Floats at the bottom of the file list. */
 export default function UserMenu({ user, onSignedOut }: { user: AuthUser; onSignedOut: () => void }) {
   const [open, setOpen] = useState(false);
+  const [keysOpen, setKeysOpen] = useState(false);
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [error, setError] = useState<string | undefined>();
@@ -43,6 +45,7 @@ export default function UserMenu({ user, onSignedOut }: { user: AuthUser; onSign
       <details ref={menu} onKeyDown={(e) => { if (e.key === "Escape" && menu.current) { menu.current.open = false; menu.current.querySelector("summary")?.focus(); } }}>
       <summary><span className="avatar">{(user.displayName || user.email || "U").slice(0, 1).toUpperCase()}</span><span title={user.email ?? undefined}>{user.email ?? user.displayName}</span><span aria-hidden="true">⌄</span></summary>
       <div className="account-actions">
+      <button onClick={() => { if (menu.current) menu.current.open = false; setKeysOpen(true); }}>API keys</button>
       <button onClick={() => { if (menu.current) menu.current.open = false; setOpen(true); }}>Change password</button>
       <button
         onClick={() =>
@@ -64,6 +67,7 @@ export default function UserMenu({ user, onSignedOut }: { user: AuthUser; onSign
       </button>
       </div>
       </details>
+      {keysOpen && <ApiKeys onClose={() => setKeysOpen(false)} />}
       {open && (
         <Modal title="Change password" onClose={close}>
           <form onSubmit={submit} className="stack">

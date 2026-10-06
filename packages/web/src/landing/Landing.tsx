@@ -139,7 +139,7 @@ export default function Landing() {
           <header className="section-head">
             <p className="eyebrow">Use it your way</p>
             <h2 id="snippets-title">One schema, three ways in</h2>
-            <p>Edit and preview in the web UI, script it with the CLI, or hand it to an agent over MCP.</p>
+            <p>Edit and preview in the web UI, script it with the CLI, or connect an agent to the hosted MCP endpoint.</p>
           </header>
           <div className="snippet card">
             <div className="snippet-tabs" role="tablist" aria-label="Examples" onKeyDown={navigateTabs}>

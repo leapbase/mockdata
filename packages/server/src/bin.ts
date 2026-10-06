@@ -68,6 +68,7 @@ if (values.help) {
       if (accounts) {
         const { publicUrl, dataDir } = accounts.config;
         process.stdout.write(`Accounts mode: sign-in required for everyone. Public address ${publicUrl.origin}, data in ${dataDir}\n`);
+        process.stdout.write(`MCP for signed-in users: ${publicUrl.origin}/mcp (API keys from the account menu)\n`);
         process.stdout.write(`Sign-up: ${[accounts.emailEnabled && "email", accounts.google && "Google"].filter(Boolean).join(" and ")}. Per-user limits: ${accounts.limits.llmDailyRows} LLM rows/day, ${accounts.limits.maxRows} rows/run, ${Math.round(accounts.limits.userQuotaBytes / 1024 / 1024)} MB storage, ${accounts.limits.maxRuns} runs at once overall.\n`);
         if (!publicUrl.secure) process.stdout.write("Plain http on localhost: for trying it out only. A public site needs an https reverse proxy in front.\n");
         if (accounts.emailEnabled) await accounts.mailer.verifyConnection().catch((e) => process.stderr.write(`Warning: the SMTP server could not be reached (${accounts.mailer.formatError(e)}); sign-up emails will fail until it can.\n`));

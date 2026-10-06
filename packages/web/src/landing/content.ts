@@ -35,10 +35,15 @@ npx mockdata generate examples/shop.yaml -s 123          # same seed = same data
 npx mockdata infer examples/samples -o my-schema.yaml    # CSVs -> schema
 npx mockdata infer env:DATABASE_URL                      # Postgres / MySQL catalog -> schema`;
 
-export const MCP_SNIPPET = `# Register the MCP server with Claude Code (stdio)
-claude mcp add mockdata -e MOCKDATA_ROOT=/path/to/schemas \\
-  -- node <repo>/packages/mcp/dist/bin.js
+/** The hosted MCP endpoint (Streamable HTTP; API key from the account menu). */
+export const MCP_URL = "https://mockdata.com/mcp";
 
+export const MCP_SNIPPET = `# 1. Sign in, then create a key under API keys in the account menu
+# 2. Add the hosted MCP server to Claude Code
+claude mcp add --transport http mockdata ${MCP_URL} \\
+  --header "Authorization: Bearer <your API key>"
+
+# Any MCP client that speaks Streamable HTTP can use the same URL and header.
 # Tools the agent gets
 describe_schema_format  validate_schema  infer_schema
 generate_data           get_run_report`;
@@ -86,8 +91,8 @@ export const FEATURES = [
   },
   {
     icon: "agent",
-    title: "Built for AI agents",
-    body: "An MCP server lets Claude and other agents validate, infer and generate data, confined to one folder and never handed a connection string.",
+    title: "Hosted MCP for AI agents",
+    body: "Point Claude, Cursor or any MCP client at `https://mockdata.com/mcp` with an API key, and agents can validate, infer and generate data in your workspace.",
   },
 ] as const;
 
@@ -95,7 +100,7 @@ export const USE_CASES = [
   { title: "Frontend before the backend", body: "Build screens against related, realistic records on day one, before an API exists." },
   { title: "QA and CI fixtures", body: "Seeded datasets give tests the same rows on every run, with edge cases such as nulls and skew you choose." },
   { title: "Demo environments", body: "Fill a demo with believable customers, orders and reviews without copying anyone's real data." },
-  { title: "AI agent sandboxes", body: "Let a coding agent create and regenerate test data through MCP, inside a folder you choose." },
+  { title: "AI agent sandboxes", body: "Let a coding agent create and regenerate test data through the hosted MCP endpoint, inside your own workspace." },
   { title: "Stand-ins for production", body: "Infer the shape of a production schema and generate look-alike data: shape is copied, rows never are." },
 ];
 
@@ -113,8 +118,12 @@ export const FAQ = [
     a: "No. Database inference reads catalog metadata only (tables, columns, keys), in a read-only session. Sample files are read to learn shape, but rows are never copied; low-cardinality columns can copy their observed values as enums, which you can turn off.",
   },
   {
+    q: "How do I connect an AI agent?",
+    a: "Sign in, create a key under API keys in the account menu, and add https://mockdata.com/mcp to your MCP client with the header Authorization: Bearer <key>. Agents work in your own workspace, with the same limits as the web app; revoke a key at any time.",
+  },
+  {
     q: "Can it run entirely locally?",
-    a: "Yes. The CLI, web UI and MCP server all run on your machine, and with Ollama even the text generation stays local.",
+    a: "Yes. The CLI, web UI and MCP server (stdio or local HTTP) also run on your machine, and with Ollama even the text generation stays local.",
   },
   {
     q: "Which formats can I export?",

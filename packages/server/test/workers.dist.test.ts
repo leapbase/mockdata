@@ -8,7 +8,7 @@ import { statusFor } from "../src/errors.js";
 import { JobTimeoutError } from "../src/workers/errors.js";
 import { createRunner } from "../src/workers/factory.js";
 import { InlineRunner } from "../src/workers/inline.js";
-import type { ExportJob, PreviewJob, RunJob } from "../src/workers/job.js";
+import type { ExportJob, PreviewJob, RunJob, SampleJob } from "../src/workers/job.js";
 import { boot, SHOP_YAML } from "./helpers.js";
 
 /**
@@ -83,6 +83,17 @@ d("real worker threads give the same answers as generating on the calling thread
     const [a, b] = [await sharedPool().run(zipJob), await inline.run(zipJob)];
     expect(Buffer.from(a.archive!).equals(Buffer.from(b.archive!))).toBe(true);
     expect(Buffer.from(a.archive!).subarray(0, 2).toString()).toBe("PK");
+  });
+
+  it("sample (hosted MCP): the same counts, first rows and files as on the calling thread", async () => {
+    for (const format of [undefined, "csv"] as const) {
+      const job: SampleJob = { kind: "sample", schema, seed: 7, sampleRows: 3, format, env: {} };
+      const [a, b] = [await sharedPool().run(job), await inline.run(job)];
+      expect(a).toEqual(b);
+      expect(a.counts).toEqual({ customers: 30, orders: 120 });
+      expect(a.sample.orders).toHaveLength(3);
+      expect(a.texts === undefined).toBe(format === undefined);
+    }
   });
 
   it("keeps cells that are still pending for a model as null in the preview, and lists the column", async () => {

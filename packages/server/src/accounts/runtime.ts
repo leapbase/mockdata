@@ -1,7 +1,7 @@
 import { lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { isIP } from "node:net";
 import path from "node:path";
-import { AccountsDb, BusyError, OAuthStates, RateLimiter, RunGate, Semaphore, SessionStore, SqliteAuthAdapter, UsageStore, limitsFromEnv, mailerFromEnv, type AccountUser, type Limits } from "@mockdata/accounts";
+import { AccountsDb, ApiKeyStore, BusyError, OAuthStates, RateLimiter, RunGate, Semaphore, SessionStore, SqliteAuthAdapter, UsageStore, limitsFromEnv, mailerFromEnv, type AccountUser, type Limits } from "@mockdata/accounts";
 import { AuthService, getGoogleOAuthConfigFromEnv, isGoogleClientConfigured, type Mailer } from "@mockdata/auth-kit";
 import { isLoopback, loadEnv, NetworkConfigError, parsePublicUrl, type PublicUrl } from "@mockdata/cli";
 import type { IncomingMessage } from "node:http";
@@ -31,6 +31,8 @@ export interface AccountsRuntime {
   readonly adapter: SqliteAuthAdapter;
   readonly auth: AuthService<AccountUser>;
   readonly sessions: SessionStore;
+  /** Per-user keys for the hosted MCP endpoint. */
+  readonly apiKeys: ApiKeyStore;
   readonly oauth: OAuthStates;
   readonly usage: UsageStore;
   readonly runs: RunGate;
@@ -62,6 +64,12 @@ export interface AccountsRuntime {
     validateUser: RateLimiter;
     /** Password changes per signed-in user (each costs two hashes). */
     changePasswordUser: RateLimiter;
+    /** API keys made per signed-in user. */
+    apiKeyUser: RateLimiter;
+    /** Requests to the hosted MCP endpoint per user (tool calls that generate are also counted by runUser). */
+    mcpUser: RateLimiter;
+    /** Requests with a wrong API key per address. */
+    apiKeyFail: RateLimiter;
   };
   /** Run password hashing through this: at most two at once, a short queue, then `BusyError`. */
   readonly hashing: Semaphore;
@@ -103,6 +111,7 @@ export async function createAccounts(config: AccountsConfig): Promise<AccountsRu
     adapter,
     auth,
     sessions,
+    apiKeys: new ApiKeyStore(db),
     oauth: new OAuthStates(db),
     usage: new UsageStore(db),
     runs: new RunGate(limits.maxRuns),
@@ -123,6 +132,9 @@ export async function createAccounts(config: AccountsConfig): Promise<AccountsRu
       runUser: new RateLimiter({ max: 30, windowMs: MINUTE }),
       validateUser: new RateLimiter({ max: 120, windowMs: MINUTE }),
       changePasswordUser: new RateLimiter({ max: 5, windowMs: 15 * MINUTE }),
+      apiKeyUser: new RateLimiter({ max: 20, windowMs: 60 * MINUTE }),
+      mcpUser: new RateLimiter({ max: 240, windowMs: MINUTE }),
+      apiKeyFail: new RateLimiter({ max: 30, windowMs: 15 * MINUTE }),
     },
     hashing: new Semaphore(2, 16),
     queueMail(job) {

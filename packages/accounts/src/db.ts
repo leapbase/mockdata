@@ -66,7 +66,22 @@ create table usage (
 );
 `;
 
-const VERSION = 1;
+/** Each step brings a database from version i+1 to i+2; a new database runs SCHEMA and then every step. */
+const MIGRATIONS = [
+  // 2: per-user API keys for the hosted MCP endpoint. Only a hash of each key is kept.
+  `create table api_keys (
+    id integer primary key autoincrement,
+    user_id integer not null references users(id) on delete cascade,
+    name text not null,
+    key_hash text not null unique,
+    prefix text not null,
+    created_at integer not null,
+    last_used_at integer
+  );
+  create index api_keys_user on api_keys(user_id);`,
+];
+
+const VERSION = 1 + MIGRATIONS.length;
 
 /**
  * The account database. node:sqlite is synchronous but the auth adapter is
@@ -96,10 +111,11 @@ export class AccountsDb {
     const raw = new sqlite.DatabaseSync(file);
     raw.exec("pragma journal_mode = wal; pragma foreign_keys = on; pragma busy_timeout = 5000; pragma synchronous = normal;");
     const { user_version } = raw.prepare("pragma user_version").get() as { user_version: number };
-    if (user_version === 0) {
+    if (user_version < VERSION) {
       raw.exec("begin");
       try {
-        raw.exec(SCHEMA);
+        if (user_version === 0) raw.exec(SCHEMA);
+        for (const step of MIGRATIONS.slice(Math.max(0, user_version - 1))) raw.exec(step);
         raw.exec(`pragma user_version = ${VERSION}`);
         raw.exec("commit");
       } catch (e) {
