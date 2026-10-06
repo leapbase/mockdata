@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -147,6 +147,18 @@ describe("hosted MCP at /mcp", () => {
     expect(files.isError).toBe(true);
     expect(textOf(files)).toMatch(/storage|quota|space/i);
     expect(existsSync(join(ann.root, "out", "customers.json"))).toBe(false);
+  });
+
+  it("never shows a hosted caller a raw file system error or a server path", async () => {
+    const app = await bootAccounts();
+    const ann = await keyFor(app, "ann@example.com");
+    mkdirSync(join(ann.root, "out", "customers.csv"), { recursive: true }); // a folder where a file must be written
+    const { client } = await connect(app, ann.key);
+    const r = await client.callTool({ name: "generate_data", arguments: { schema: SHOP_YAML, outputDir: "out", format: "csv", overwrite: true } });
+    expect(r.isError).toBe(true);
+    expect(textOf(r)).not.toContain(app.dataDir);
+    expect(textOf(r)).not.toMatch(/EISDIR|ENOTDIR|\/users\//);
+    expect(textOf(r)).toMatch(/Something went wrong/);
   });
 
   it("caps open sessions per user", async () => {

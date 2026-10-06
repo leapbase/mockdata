@@ -46,6 +46,8 @@ export interface HostedHooks {
   generate(schema: DataSchemaT, opts: { seed?: number; sampleRows: number; format?: Format; signal?: AbortSignal }): Promise<GenerateResult>;
   /** Before files are written (`bytes` replaces whatever is at `file`): throw to refuse (storage quota). */
   beforeWrite(files: { file: string; bytes: number }[]): void;
+  /** What the caller is told about a failed tool call (a shared server hides internals such as file system paths). */
+  describeError(e: unknown): string;
 }
 
 const FORMATS = ["json", "ndjson", "csv"] as const;
@@ -65,13 +67,17 @@ const text = (value: unknown) => ({
 });
 const fail = (message: string) => ({ isError: true as const, content: [{ type: "text" as const, text: message }] });
 
+const describeLocal = (e: unknown): string => {
+  const err = e as Error;
+  return err instanceof UserError ? err.message : `${err.name}: ${err.message}`;
+};
+
 /** Run a tool body, turning any thrown error into an MCP tool error. */
-async function guarded(body: () => unknown | Promise<unknown>) {
+async function guardedWith(describe: (e: unknown) => string, body: () => unknown | Promise<unknown>) {
   try {
     return text(await body());
   } catch (e) {
-    const err = e as Error;
-    return fail(err instanceof UserError ? err.message : `${err.name}: ${err.message}`);
+    return fail(describe(e));
   }
 }
 
@@ -80,6 +86,7 @@ export function createServer(opts: ServerOptions = {}): McpServer {
   const baseEnv = opts.env ?? process.env;
   const hosted = opts.hosted;
   const modelEnv = () => (hosted ? hosted.env() : loadEnv(root, baseEnv));
+  const guarded = (body: () => unknown | Promise<unknown>) => guardedWith(hosted ? hosted.describeError : describeLocal, body);
   let lastRun: RunSummary | undefined;
 
   const server = new McpServer({ name: "mockdata", version: "0.0.1" });

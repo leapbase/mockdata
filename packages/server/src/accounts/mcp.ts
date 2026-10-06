@@ -22,15 +22,15 @@ function bearer(header: string | string[] | undefined): string | undefined {
   return m?.[1];
 }
 
-/** Anything not caused by the caller becomes a generic line (the detail stays in the server log). */
-async function publicErrors<T>(body: () => Promise<T>): Promise<T> {
-  try {
-    return await body();
-  } catch (e) {
-    const message = publicMessage(e, true);
-    if (message !== (e as Error).message) process.stderr.write(`mcp: ${(e as Error).stack ?? String(e)}\n`);
-    throw new UserError(message);
-  }
+/**
+ * What a hosted caller is told about a failed tool call: messages written for callers as they are, anything else (a
+ * file system error naming a server path, a bug) as a generic line, with the detail in the server log only.
+ */
+export function describeHostedError(e: unknown): string {
+  if (e instanceof UserError) return e.message;
+  const message = publicMessage(e, true);
+  if (message !== (e as Error)?.message) process.stderr.write(`mcp: ${(e as Error)?.stack ?? String(e)}\n`);
+  return message;
 }
 
 /** The tools' view of a shared server: the operator's model settings, this user's quotas, and the worker pool. */
@@ -46,16 +46,16 @@ export function hostedHooks(ctx: Ctx & { accounts: AccountsRuntime }): HostedHoo
     beforeInfer() {
       throttleRun(ctx);
     },
-    generate: (schema, want) =>
-      publicErrors(async () => {
-        const run = await beginRun(ctx, schema); // rate, size and row caps, daily model budget, run slot
-        try {
-          const result = await ctx.runner.run({ kind: "sample", schema: run.schema, seed: want.seed, sampleRows: want.sampleRows, format: want.format, env: ctx.env() }, { signal: want.signal });
-          return { counts: result.counts, report: result.report, sample: result.sample, texts: result.texts };
-        } finally {
-          run.done();
-        }
-      }),
+    async generate(schema, want) {
+      const run = await beginRun(ctx, schema); // rate, size and row caps, daily model budget, run slot
+      try {
+        const result = await ctx.runner.run({ kind: "sample", schema: run.schema, seed: want.seed, sampleRows: want.sampleRows, format: want.format, env: ctx.env() }, { signal: want.signal });
+        return { counts: result.counts, report: result.report, sample: result.sample, texts: result.texts };
+      } finally {
+        run.done();
+      }
+    },
+    describeError: describeHostedError,
     beforeWrite(files) {
       const incoming = files.reduce((n, f) => n + f.bytes, 0);
       const replaced = files.reduce((n, f) => n + (existsSync(f.file) ? lstatSync(f.file).size : 0), 0);
