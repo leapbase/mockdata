@@ -7,3 +7,6 @@ dist/
 !.env.example
 examples/*.db
 mockdata-data/
+.DS_Store
+# Scratch schemas saved from the UI (its dev root is examples/); tracked examples stay tracked, add a new one with git add -f
+examples/*
