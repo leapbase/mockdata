@@ -8,5 +8,5 @@ dist/
 examples/*.db
 mockdata-data/
 .DS_Store
-# Scratch schemas saved from the UI (its dev root is examples/); tracked examples stay tracked, add a new one with git add -f
-examples/*
+# Scratch schemas saved from the UI while trying it (its dev root is examples/)
+examples/test*
