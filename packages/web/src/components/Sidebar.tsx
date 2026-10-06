@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { ReactNode } from "react";
 import { navigateTabs } from "../tabs";
 
@@ -6,13 +6,9 @@ export interface SidebarProps {
   files: string[];
   active: string | null;
   dirty: boolean;
-  /** Ask for a file name (a draft with no path is being saved). */
-  forceNaming?: boolean;
   onOpen: (path: string) => void;
   /** Start a new untitled draft in the editor (named when first saved). */
   onNew: () => void;
-  onCreate: (path: string) => void;
-  onSave: () => void;
   onInfer: () => void;
   onExport?: () => void;
   tab?: "schemas" | "import";
@@ -23,16 +19,10 @@ export interface SidebarProps {
 /** "orders" -> "orders.yaml"; names that already end in .yaml/.yml/.json are kept. */
 export const withExtension = (name: string) => (/\.(ya?ml|json)$/i.test(name) ? name : `${name}.yaml`);
 
-export default function Sidebar({ files, active, dirty, forceNaming, onOpen, onNew, onCreate, onSave, onInfer, onExport, tab = "schemas", onTab, importContent }: SidebarProps) {
-  const [naming, setNaming] = useState(false);
-  const [name, setName] = useState("");
+export default function Sidebar({ files, active, dirty, onOpen, onNew, onInfer, onExport, tab = "schemas", onTab, importContent }: SidebarProps) {
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
   const shown = q ? files.filter((f) => f.toLowerCase().includes(q)) : files;
-
-  useEffect(() => {
-    if (forceNaming) setNaming(true);
-  }, [forceNaming]);
 
   return (
     <div className="sidebar-content">
@@ -44,24 +34,9 @@ export default function Sidebar({ files, active, dirty, forceNaming, onOpen, onN
       <div id="schemas-content" role={onTab ? "tabpanel" : undefined} aria-labelledby={onTab ? "schemas-tab" : undefined} hidden={tab !== "schemas"} className="schema-list-panel">
       <div className="toolbar">
         <button onClick={onNew}>New</button>
-        <button onClick={onSave} disabled={!dirty && active !== null}>
-          Save
-        </button>
         {!onTab && <button onClick={onInfer}>Infer from source…</button>}
         {onExport && <button onClick={onExport}>Export…</button>}
       </div>
-      {naming && (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (name.trim()) onCreate(withExtension(name.trim()));
-            setName("");
-            setNaming(false);
-          }}
-        >
-          <input autoFocus aria-label="New file name" placeholder="name.yaml" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setNaming(false)} />
-        </form>
-      )}
       {files.length > 0 && (
         <div className="search-wrap">
           <input
@@ -88,7 +63,7 @@ export default function Sidebar({ files, active, dirty, forceNaming, onOpen, onN
       </ul>
       {files.length > 0 && shown.length === 0 && <p className="empty-files muted">No schemas match “{query.trim()}”.</p>}
       {files.length === 0 && <p className="empty-files muted">No saved schemas yet. Create one or import a source.</p>}
-      {active === null && dirty && <p className="hint">Draft not saved yet: press Save to name it.</p>}
+      {active === null && dirty && <p className="hint">Draft not saved yet: name it above the editor and press Save.</p>}
       <div className="sidebar-footer">{q ? `${shown.length} of ${files.length}` : files.length} saved schema{files.length === 1 ? "" : "s"}<span>YAML / JSON</span></div>
       </div>
     </div>

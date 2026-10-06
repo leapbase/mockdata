@@ -11,7 +11,7 @@ import { InlineRunner } from "./workers/inline.js";
 import type { Runner } from "./workers/runner.js";
 import { AUTH_ROUTES, meWithoutAccounts } from "./routes/auth.js";
 import { getConfig } from "./routes/config.js";
-import { listFiles, readFile, writeFile } from "./routes/files.js";
+import { listFiles, readFile, renameFile, writeFile } from "./routes/files.js";
 import { exportRoute } from "./routes/export.js";
 import { inferRoute } from "./routes/infer.js";
 import { generateRoute, streamRoute, validateRoute } from "./routes/run.js";
@@ -41,6 +41,7 @@ const ROUTES: Record<string, Handler> = {
   "GET /api/files": listFiles,
   "GET /api/file": readFile,
   "PUT /api/file": writeFile,
+  "POST /api/file/rename": renameFile,
   "POST /api/validate": validateRoute,
   "POST /api/generate": generateRoute,
   "POST /api/generate/stream": streamRoute,

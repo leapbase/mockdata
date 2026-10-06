@@ -4,7 +4,7 @@ import ExportDialog from "./components/ExportDialog";
 import GenerateBar from "./components/GenerateBar";
 import InferDialog from "./components/InferDialog";
 import Preview from "./components/Preview";
-import Sidebar from "./components/Sidebar";
+import Sidebar, { withExtension } from "./components/Sidebar";
 import { useDrawer, useNarrow } from "./drawers";
 import { navigateTabs } from "./tabs";
 import { messageOf, useDebounced } from "./hooks";
@@ -15,12 +15,13 @@ const SchemaDiagram = lazy(() => import("./components/SchemaDiagram"));
 export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
   const [files, setFiles] = useState<string[]>([]);
   const [path, setPath] = useState<string | null>(null);
+  /** The name in the header: the file's path, or what the user typed (a new name, or a first name for a draft). */
+  const [name, setName] = useState("");
   const [text, setText] = useState("");
   const [savedText, setSavedText] = useState("");
   const [check, setCheck] = useState<api.ValidateResult | null>(null);
   const [config, setConfig] = useState<api.Config | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [pendingSave, setPendingSave] = useState(false);
   const [seed, setSeed] = useState("");
   const [rows, setRows] = useState("");
   const [preview, setPreview] = useState<api.Preview | null>(null);
@@ -45,6 +46,7 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
   const sidebarPanel = useRef<HTMLElement | null>(null);
   const generateButton = useRef<HTMLButtonElement | null>(null);
   const schemaButton = useRef<HTMLButtonElement | null>(null);
+  const nameInput = useRef<HTMLInputElement | null>(null);
   const closeGeneration = useCallback(() => { setGenerationOpen(false); generateButton.current?.focus(); }, []);
   const closeSidebar = useCallback(() => { setSidebarOpen(false); schemaButton.current?.focus(); }, []);
   useDrawer(generationPanel, generationOpen && narrow, closeGeneration);
@@ -73,6 +75,10 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
   }, [debounced, fail, validationAttempt]);
 
   const dirty = text !== savedText;
+  const typedPath = name.trim() ? withExtension(name.trim()) : null;
+  /** A name was typed for a draft, or a saved file's name was edited (Save then renames it). */
+  const nameChanged = typedPath !== null && typedPath !== path;
+  const unsaved = dirty || nameChanged;
 
   /** Replacing the editor text would lose unsaved edits: ask first. */
   const okToDiscard = () => !dirty || window.confirm("Discard your unsaved changes?");
@@ -90,6 +96,7 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
     try {
       const t = await api.getFile(p);
       setPath(p);
+      setName(p);
       setText(t);
       setSavedText(t);
       setWarnings([]);
@@ -104,22 +111,35 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
   function newSchema() {
     if (!okToDiscard()) return;
     setPath(null);
+    setName("");
     setText("");
     setSavedText("");
     setPreview(null);
     setWarnings([]);
     setError(null);
-    setPendingSave(false);
     setSchemaView("editor");
     closeSidebar();
+  }
+
+  async function rename(from: string, to: string) {
+    try {
+      await api.renameFile(from, to, text);
+      setPath(to);
+      setName(to);
+      setSavedText(text);
+      setFiles((prev) => [...prev.filter((f) => f !== from && f !== to), to].sort());
+      setError(null);
+    } catch (e) {
+      fail(e);
+    }
   }
 
   async function saveAs(p: string, create: boolean) {
     try {
       await api.putFile(p, text, create);
       setPath(p);
+      setName(p);
       setSavedText(text);
-      setPendingSave(false);
       setFiles((prev) => (prev.includes(p) ? prev : [...prev, p].sort()));
       setError(null);
     } catch (e) {
@@ -135,8 +155,10 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
   }
 
   function save() {
-    if (path) void saveAs(path, false);
-    else setPendingSave(true);
+    if (path && nameChanged) void rename(path, typedPath!);
+    else if (path) void saveAs(path, false);
+    else if (typedPath) void saveAs(typedPath, true);
+    else nameInput.current?.focus();
   }
 
   function runBody(): api.GenerateBody {
@@ -193,18 +215,15 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
       <Sidebar
         files={files}
         active={path}
-        dirty={dirty}
-        forceNaming={pendingSave}
+        dirty={unsaved}
         onOpen={(p) => void open(p)}
         onNew={newSchema}
-        onCreate={(p) => void saveAs(p, true)}
-        onSave={save}
         onInfer={() => setSidebarTab("import")}
         tab={sidebarTab}
         onTab={setSidebarTab}
         importContent={<InferDialog embedded dbEnv={config?.dbEnv ?? []} onResult={(r) => {
           if (!okToDiscard()) return;
-          setPath(null); setText(r.schemaText); setSavedText(""); setPreview(null);
+          setPath(null); setName(""); setText(r.schemaText); setSavedText(""); setPreview(null);
           setWarnings(r.warnings); setSidebarTab("schemas"); closeSidebar();
         }} />}
       />
@@ -212,7 +231,7 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
       <main className="editor">
         <header className="workspace-toolbar">
           <button className="mobile-navigation icon-button" aria-label="Open schema navigation" ref={schemaButton} onClick={() => { setSidebarOpen(true); setGenerationOpen(false); }}>☰</button>
-          <div className="schema-title"><span className="eyebrow">SCHEMA WORKSPACE</span><strong title={path ?? "Untitled schema"}>{path ?? "Untitled schema"}{dirty && <span className="unsaved-mark" title="Unsaved changes"> •</span>}</strong></div>
+          <div className="schema-title"><span className="eyebrow">SCHEMA WORKSPACE</span><form className="schema-name" onSubmit={(e) => { e.preventDefault(); save(); }}><input ref={nameInput} aria-label="Schema name" placeholder="Untitled schema" value={name} title={path ?? "Name this schema; press Enter to save"} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") { setName(path ?? ""); e.currentTarget.blur(); } }} spellCheck={false} />{unsaved && <span className="unsaved-mark" title="Unsaved changes">•</span>}<button type="submit" className="save-schema" disabled={!unsaved}>Save</button></form></div>
           <button className="primary open-generation" ref={generateButton} aria-label={running ? "Generate data (running)" : "Generate data"} aria-expanded={generationOpen} aria-controls="generation-panel" onClick={() => { setGenerationOpen(true); setSidebarOpen(false); }}>{running && <i className="running-dot" />}Generate data <span aria-hidden="true">→</span></button>
         </header>
         <div className="view-tabs" role="tablist" aria-label="Schema view" onKeyDown={navigateTabs}>

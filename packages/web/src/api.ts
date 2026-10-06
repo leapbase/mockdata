@@ -131,6 +131,8 @@ export const getConfig = () => json<Config>("GET", "/api/config");
 export const getFiles = async () => (await json<{ files: string[] }>("GET", "/api/files")).files;
 export const getFile = async (path: string) => (await json<{ text: string }>("GET", `/api/file?path=${encodeURIComponent(path)}`)).text;
 export const putFile = (path: string, text: string, create = false) => json<{ path: string }>("PUT", "/api/file", { path, text, create });
+/** Save `text` as `to` and remove `from`; refused if `to` already exists. */
+export const renameFile = (from: string, to: string, text: string) => json<{ path: string }>("POST", "/api/file/rename", { from, to, text });
 export const validate = (text: string) => json<ValidateResult>("POST", "/api/validate", { text });
 export const generate = (body: GenerateBody, signal?: AbortSignal) => json<Preview>("POST", "/api/generate", body, signal);
 export const infer = (body: InferBody) => json<InferResult>("POST", "/api/infer", body);

@@ -142,3 +142,59 @@ describe("symlink escapes", () => {
     expect(readFileSync(join(root, "real.yaml"), "utf8")).toBe("keep");
   });
 });
+
+describe("POST /api/file/rename", () => {
+  it("writes the text under the new name and removes the old file", async () => {
+    const root = tmpRoot();
+    writeFileSync(join(root, "shop.yaml"), "old");
+    const { post } = await boot({ root });
+    const r = await post("/api/file/rename", { from: "shop.yaml", to: "sub/store.yaml", text: SHOP_YAML });
+    expect(r.status).toBe(200);
+    expect(r.json).toEqual({ path: "sub/store.yaml" });
+    expect(readFileSync(join(root, "sub", "store.yaml"), "utf8")).toBe(SHOP_YAML);
+    expect(existsSync(join(root, "shop.yaml"))).toBe(false);
+  });
+
+  it("never overwrites an existing file and keeps the original", async () => {
+    const root = tmpRoot();
+    writeFileSync(join(root, "a.yaml"), "a");
+    writeFileSync(join(root, "b.yaml"), "b");
+    const { post } = await boot({ root });
+    const r = await post("/api/file/rename", { from: "a.yaml", to: "b.yaml", text: "new" });
+    expect(r.status).toBe(400);
+    expect(r.json.error.message).toMatch(/already exists/);
+    expect(readFileSync(join(root, "a.yaml"), "utf8")).toBe("a");
+    expect(readFileSync(join(root, "b.yaml"), "utf8")).toBe("b");
+  });
+
+  it.each([
+    [{ from: "missing.yaml", to: "x.yaml" }, /No such file/],
+    [{ from: "a.yaml", to: "a.yaml" }, /same/],
+    [{ from: "a.yaml", to: "../out.yaml" }, /outside/],
+    [{ from: "a.yaml", to: ".env" }, /must be a \.yaml/],
+    [{ from: "../a.yaml", to: "x.yaml" }, /outside/],
+    [{ from: "notes.txt", to: "x.yaml" }, /must be a \.yaml/],
+  ])("refuses %j", async (paths, message) => {
+    const root = tmpRoot();
+    writeFileSync(join(root, "a.yaml"), "a");
+    writeFileSync(join(root, "notes.txt"), "n");
+    const { post } = await boot({ root });
+    const r = await post("/api/file/rename", { ...paths, text: "t" });
+    expect(r.status).toBe(400);
+    expect(r.json.error.message).toMatch(message);
+    expect(readFileSync(join(root, "a.yaml"), "utf8")).toBe("a");
+    expect(existsSync(join(root, "x.yaml"))).toBe(false);
+  });
+
+  it("refuses to rename a symbolic link, leaving its target alone", async () => {
+    const root = tmpRoot();
+    const outside = tmpRoot();
+    writeFileSync(join(outside, "real.yaml"), "keep");
+    symlinkSync(join(outside, "real.yaml"), join(root, "link.yaml"));
+    const { post } = await boot({ root });
+    const r = await post("/api/file/rename", { from: "link.yaml", to: "x.yaml", text: "t" });
+    expect(r.status).toBe(400);
+    expect(existsSync(join(root, "x.yaml"))).toBe(false);
+    expect(readFileSync(join(outside, "real.yaml"), "utf8")).toBe("keep");
+  });
+});

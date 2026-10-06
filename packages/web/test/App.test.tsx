@@ -76,23 +76,94 @@ describe("shell", () => {
     expect(await screen.findAllByText("bad ref")).toHaveLength(2);
   });
 
-  it("New opens an untitled draft; saving it asks for a name, adds .yaml, saves with create:true", async () => {
+  it("New opens an untitled draft; Save without a name focuses the name field instead of saving", async () => {
     const calls = stubApi({
       "GET /api/config": () => CONFIG_NO_LLM,
       "GET /api/files": () => ({ files: [] }),
       "POST /api/validate": () => OK,
-      "PUT /api/file": () => ({ path: "fresh.yaml" }),
     });
     await renderWorkspace();
     await userEvent.click(await screen.findByRole("button", { name: "New" }));
-    expect(screen.getByText("Untitled schema")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Untitled schema")).toBeTruthy();
     expect((screen.getByLabelText("schema") as HTMLTextAreaElement).value).toBe("");
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
     await userEvent.type(screen.getByLabelText("schema"), "seed: 1");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
-    await userEvent.type(screen.getByLabelText("New file name"), "fresh{Enter}");
+    expect(document.activeElement).toBe(screen.getByLabelText("Schema name"));
+    expect(calls.find((c) => c.key === "PUT /api/file")).toBeUndefined();
+  });
+
+  it("names a draft in the header: Enter or Save creates it, adding .yaml unless an extension is given", async () => {
+    const calls = stubApi({
+      "GET /api/config": () => CONFIG_NO_LLM,
+      "GET /api/files": () => ({ files: [] }),
+      "POST /api/validate": () => OK,
+      "PUT /api/file": (b) => ({ path: (b as { path: string }).path }),
+    });
+    await renderWorkspace();
+    await userEvent.type(screen.getByLabelText("schema"), "seed: 1");
+    await userEvent.type(screen.getByLabelText("Schema name"), "orders{Enter}");
     await waitFor(() => expect(calls.find((c) => c.key === "PUT /api/file")).toBeTruthy());
-    expect(calls.find((c) => c.key === "PUT /api/file")!.body).toMatchObject({ path: "fresh.yaml", create: true });
-    expect(await screen.findByRole("button", { name: "fresh.yaml" })).toBeTruthy();
+    expect(calls.find((c) => c.key === "PUT /api/file")!.body).toEqual({ path: "orders.yaml", text: "seed: 1", create: true });
+    expect(await screen.findByRole("button", { name: "orders.yaml" })).toBeTruthy();
+    expect((screen.getByLabelText("Schema name") as HTMLInputElement).value).toBe("orders.yaml");
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+
+    // A name alone (no content yet) is enough to enable Save.
+    await userEvent.click(screen.getByRole("button", { name: "New" }));
+    await userEvent.type(screen.getByLabelText("Schema name"), "hr.json");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(calls.filter((c) => c.key === "PUT /api/file")).toHaveLength(2));
+    expect(calls.filter((c) => c.key === "PUT /api/file")[1]!.body).toEqual({ path: "hr.json", text: "", create: true });
+  });
+
+  it("editing a saved file's name enables Save, which renames it with the current text", async () => {
+    const calls = stubApi({
+      "GET /api/config": () => CONFIG_NO_LLM,
+      "GET /api/files": () => ({ files: ["shop.yaml", "other.yaml"] }),
+      "GET /api/file": () => ({ path: "shop.yaml", text: "v1" }),
+      "POST /api/validate": () => OK,
+      "POST /api/file/rename": (b) => ({ path: (b as { to: string }).to }),
+    });
+    await renderWorkspace();
+    await userEvent.click(await screen.findByRole("button", { name: "shop.yaml" }));
+    const nameField = screen.getByLabelText("Schema name") as HTMLInputElement;
+    await waitFor(() => expect(nameField.value).toBe("shop.yaml"));
+    const saveButton = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+    expect(saveButton.disabled).toBe(true);
+
+    // Escape puts the old name back.
+    await userEvent.clear(nameField);
+    await userEvent.type(nameField, "nope{Escape}");
+    expect(nameField.value).toBe("shop.yaml");
+    expect(saveButton.disabled).toBe(true);
+
+    await userEvent.type(screen.getByLabelText("schema"), "!");
+    await userEvent.clear(nameField);
+    await userEvent.type(nameField, "store");
+    expect(saveButton.disabled).toBe(false);
+    await userEvent.click(saveButton);
+    await waitFor(() => expect(calls.find((c) => c.key === "POST /api/file/rename")).toBeTruthy());
+    expect(calls.find((c) => c.key === "POST /api/file/rename")!.body).toEqual({ from: "shop.yaml", to: "store.yaml", text: "v1!" });
+    expect(await screen.findByRole("button", { name: "store.yaml" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "shop.yaml" })).toBeNull();
+    expect(screen.getByRole("button", { name: "other.yaml" })).toBeTruthy();
+    await waitFor(() => expect(saveButton.disabled).toBe(true));
+  });
+
+  it("keeps the typed name when a save fails, so it can be corrected", async () => {
+    stubApi({
+      "GET /api/config": () => CONFIG_NO_LLM,
+      "GET /api/files": () => ({ files: ["taken.yaml"] }),
+      "POST /api/validate": () => OK,
+      "PUT /api/file": () => errorResponse(400, "taken.yaml already exists"),
+    });
+    await renderWorkspace();
+    await userEvent.type(screen.getByLabelText("schema"), "seed: 1");
+    await userEvent.type(screen.getByLabelText("Schema name"), "taken{Enter}");
+    expect(await screen.findByText(/already exists/)).toBeTruthy();
+    expect((screen.getByLabelText("Schema name") as HTMLInputElement).value).toBe("taken");
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("shows a failed request as a banner, not a crash", async () => {
@@ -241,7 +312,7 @@ describe("infer", () => {
     await userEvent.click(screen.getByRole("button", { name: "Infer" }));
     await waitFor(() => expect((screen.getByLabelText("schema") as HTMLTextAreaElement).value).toBe("tables:\n  people: {}\n"));
     expect(screen.getByText("skipped nested array x")).toBeTruthy();
-    expect(screen.getByText("Draft not saved yet: press Save to name it.")).toBeTruthy();
+    expect(screen.getByText("Draft not saved yet: name it above the editor and press Save.")).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(calls.find((c) => c.key === "POST /api/infer")!.body).toMatchObject({ content: "id,name", name: "people.csv" });
   });
