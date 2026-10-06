@@ -110,7 +110,7 @@ export const USE_CASES = [
 export const FAQ = [
   {
     q: "Is it free and open source?",
-    a: `Yes. mockdata.com is free to use, with the same per-account limits on rows and model-written text that keep it fair for everyone. The code is open source under the AGPL-3.0 at ${SOURCE_URL}, so you can also run it yourself.`,
+    a: `Yes. mockdata.com is free to use, with the same per-account limits on rows and model-written text that keep it fair for everyone. The code is open source under the AGPL-3.0-or-later at ${SOURCE_URL}, so you can also run it yourself.`,
   },
   {
     q: "Is the output deterministic?",
