@@ -87,7 +87,7 @@ describe("Google sign-in: coming back", () => {
     const s = await begin(app);
     const r = await callback(app, { code: "auth-code-1", state: s.state }, s.cookie);
     expect(r.status).toBe(302);
-    expect(r.headers.get("location")).toBe("/");
+    expect(r.headers.get("location")).toBe("/app");
     const session = sessionCookieOf(r)!;
     expect(session).toMatch(/HttpOnly/);
     expect(session).toMatch(/SameSite=Lax/);
@@ -134,7 +134,7 @@ describe("Google sign-in: coming back", () => {
     const s = await begin(app);
     const expectRefused = async (r: Response) => {
       expect(r.status).toBe(302);
-      expect(r.headers.get("location")).toBe("/?error=google_failed");
+      expect(r.headers.get("location")).toBe("/app?error=google_failed");
       expect(sessionCookieOf(r)).toBeUndefined();
     };
     await expectRefused(await callback(app, { code: "c", state: "not-the-state" }, s.cookie)); // unknown state
@@ -144,7 +144,7 @@ describe("Google sign-in: coming back", () => {
     await expectRefused(await callback(app, { error: "access_denied", state: s.state }, s.cookie)); // the user said no
     expect(google.all).toEqual([]); // none of that reached Google
     // and the state still works for the genuine browser, once
-    expect((await callback(app, { code: "c", state: s.state }, s.cookie)).headers.get("location")).toBe("/");
+    expect((await callback(app, { code: "c", state: s.state }, s.cookie)).headers.get("location")).toBe("/app");
     await expectRefused(await callback(app, { code: "c", state: s.state }, s.cookie)); // replay
   });
 
@@ -162,7 +162,7 @@ describe("Google sign-in: coming back", () => {
       const app = await bootAccounts({ google: GOOGLE, fetch: fakeGoogle(profile, opts).fetchFn });
       const s = await begin(app);
       const r = await callback(app, { code: "c", state: s.state }, s.cookie);
-      expect(r.headers.get("location"), label).toBe("/?error=google_failed");
+      expect(r.headers.get("location"), label).toBe("/app?error=google_failed");
       expect(sessionCookieOf(r), label).toBeUndefined();
     }
   });

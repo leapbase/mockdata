@@ -89,6 +89,22 @@ describe("static files", () => {
     expect((await get("/missing.js")).status).toBe(404);
   });
 
+  it("serves the same page at /app for the workspace, without becoming a catch-all", async () => {
+    const staticDir = mkdtempSync(join(tmpdir(), "mockdata-static-"));
+    writeFileSync(join(staticDir, "index.html"), "<h1>page</h1>");
+    writeFileSync(join(staticDir, "f.woff2"), "w");
+    const { get } = await boot({ staticDir });
+    for (const p of ["/app", "/app/"]) {
+      const r = await get(p);
+      expect(r.status, p).toBe(200);
+      expect(r.raw).toContain("page");
+      expect(r.headers.get("content-security-policy")).toContain("default-src 'self'");
+    }
+    expect((await get("/app/x.js")).status).toBe(404);
+    expect((await get("/elsewhere")).status).toBe(404);
+    expect((await get("/f.woff2")).headers.get("content-type")).toBe("font/woff2");
+  });
+
   it("says the UI is not built when the directory is missing", async () => {
     const { get } = await boot({ staticDir: join(tmpdir(), "mockdata-does-not-exist") });
     const r = await get("/");

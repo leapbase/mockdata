@@ -31,7 +31,7 @@ describe("accounts: sign up, verify, sign in", () => {
     expect(sent).toHaveLength(before);
     expect(sent[0]!.to).toBe("ann@example.com");
     expect(sent[0]!.subject).toMatch(/verify/i);
-    expect(sent[0]!.text).toContain("https://mockdata.example.com/#verify_token=");
+    expect(sent[0]!.text).toContain("https://mockdata.example.com/app#verify_token=");
   });
 
   it("rejects a bad email, a weak password and an oversized body without echoing input", async () => {
@@ -65,7 +65,7 @@ describe("accounts: sign up, verify, sign in", () => {
     await post("/api/auth/register", { email: "ann@example.com", password: PASSWORD });
     const link = new URL(linkIn(sent[0]!));
     expect(link.origin).toBe("https://mockdata.example.com");
-    expect(link.pathname).toBe("/");
+    expect(link.pathname).toBe("/app");
     expect(link.search).toBe("");
     expect(link.hash).toMatch(/^#verify_token=[A-Za-z0-9_-]{40,}$/);
   });
@@ -220,7 +220,7 @@ describe("accounts: passwords", () => {
     expect(known.json).toEqual({ ok: true });
     expect(sent.length - before).toBe(1);
     expect(sent.at(-1)!.to).toBe("ann@example.com");
-    expect(sent.at(-1)!.text).toMatch(/\/#reset_token=/); // a fragment never reaches a proxy log or a Referer header
+    expect(sent.at(-1)!.text).toMatch(/\/app#reset_token=/); // a fragment never reaches a proxy log or a Referer header
   });
 
   it("resets a password with the emailed token: signs out everywhere, signs in fresh, token works once", async () => {

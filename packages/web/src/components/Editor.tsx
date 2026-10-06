@@ -3,6 +3,7 @@ import CodeMirror from "@uiw/react-codemirror";
 import { yaml } from "@codemirror/lang-yaml";
 import { setDiagnostics, type Diagnostic } from "@codemirror/lint";
 import type { EditorView } from "@codemirror/view";
+import { useResolvedTheme } from "../theme";
 
 export interface EditorProps {
   value: string;
@@ -12,6 +13,7 @@ export interface EditorProps {
 
 export default function Editor({ value, onChange, errors }: EditorProps) {
   const view = useRef<EditorView | null>(null);
+  const theme = useResolvedTheme();
 
   // Show the server's validation errors as inline markers (line 1 when the error has no line).
   useEffect(() => {
@@ -28,7 +30,7 @@ export default function Editor({ value, onChange, errors }: EditorProps) {
     <CodeMirror
       value={value}
       height="100%"
-      theme="light"
+      theme={theme}
       extensions={[yaml()]}
       onChange={onChange}
       onCreateEditor={(v: EditorView) => {

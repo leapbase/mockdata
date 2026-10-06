@@ -87,7 +87,7 @@ export const googleCallback: AuthHandler = async (acc, _caller, req, res, url) =
   const fail = (why: string): void => {
     process.stderr.write(`google sign-in refused (${why})\n`);
     appendSetCookie(res, clearCookie(oauthCookieName(acc.config.publicUrl.secure), acc.config.publicUrl.secure));
-    res.writeHead(302, { location: "/?error=google_failed", "referrer-policy": "no-referrer", "cache-control": "no-store" });
+    res.writeHead(302, { location: "/app?error=google_failed", "referrer-policy": "no-referrer", "cache-control": "no-store" });
     res.end();
   };
   const state = url.searchParams.get("state");
@@ -108,6 +108,6 @@ export const googleCallback: AuthHandler = async (acc, _caller, req, res, url) =
   const user = await acc.auth.upsertOAuthUser(input).catch(() => acc.auth.upsertOAuthUser(input));
   await startSession(acc, res, user.id);
   appendSetCookie(res, clearCookie(oauthCookieName(acc.config.publicUrl.secure), acc.config.publicUrl.secure));
-  res.writeHead(302, { location: "/", "referrer-policy": "no-referrer", "cache-control": "no-store" });
+  res.writeHead(302, { location: "/app", "referrer-policy": "no-referrer", "cache-control": "no-store" });
   res.end();
 };

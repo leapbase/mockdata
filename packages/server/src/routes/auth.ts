@@ -39,7 +39,7 @@ function emailOf(acc: AccountsRuntime, body: Record<string, unknown>): string {
 
 /** The emailed link opens the confirm screen. The token sits in the fragment, so no server, proxy log or mail scanner ever sees it. */
 function verificationLink(acc: AccountsRuntime, token: string): string {
-  return `${acc.config.publicUrl.origin}/#verify_token=${token}`;
+  return `${acc.config.publicUrl.origin}/app#verify_token=${token}`;
 }
 
 /** Never put an email address in a log line (SMTP errors usually repeat the recipient). */
@@ -226,7 +226,7 @@ const forgotPassword = mailRoute(async (acc, email) => {
   if (!identity) return;
   const token = await acc.auth.createPasswordResetToken(identity.userId);
   // A fragment is never sent to a server, so the token stays out of proxy logs and Referer headers.
-  queueMail(acc, () => sendPasswordResetEmail(acc.mailer, email, `${acc.config.publicUrl.origin}/#reset_token=${token}`));
+  queueMail(acc, () => sendPasswordResetEmail(acc.mailer, email, `${acc.config.publicUrl.origin}/app#reset_token=${token}`));
 });
 
 const resendVerification = mailRoute(async (acc, email) => {

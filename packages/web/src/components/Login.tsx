@@ -82,13 +82,16 @@ export default function Login({ auth, onSignedIn }: { auth: Me["auth"]; onSigned
 
   return (
     <main className="login">
-      <h1>mockdata</h1>
+      <div className="login-intro">
+        <h1>Welcome to mockdata</h1>
+        <p>Sign in to design schemas and generate related test data.</p>
+      </div>
       {mode === "login" && (
         <form onSubmit={submit(async () => onSignedIn(await login(email, password)))}>
           {banner}
           {emailField}
           {passwordField("Password", false, "current-password")}
-          <button type="submit" disabled={busy}>Sign in</button>
+          <button type="submit" className="primary" disabled={busy}>Sign in</button>
           {auth.googleConfigured && <a className="button" href="/api/auth/google">Continue with Google</a>}
           <p className="links">
             {auth.emailEnabled && <button type="button" className="link" onClick={() => go("register")}>Create an account</button>}
@@ -183,6 +186,7 @@ export default function Login({ auth, onSignedIn }: { auth: Me["auth"]; onSigned
           <button type="button" className="link" onClick={() => go("login")}>Back to sign in</button>
         </form>
       )}
+      <a className="back-home" href="/">← Back to home</a>
     </main>
   );
 }

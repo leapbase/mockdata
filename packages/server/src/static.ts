@@ -12,6 +12,9 @@ const TYPES: Record<string, string> = {
   ".png": "image/png",
   ".ico": "image/x-icon",
   ".map": "application/json",
+  ".webp": "image/webp",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
 };
 
 /** Scripts and connections only from this origin: text from an LLM or a schema can never run code in the page. */
@@ -26,6 +29,8 @@ export function serveStatic(dir: string, pathname: string, res: ServerResponse):
     throw new HttpError(400, "Bad path");
   }
   if (rel.includes("\0")) throw new HttpError(400, "Bad path");
+  // The workspace lives at /app; the page decides between it and the landing page, so serve the same index.html.
+  if (rel === "/app" || rel === "/app/") rel = "/";
   if (rel.endsWith("/")) rel += "index.html";
   const base = path.resolve(dir);
   const file = path.join(base, rel);

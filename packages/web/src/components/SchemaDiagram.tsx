@@ -4,6 +4,7 @@ import dagre from "@dagrejs/dagre";
 import type { SchemaDiagram as DiagramData } from "../api";
 import { DdlDialog, TableMenu, copyTableName, type MenuState } from "./DiagramMenu";
 import type { Dialect } from "../ddl";
+import { useResolvedTheme } from "../theme";
 import "@xyflow/react/dist/style.css";
 
 type TableNode = Node<{ table: DiagramData["tables"][number] }, "table">;
@@ -47,7 +48,7 @@ export function diagramGraph(data: DiagramData): { nodes: TableNode[]; edges: Ed
     if (!target || !targetHandle || !data.tables.some((t) => t.name === target && t.columns.some((col) => col.name === targetHandle))) continue;
     const id = `${table.name}.${c.name}->${c.ref}`;
     graph.setEdge(table.name, target, {}, id);
-    edges.push({ id, source: table.name, sourceHandle: c.name, target, targetHandle: table.name === target ? `self-${targetHandle}` : targetHandle, type: "smoothstep", label: c.name, style: { stroke: "#0a776f", strokeWidth: 1.5 }, labelStyle: { fill: "#0a776f", fontSize: 10 }, labelBgStyle: { fill: "#ffffff" }, markerEnd: { type: MarkerType.ArrowClosed, color: "#0a776f" }, ariaLabel: `${table.name}.${c.name} references ${c.ref}` });
+    edges.push({ id, source: table.name, sourceHandle: c.name, target, targetHandle: table.name === target ? `self-${targetHandle}` : targetHandle, type: "smoothstep", label: c.name, style: { stroke: "var(--edge)", strokeWidth: 1.5 }, labelStyle: { fill: "var(--edge)", fontSize: 10 }, labelBgStyle: { fill: "var(--surface)" }, markerEnd: { type: MarkerType.ArrowClosed, color: "var(--edge)" }, ariaLabel: `${table.name}.${c.name} references ${c.ref}` });
   }
   dagre.layout(graph);
   return { edges, nodes: data.tables.map((table) => {
@@ -59,6 +60,7 @@ export function diagramGraph(data: DiagramData): { nodes: TableNode[]; edges: Ed
 /** `dataTables`: tables that have generated rows in the current preview (enables "Show data"). */
 export default function SchemaDiagram({ data, dataTables = [], onShowData }: { data: DiagramData; dataTables?: string[]; onShowData?: (table: string) => void }) {
   const { nodes: layoutNodes, edges } = useMemo(() => diagramGraph(data), [data]);
+  const theme = useResolvedTheme();
   // Controlled nodes must retain React Flow's measured dimensions before fitting.
   const [nodes, setNodes, onNodesChange] = useNodesState(layoutNodes);
   useEffect(() => setNodes(layoutNodes), [layoutNodes, setNodes]);
@@ -80,12 +82,12 @@ export default function SchemaDiagram({ data, dataTables = [], onShowData }: { d
   }
 
   return <div className="diagram-canvas" aria-label="Schema relationship diagram" onKeyDown={onKeyDown}>
-    <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} nodeTypes={nodeTypes} nodesDraggable={false} nodesConnectable={false} edgesReconnectable={false} elementsSelectable fitView minZoom={0.1} maxZoom={2} fitViewOptions={fitOptions} proOptions={{ hideAttribution: true }}
+    <ReactFlow colorMode={theme} nodes={nodes} edges={edges} onNodesChange={onNodesChange} nodeTypes={nodeTypes} nodesDraggable={false} nodesConnectable={false} edgesReconnectable={false} elementsSelectable fitView minZoom={0.1} maxZoom={2} fitViewOptions={fitOptions} proOptions={{ hideAttribution: true }}
       onNodeContextMenu={(e: ReactMouseEvent, node: Node) => { e.preventDefault(); setMenu({ table: node.id, x: e.clientX, y: e.clientY }); }}
       onPaneContextMenu={(e: ReactMouseEvent | MouseEvent) => { e.preventDefault(); setMenu(null); }}
       onPaneClick={() => setMenu(null)} onNodeClick={() => setMenu(null)} onMoveStart={(e: MouseEvent | TouchEvent | null) => { if (e) setMenu(null); }}>
       <FitViewport nodes={layoutNodes} />
-      <Background color="#d8d3c9" gap={22} size={1} /><Controls showInteractive={false} />
+      <Background color="var(--grid-dot)" gap={22} size={1} /><Controls showInteractive={false} />
     </ReactFlow>
     <div className="diagram-legend">PK Primary key <span>FK Foreign key</span><span>UQ Unique</span><span>? Nullable</span><span>Right-click a table for DDL</span></div>
     {menu && <TableMenu menu={menu} hasData={!!onShowData && dataTables.includes(menu.table)} onShowData={() => { onShowData?.(menu.table); setMenu(null); }} onClose={() => setMenu(null)}

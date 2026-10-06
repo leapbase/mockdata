@@ -15,7 +15,7 @@ const me = (user: typeof USER | null, auth: Partial<{ googleConfigured: boolean;
 const fail = (status: number, message: string, code?: string) => new Response(JSON.stringify({ error: { message, code } }), { status });
 const PASSWORD = "Sup3r$ecretPassw0rd";
 
-beforeEach(() => window.history.replaceState({}, "", "/"));
+beforeEach(() => window.history.replaceState({}, "", "/app"));
 afterEach(() => {
   cleanup();
   setOnUnauthorized(undefined);
@@ -175,7 +175,7 @@ describe("sign-up and email flows", () => {
   });
 
   it("opens the reset form from #reset_token=, removes the token from the address bar, and signs in on success", async () => {
-    window.history.replaceState({}, "", "/#reset_token=tok123");
+    window.history.replaceState({}, "", "/app#reset_token=tok123");
     let signedIn = false;
     const calls = stubApi({
       "GET /api/auth/me": () => me(signedIn ? USER : null),
@@ -195,7 +195,7 @@ describe("sign-up and email flows", () => {
   });
 
   it("opens the confirm screen from #verify_token=, asks for the sign-up password, cleans the address bar, and signs in", async () => {
-    window.history.replaceState({}, "", "/#verify_token=vt123");
+    window.history.replaceState({}, "", "/app#verify_token=vt123");
     let signedIn = false;
     const calls = stubApi({
       "GET /api/auth/me": () => me(signedIn ? USER : null),
@@ -215,7 +215,7 @@ describe("sign-up and email flows", () => {
   });
 
   it("explains a wrong confirm password and points to Forgot password, without losing the screen", async () => {
-    window.history.replaceState({}, "", "/#verify_token=vt123");
+    window.history.replaceState({}, "", "/app#verify_token=vt123");
     stubApi({
       "GET /api/auth/me": () => me(null),
       "POST /api/auth/verify-email": () => fail(400, "That is not the password used to sign up. If you signed up earlier with a different password, use Forgot password.", "verify_password"),
@@ -229,7 +229,7 @@ describe("sign-up and email flows", () => {
   });
 
   it("says when the confirm link is no longer valid", async () => {
-    window.history.replaceState({}, "", "/#verify_token=old");
+    window.history.replaceState({}, "", "/app#verify_token=old");
     stubApi({ "GET /api/auth/me": () => me(null), "POST /api/auth/verify-email": () => fail(400, "This verification link is invalid or has expired", "verify_invalid") });
     render(app());
     await userEvent.type(await screen.findByLabelText("Password"), PASSWORD);
@@ -241,7 +241,7 @@ describe("sign-up and email flows", () => {
 
   it("explains a failed Google attempt from the address", async () => {
     stubApi({ "GET /api/auth/me": () => me(null) });
-    window.history.replaceState({}, "", "/?error=google_failed");
+    window.history.replaceState({}, "", "/app?error=google_failed");
     render(app());
     expect(await screen.findByText(/google sign-in/i)).toBeTruthy();
     expect(window.location.search).toBe("");

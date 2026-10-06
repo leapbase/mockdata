@@ -34,7 +34,7 @@ combined with it. Root is then only where .env is read.
 
 Machines other than this one must present a shared secret: set MOCKDATA_TOKEN (16+ characters,
 in the environment or .env) or one is generated and printed at start. Open the UI once with
-http://<address>:<port>/?token=<token> (it sets a cookie); scripts send "Authorization: Bearer <token>".
+http://<address>:<port>/app?token=<token> (it sets a cookie); scripts send "Authorization: Bearer <token>".
 Anyone holding the token can read and write schema files under root and use your LLM keys.
 Traffic is plain http, so use a network you trust (for example a Tailscale tailnet).
 `;
@@ -63,7 +63,7 @@ if (values.help) {
       const workers = poolSettingsFromEnv(loadEnv(root, process.env));
       const { url, server, token: active, tokenGenerated } = await startServer({ root, port, allow, host: values.host, token, accounts, workers });
       const listening = (server.address() as { port: number }).port;
-      process.stdout.write(`mockdata UI on ${url}  (root: ${root})\n`);
+      process.stdout.write(`mockdata UI on ${url}  (workspace: ${new URL("/app", url)}, root: ${root})\n`);
       process.stdout.write(workers.size > 0 ? `Generation: ${workers.size} worker thread${workers.size === 1 ? "" : "s"}, queue of ${workers.maxQueue}, ${workers.jobTimeoutSecs} s limit per job\n` : "Generation: on the main thread (MOCKDATA_WORKERS=0); a big run will block the page\n");
       if (accounts) {
         const { publicUrl, dataDir } = accounts.config;
@@ -76,7 +76,7 @@ if (values.help) {
         process.stdout.write(`Also open to ${allow.map((c) => c.text).join(", ")}: ${localAddresses().map((a) => `http://${a}:${listening}`).join("  ")}\n`);
         const shown = tokenGenerated ? active : "<your MOCKDATA_TOKEN>";
         process.stdout.write(`${tokenGenerated ? "Generated token (set MOCKDATA_TOKEN to keep one): " : "Token: from MOCKDATA_TOKEN. "}${tokenGenerated ? active : ""}\n`);
-        process.stdout.write(`Open once from another machine: http://<address>:${listening}/?token=${shown}\n`);
+        process.stdout.write(`Open once from another machine: http://<address>:${listening}/app?token=${shown}\n`);
         process.stdout.write("Plain http: use a network you trust.\n");
       }
       process.stdout.write("Press Ctrl+C to stop.\n");

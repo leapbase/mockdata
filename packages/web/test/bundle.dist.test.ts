@@ -16,11 +16,11 @@ describe.skipIf(!built)("production bundle boundaries", () => {
     for (const dep of chunks[entry]?.imports ?? []) staticImports(chunks, dep, seen);
     return seen;
   }
-  it("keeps workspace, editor, and diagram off the sign-in startup path", () => {
+  it("keeps landing, workspace, editor, and diagram off the startup path", () => {
     const chunks = manifest();
     const entry = Object.keys(chunks).find((key) => chunks[key]!.isEntry)!;
     const initial = staticImports(chunks, entry);
-    for (const key of ["src/App.tsx", "src/components/Editor.tsx", "src/components/SchemaDiagram.tsx"]) {
+    for (const key of ["src/App.tsx", "src/landing/Landing.tsx", "src/components/Editor.tsx", "src/components/SchemaDiagram.tsx"]) {
       expect(chunks[key]?.isDynamicEntry).toBe(true);
       expect(initial.has(key)).toBe(false);
     }
@@ -29,6 +29,9 @@ describe.skipIf(!built)("production bundle boundaries", () => {
     const workspace = staticImports(chunks, "src/App.tsx");
     expect(workspace.has("src/components/Editor.tsx")).toBe(false);
     expect(workspace.has("src/components/SchemaDiagram.tsx")).toBe(false);
+    // The landing page and the workspace are loaded independently.
+    expect(staticImports(chunks, "src/landing/Landing.tsx").has("src/App.tsx")).toBe(false);
+    expect(workspace.has("src/landing/Landing.tsx")).toBe(false);
   });
   it("keeps every JavaScript chunk below the existing 500 kB warning threshold", () => {
     for (const chunk of Object.values(manifest())) {
