@@ -347,7 +347,14 @@ const dictionary: Dictionary = {
   "Never commit `.env`: it holds API keys and passwords. The servers never serve it, and neither browsers nor agents can read it.": "切勿提交 `.env`：其中保存着 API 密钥和密码。服务器从不提供它，浏览器和智能体也都无法读取它。",
   "`GET /healthz` answers `{\"ok\":true}` for uptime monitors and reverse proxies, after the same host and token checks as every other request.": "`GET /healthz` 会为可用性监控和反向代理返回 `{\"ok\":true}`，并与其他所有请求一样先经过主机和令牌检查。",
   "Back up with `mockdata-ui --backup <file>`, which copies the account database safely while the server runs; copying `accounts.db` alone can miss recent writes. Back up `<data-dir>/users/` with any file tool, and test a restore.": "使用 `mockdata-ui --backup <file>` 备份，它能在服务器运行时安全地复制账号数据库；只复制 `accounts.db` 可能会丢失最近的写入。用任意文件工具备份 `<data-dir>/users/`，并测试一次恢复。",
-  "Optional `postgres://` URL: the account database in Postgres instead of SQLite, needed to run several servers": "可选的 `postgres://` URL：把账号数据库放在 Postgres 而不是 SQLite 中，运行多台服务器时需要",
+  "Optional `postgres://` URL: the account database in Postgres instead of SQLite, needed to [run several servers](/docs/accounts#several-servers)": "可选的 `postgres://` URL：把账号数据库放在 Postgres 而不是 SQLite 中，[运行多台服务器](/docs/accounts#several-servers)时需要",
+  "Several servers": "多台服务器",
+  "To run several servers behind a load balancer, every server needs:": "要在负载均衡器后面运行多台服务器，每台服务器都需要：",
+  "Per server and not shared, by design: the password-hashing queue, the mail queue and the generation worker threads. One server on SQLite remains the simplest setup.": "以下内容按服务器各自独立、不共享，这是有意为之：密码哈希队列、邮件队列和生成用的工作线程。单台服务器搭配 SQLite 仍是最简单的部署方式。",
+  "**One Postgres account database:** the same `MOCKDATA_ACCOUNTS_DB` URL everywhere. Accounts, sessions, API keys, model budgets, rate limits and run slots are then shared, so a sign-in on one server works on all and each limit is counted once.": "**同一个 Postgres 账号数据库：**所有服务器使用相同的 `MOCKDATA_ACCOUNTS_DB` URL。这样账号、会话、API 密钥、模型预算、频率限制和运行名额都会共享，在一台服务器上登录后在所有服务器上都有效，每项限制也只计一次。",
+  "**The same user files:** `<data-dir>/users` on shared storage (NFS, EFS or similar) at the same path on each server.": "**相同的用户文件：**把 `<data-dir>/users` 放在共享存储上（NFS、EFS 等），并在每台服务器上挂载到相同路径。",
+  "**The same environment:** public address, email, Google and model settings identical everywhere.": "**相同的环境：**公开地址、邮件、Google 和模型设置在所有服务器上保持一致。",
+  "**MCP sessions routed consistently:** a session lives on the server that opened it, so route by the `Mcp-Session-Id` header; another server answers it with 404 and the client reconnects.": "**MCP 会话始终路由到同一台服务器：**会话保存在打开它的那台服务器上，因此请按 `Mcp-Session-Id` 请求头路由；其他服务器会返回 404，客户端随后会重新连接。",
 };
 
 export default dictionary;

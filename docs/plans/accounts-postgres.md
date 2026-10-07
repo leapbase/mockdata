@@ -81,3 +81,12 @@ Each step ships on its own, and a single SQLite server keeps working throughout.
   - Start runs on both and confirm `MOCKDATA_MAX_RUNS` is enforced across them.
   - Connect an MCP client through Caddy and confirm its session stays on one server.
 - **Backups:** run `mockdata-ui backup` during the load test, then open the copy successfully.
+
+## Status (implemented on branch `accounts-postgres`)
+
+- Step 1: `mockdata-ui --backup <file>` (VACUUM INTO over a read-only connection) and backup/restore docs.
+- Step 2: `AccountsDb` over `sql.ts` engines (SQLite, Postgres via `pg`); `MOCKDATA_ACCOUNTS_DB`; budget and key-cap checks under `tx.lock`; store tests on both engines; live concurrency tests (`MOCKDATA_TEST_POSTGRES_URL`) fail without the locks and pass with them; `MOCKDATA_*` names are never inference sources.
+- Step 3: shared `SqlRateLimiter` (hashed keys) and `SqlRunSlots` (leases) on Postgres, schema version 3; every limiter call awaited, enforced by `limiter-await.test.ts`.
+- Step 4: "Running several servers" in the README and docs (3 languages). Verified with two real servers on one Postgres and one data folder: a session from A works on B, files saved via A list on B, failed sign-ins alternated across A and B hit the shared limit at attempt 11, and an MCP session from A gets 404 on B (hence routing by `Mcp-Session-Id`).
+- Load test: about 2,500 (SQLite) vs 2,360 (Postgres) page loads/s with a session; sign-ins 32/s on both.
+- Not verified live: the Caddy `lb_policy header Mcp-Session-Id` config (no proxy installed here) and shared storage over a real network file system.

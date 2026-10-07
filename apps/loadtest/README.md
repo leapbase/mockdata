@@ -12,7 +12,7 @@ threshold:
 | `generate` | `POST /api/generate` on a large schema: CPU on the single event loop, with a probe that shows how long *other* visitors wait meanwhile |
 
 The harness switches off the per-user rate limiters (`runUser`, `validateUser`, and the per-address ones) so it measures
-capacity, not the limiters; everything else is the real server. Options: `--scenarios session,login,generate`,
+capacity, not the limiters; everything else is the real server. Options: `--accounts-db <postgres://...>` (an empty, throwaway database: measure the account database on Postgres instead of SQLite), `--scenarios session,login,generate`,
 `--users 60`, `--step-secs 4`, `--rows 20000` (rows in the generate schema).
 
 `src/kit/` is a vendored copy of `load-test-kit` from the itravelmap repo (`packages/load-test-kit`, commit `0371771`):

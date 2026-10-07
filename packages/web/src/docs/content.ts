@@ -553,7 +553,7 @@ MOCKDATA_ROOT=<folder> node packages/mcp/dist/bin.js --http --allow 100.100.1.x`
         { table: { head: ["Variable", "Meaning"], rows: [
           ["`MOCKDATA_PUBLIC_URL`", "`https://your-domain` (plain http only for localhost)"],
           ["`MOCKDATA_DATA_DIR`", "Accounts database and every user's private folder (default `./mockdata-data`); back it up"],
-          ["`MOCKDATA_ACCOUNTS_DB`", "Optional `postgres://` URL: the account database in Postgres instead of SQLite, needed to run several servers"],
+          ["`MOCKDATA_ACCOUNTS_DB`", "Optional `postgres://` URL: the account database in Postgres instead of SQLite, needed to [run several servers](/docs/accounts#several-servers)"],
           ["`SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`", "Email for verification and password reset"],
           ["`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`", "Optional Google sign-in; redirect URI `<MOCKDATA_PUBLIC_URL>/api/auth/google/callback`"],
           ["`MOCKDATA_TRUST_PROXY`", "Read the visitor's address from `X-Forwarded-For` (default on for https)"],
@@ -569,6 +569,12 @@ MOCKDATA_ROOT=<folder> node packages/mcp/dist/bin.js --http --allow 100.100.1.x`
           ["`MOCKDATA_MAX_RUNS`", "4 runs at once across all users"],
         ] } },
         { p: "Users cannot infer from a database variable or choose a model, provider, address or key in a schema: the operator's settings are used. The same site serves [MCP](/docs/mcp) at `/mcp` with per-user API keys." },
+      ] },
+      { id: "several-servers", title: "Several servers", blocks: [
+        { p: "To run several servers behind a load balancer, every server needs:" },
+        { list: ["**One Postgres account database:** the same `MOCKDATA_ACCOUNTS_DB` URL everywhere. Accounts, sessions, API keys, model budgets, rate limits and run slots are then shared, so a sign-in on one server works on all and each limit is counted once.", "**The same user files:** `<data-dir>/users` on shared storage (NFS, EFS or similar) at the same path on each server.", "**The same environment:** public address, email, Google and model settings identical everywhere.", "**MCP sessions routed consistently:** a session lives on the server that opened it, so route by the `Mcp-Session-Id` header; another server answers it with 404 and the client reconnects."] },
+        { code: "mockdata.example.com {\n  reverse_proxy 10.0.0.11:4747 10.0.0.12:4747 {\n    lb_policy header Mcp-Session-Id\n    health_uri /healthz\n  }\n}", title: "Caddyfile" },
+        { p: "Per server and not shared, by design: the password-hashing queue, the mail queue and the generation worker threads. One server on SQLite remains the simplest setup." },
       ] },
     ],
   },

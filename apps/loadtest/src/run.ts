@@ -15,6 +15,8 @@ const { values } = parseArgs({
     "step-secs": { type: "string", default: "4" },
     rows: { type: "string", default: "20000" },
     workers: { type: "string" },
+    /** Measure the account database on Postgres instead of SQLite: a postgres:// URL to an empty, throwaway database. */
+    "accounts-db": { type: "string" },
   },
 });
 const scenarios = new Set(values.scenarios!.split(","));
@@ -31,6 +33,7 @@ const dir = mkdtempSync(path.join(tmpdir(), "mockdata-loadtest-"));
 const accounts = await createAccounts({
   publicUrl: parsePublicUrl("http://localhost:4747"),
   dataDir: path.join(dir, "data"),
+  databaseUrl: values["accounts-db"],
   configRoot: dir,
   env: {},
   mailer,
@@ -40,12 +43,12 @@ const accounts = await createAccounts({
 });
 // Measure capacity, not the limiters: a virtual user is far faster than a person.
 for (const limiter of Object.values(accounts.limiters)) {
-  limiter.hit = () => true;
-  limiter.isLimited = () => false;
+  limiter.hit = async () => true;
+  limiter.isLimited = async () => false;
 }
 const { server, url } = await startServer({ accounts, root: dir, port: 0, env: {}, workers: poolSettings });
 
-console.log(`mockdata load test against ${url} (real SQLite file, real password hashing, ${userCount} seeded users, ${process.version})`);
+console.log(`mockdata load test against ${url} (account database: ${accounts.db.dialect === "postgres" ? "Postgres" : "real SQLite file"}, real password hashing, ${userCount} seeded users, ${process.version})`);
 console.log(poolSettings.size > 0 ? `generation: ${poolSettings.size} worker thread(s), queue ${poolSettings.maxQueue}` : "generation: on the main thread (no workers)");
 const seedStart = Date.now();
 const cookies: string[] = [];
