@@ -7,7 +7,12 @@
   "exports": {
     ".": "./src/index.ts",
     "./styles.css": "./src/styles.css",
-    "./vite.config": "./vite.config.ts"
+    "./vite.config": "./vite.config.ts",
+    "./docs/content": "./src/docs/content.ts",
+    "./docs/translate": "./src/docs/translate.ts",
+    "./docs/Docs": "./src/docs/Docs.tsx",
+    "./landing/Landing": "./src/landing/Landing.tsx",
+    "./landing/copy": "./src/landing/copy.ts"
   },
   "scripts": {
     "dev": "vite",

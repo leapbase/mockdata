@@ -27,3 +27,12 @@ describe("the web package as a library", () => {
     expect(box.innerHTML).toBe("");
   });
 });
+
+describe("subpath exports an embedding shell's tests rely on", () => {
+  it("resolve to the real modules", async () => {
+    const pkg = JSON.parse((await import("node:fs")).readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    for (const target of Object.values(pkg.exports as Record<string, string>)) {
+      expect((await import("node:fs")).existsSync(new URL(`../${target}`, import.meta.url)), target).toBe(true);
+    }
+  });
+});
