@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Header, LocalGate, Root, mountApp } from "../src/index";
@@ -29,10 +31,10 @@ describe("the web package as a library", () => {
 });
 
 describe("subpath exports an embedding shell's tests rely on", () => {
-  it("resolve to the real modules", async () => {
-    const pkg = JSON.parse((await import("node:fs")).readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  it("resolve to the real modules", () => {
+    const pkg = JSON.parse(readFileSync(resolve("packages/web/package.json"), "utf8"));
     for (const target of Object.values(pkg.exports as Record<string, string>)) {
-      expect((await import("node:fs")).existsSync(new URL(`../${target}`, import.meta.url)), target).toBe(true);
+      expect(existsSync(resolve("packages/web", target)), target).toBe(true);
     }
   });
 });
