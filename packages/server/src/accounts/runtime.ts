@@ -197,6 +197,18 @@ function googleFromEnv(env: Record<string, string | undefined>): { clientId: str
  * MOCKDATA_TRUST_PROXY, quota variables), or undefined when MOCKDATA_PUBLIC_URL is unset. Refuses to
  * start when nobody could sign up. Errors name variables, never values.
  */
+/** Where accounts mode keeps its data: --data-dir, else MOCKDATA_DATA_DIR, else ./mockdata-data. */
+export function accountsDataDir(env: Record<string, string | undefined>, opts: { dataDir?: string; cwd?: string }): string {
+  return path.resolve(opts.cwd ?? process.cwd(), opts.dataDir ?? env.MOCKDATA_DATA_DIR?.trim() ?? "mockdata-data");
+}
+
+/** Copy the account database to `target` (safe while the server runs). Returns the source path. */
+export async function backupAccounts(baseEnv: Record<string, string | undefined>, opts: { configRoot: string; dataDir?: string; cwd?: string; target: string }): Promise<string> {
+  const source = path.join(accountsDataDir(loadEnv(opts.configRoot, baseEnv), opts), "accounts.db");
+  await AccountsDb.backupFile(source, path.resolve(opts.cwd ?? process.cwd(), opts.target));
+  return source;
+}
+
 export async function accountsFromEnv(baseEnv: Record<string, string | undefined>, opts: { configRoot: string; dataDir?: string; cwd?: string }): Promise<AccountsRuntime | undefined> {
   const env = loadEnv(opts.configRoot, baseEnv);
   if (!env.MOCKDATA_PUBLIC_URL?.trim()) return undefined;
@@ -206,6 +218,6 @@ export async function accountsFromEnv(baseEnv: Record<string, string | undefined
   if (!mailer.isConfigured() && !google) {
     throw new NetworkConfigError("Accounts need a way to sign up: set SMTP_HOST and SMTP_FROM (email) and/or GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (Google sign-in)");
   }
-  const dataDir = path.resolve(opts.cwd ?? process.cwd(), opts.dataDir ?? env.MOCKDATA_DATA_DIR?.trim() ?? "mockdata-data");
+  const dataDir = accountsDataDir(env, opts);
   return createAccounts({ publicUrl, dataDir, configRoot: opts.configRoot, env, mailer, google, trustProxy: env.MOCKDATA_TRUST_PROXY === "1" ? true : env.MOCKDATA_TRUST_PROXY === "0" ? false : undefined });
 }

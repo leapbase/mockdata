@@ -142,6 +142,25 @@ export class AccountsDb {
     for (const suffix of ["", "-wal", "-shm"]) if (existsSync(this.file + suffix)) chmodSync(this.file + suffix, 0o600);
   }
 
+  /**
+   * A consistent copy of a live database file (WAL included) at `target`, made with VACUUM INTO over a read-only
+   * connection, so it is safe while a server is writing and never migrates or changes the source. The copy is
+   * readable by this user only. Refuses an existing target.
+   */
+  static async backupFile(source: string, target: string): Promise<void> {
+    if (!existsSync(source)) throw new Error("No account database at that path");
+    if (existsSync(target)) throw new Error("The backup file already exists; choose a new name");
+    const sqlite = await import("node:sqlite");
+    const raw = new sqlite.DatabaseSync(source, { readOnly: true });
+    try {
+      raw.exec("pragma busy_timeout = 5000");
+      raw.prepare("vacuum into ?").run(target);
+    } finally {
+      raw.close();
+    }
+    chmodSync(target, 0o600);
+  }
+
   /** Run `fn` with exclusive use of the connection. */
   async gated<T>(fn: () => T | Promise<T>): Promise<T> {
     const previous = this.tail;

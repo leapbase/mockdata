@@ -557,6 +557,7 @@ MOCKDATA_ROOT=<folder> node packages/mcp/dist/bin.js --http --allow 100.100.1.x`
           ["`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`", "Optional Google sign-in; redirect URI `<MOCKDATA_PUBLIC_URL>/api/auth/google/callback`"],
           ["`MOCKDATA_TRUST_PROXY`", "Read the visitor's address from `X-Forwarded-For` (default on for https)"],
         ] } },
+        { p: "Back up with `mockdata-ui --backup <file>`, which copies the account database safely while the server runs; copying `accounts.db` alone can miss recent writes. Back up `<data-dir>/users/` with any file tool, and test a restore." },
       ] },
       { id: "limits", title: "Per-user limits", blocks: [
         { table: { head: ["Variable", "Default"], rows: [

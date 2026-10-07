@@ -287,7 +287,7 @@ Localhost is not trusted in accounts mode because a reverse proxy that terminate
 | Variable | Meaning |
 |---|---|
 | `MOCKDATA_PUBLIC_URL` | `https://your-domain` (plain http is accepted only for localhost) |
-| `MOCKDATA_DATA_DIR` or `--data-dir` | accounts database and every user's private folder (default `./mockdata-data`); back it up |
+| `MOCKDATA_DATA_DIR` or `--data-dir` | accounts database and every user's private folder (default `./mockdata-data`); back it up (see Backups below) |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | email for verification and password reset. **Resend:** `smtp.resend.com`, port `465`, secure `true`, user `resend`, password = your Resend API key; verify your sending domain in Resend first |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | optional Google sign-in; in Google Cloud add the redirect URI `<MOCKDATA_PUBLIC_URL>/api/auth/google/callback` |
 | `MOCKDATA_TRUST_PROXY` | `1` or `0`. Rate limits need each visitor's address, which a reverse proxy on this machine supplies in `X-Forwarded-For` (the **last** entry is used, and only when the connection comes from localhost). Default: on for an `https` address, off for plain-http localhost. Set `0` if a CDN sits in front of your proxy, because the last entry would then be the CDN, not the visitor |
@@ -306,6 +306,14 @@ mockdata.example.com {
 ```
 MOCKDATA_PUBLIC_URL=https://mockdata.example.com MOCKDATA_TRUST_PROXY=1 npm run ui -- /path/holding/.env
 ```
+
+**Backups.** The account database is SQLite in WAL mode, so copying `accounts.db` on its own while the server runs can give you a broken copy (recent writes sit in `accounts.db-wal`). Use the built-in command, which is safe while the server is running and never changes the source:
+
+```
+npm run ui -- /path/holding/.env --backup /backups/accounts-$(date +%F).db    # or: node packages/server/dist/bin.js ... --backup <file>
+```
+
+It writes a consistent, owner-only copy and refuses to overwrite a file. Back up `<data-dir>/users/` (every user's files) with any file-level tool, and test a restore: stop the server, put the copy at `<data-dir>/accounts.db` (with no `-wal`/`-shm` files beside it) and start it again. For continuous copies, [Litestream](https://litestream.io) can stream `accounts.db` to object storage.
 
 **How it behaves.** Sign-up needs a verified email (a link mailed to the address; Google accounts need Google to report the address as verified). Sessions are a random id in an `HttpOnly`, `SameSite=Lax` cookie (named `__Host-mockdata_session` and `Secure` over https, so a sibling subdomain cannot plant one), stored hashed on the server, sliding over 30 days and never longer than 90. Sign-up, sign-in and reset answer the same whether or not an address exists, and email is sent after the answer so a slow mail server does not show in response times. Confirming an address needs both proofs: the emailed link (the mailbox) **and** the password chosen at sign-up, typed on a confirm screen, so a stranger who signs up first with someone else's address cannot be handed that account when the real owner clicks. That owner recovers with "Forgot password?", which proves the mailbox, replaces the password and signs everyone else out. Signing up again with an address that is already registered changes nothing (not the password, not the sessions, not earlier links); an unverified one is mailed one more link, limited to five mails an hour per mailbox. Resetting or changing a password signs out the other sessions, and "Sign out everywhere" ends all of them. Emailed links keep their one-time token in the URL fragment, so it never reaches a proxy log, a Referer header or a mail scanner (verifying is a POST, not a link that does something when opened). Each user gets a private folder named by a random id; nobody can read or write outside their own, and the account database (kept private to the server's user) lives outside all of them.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
 import { loadEnv, localAddresses, parseAllow, tokenFromEnv, type Cidr } from "@mockdata/cli";
-import { accountsFromEnv } from "./accounts/runtime.js";
+import { accountsFromEnv, backupAccounts } from "./accounts/runtime.js";
 import { poolSettingsFromEnv } from "./workers/factory.js";
 import { startServer } from "./listen.js";
 
@@ -9,6 +9,7 @@ const HELP = `mockdata-ui - local web UI for mockdata
 
 Usage:
   mockdata-ui [root] [--port <n>] [--allow <ranges>] [--host <address>] [--data-dir <dir>]
+  mockdata-ui [root] --backup <file> [--data-dir <dir>]
 
   root            folder holding your schema files and .env (default: current directory)
   --port <n>      port (default 4747)
@@ -19,6 +20,8 @@ Usage:
   --host <addr>   address to bind (default 127.0.0.1, or 0.0.0.0 with --allow)
   --data-dir <d>  accounts mode: where accounts and each user's private folder live
                   (default $MOCKDATA_DATA_DIR or ./mockdata-data)
+  --backup <file> accounts mode: write a consistent copy of the account database to <file>
+                  and exit. Safe while the server runs; back up <data-dir>/users with any file tool.
   -h, --help
 
 Generation runs in worker threads so a big run does not freeze the page for everyone: MOCKDATA_WORKERS
@@ -41,7 +44,7 @@ Traffic is plain http, so use a network you trust (for example a Tailscale tailn
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
-  options: { port: { type: "string" }, allow: { type: "string" }, host: { type: "string" }, "data-dir": { type: "string" }, help: { type: "boolean", short: "h" } },
+  options: { port: { type: "string" }, allow: { type: "string" }, host: { type: "string" }, "data-dir": { type: "string" }, backup: { type: "string" }, help: { type: "boolean", short: "h" } },
 });
 
 if (values.help) {
@@ -49,6 +52,14 @@ if (values.help) {
 } else if (positionals.length > 1) {
   process.stderr.write(`Expected at most one folder\n\n${HELP}`);
   process.exitCode = 1;
+} else if (values.backup !== undefined) {
+  try {
+    const source = await backupAccounts(process.env, { configRoot: positionals[0] ?? process.cwd(), dataDir: values["data-dir"], target: values.backup });
+    process.stdout.write(`Backed up ${source} to ${values.backup}\n`);
+  } catch (e) {
+    process.stderr.write(`Backup failed: ${(e as Error).message}\n`);
+    process.exitCode = 1;
+  }
 } else {
   const port = values.port === undefined ? 4747 : Number(values.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
