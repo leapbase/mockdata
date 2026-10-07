@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import Elk from "elkjs/lib/elk.bundled.js";
 import { parse } from "yaml";
 import { parseSchema } from "@mockdata/core";
+import { DIAGRAM, DIAGRAM_EXAMPLE } from "../src/landing/diagram";
 import { CARD_WIDTH, LAYOUT_ENGINES, dagreLayout, edgeSides, elkGraph, elkLayout, type DiagramLayout, type LayoutEngine } from "../src/diagramLayout";
 import type { DiagramColumn, SchemaDiagram } from "../src/api";
 const id: DiagramColumn = { name: "id", type: "integer", primaryKey: true, unique: false, nullable: false };
@@ -120,4 +121,10 @@ describe("every layout engine", () => {
       }
     });
   }
+});
+
+describe("landing page diagram", () => {
+  it("is exactly what the server returns for its example schema", () => {
+    expect(DIAGRAM).toEqual(exampleDiagram(DIAGRAM_EXAMPLE));
+  });
 });

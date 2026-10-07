@@ -10,6 +10,7 @@ export type LandingCopy = {
   hero: { pill: string; title: string; titleAccent: string; lead: string; seeSchema: string; facts: string[]; factsLabel: string; demoLabel: string; demoCaption: string };
   how: { eyebrow: string; title: string; intro: string; steps: Item[] };
   features: { eyebrow: string; title: string; intro: string; items: Item[] };
+  diagram: { eyebrow: string; title: string; intro: string; caption: string; loading: string };
   snippets: { eyebrow: string; title: string; intro: string; tabsLabel: string; schema: string; cli: string; mcp: string };
   useCases: { eyebrow: string; title: string; items: Item[] };
   faq: { eyebrow: string; title: string; items: { q: string; a: string }[] };
@@ -38,6 +39,12 @@ const en: LandingCopy = {
       { title: "Generate", body: "Parents are generated before children, so every foreign key resolves. Constraints hold by construction and are re-checked before anything is returned." },
       { title: "Export", body: "Download JSON, NDJSON or CSV (one file per table, or a zip), or copy CREATE TABLE statements for PostgreSQL, MySQL or SQLite." },
     ],
+  },
+  diagram: {
+    eyebrow: "Relationships", title: "See how your tables connect",
+    intro: "Every schema gets a live diagram in the workspace: each arrow is a foreign key, from the column that holds it to the row it points at.",
+    caption: "examples/supply-chain.yaml · nine tables · drag to pan, use the buttons to zoom",
+    loading: "Loading the diagram…",
   },
   features: {
     eyebrow: "Features", title: "More than random rows", intro: "Constraints are enforced by code and checked again, not left to a prompt.",
@@ -100,6 +107,12 @@ const es: LandingCopy = {
       { title: "Exporta", body: "Descarga JSON, NDJSON o CSV (un archivo por tabla, o un zip), o copia sentencias CREATE TABLE para PostgreSQL, MySQL o SQLite." },
     ],
   },
+  diagram: {
+    eyebrow: "Relaciones", title: "Mira cómo se conectan tus tablas",
+    intro: "Cada esquema tiene un diagrama en vivo en el espacio de trabajo: cada flecha es una clave foránea, desde la columna que la contiene hasta la fila a la que apunta.",
+    caption: "examples/supply-chain.yaml · nueve tablas · arrastra para desplazarte, usa los botones para ampliar",
+    loading: "Cargando el diagrama…",
+  },
   features: {
     eyebrow: "Funciones", title: "Más que filas aleatorias", intro: "Las restricciones se aplican con código y se vuelven a comprobar; no se dejan en manos de un prompt.",
     items: [
@@ -160,6 +173,12 @@ const zh: LandingCopy = {
       { title: "生成", body: "先生成父表再生成子表，因此每个外键都能对应上。约束在生成时即被满足，并在返回前再次校验。" },
       { title: "导出", body: "下载 JSON、NDJSON 或 CSV（每张表一个文件，或打包为 zip），也可以复制适用于 PostgreSQL、MySQL 或 SQLite 的 CREATE TABLE 语句。" },
     ],
+  },
+  diagram: {
+    eyebrow: "关系", title: "一眼看清表之间的关系",
+    intro: "每份 Schema 在工作区中都有一张实时关系图：每条箭头代表一个外键，从存放外键的列指向它所引用的行。",
+    caption: "examples/supply-chain.yaml · 九张表 · 拖动可平移，用按钮缩放",
+    loading: "正在加载关系图…",
   },
   features: {
     eyebrow: "功能", title: "不只是随机数据", intro: "约束由代码执行并再次校验，而不是交给提示词碰运气。",

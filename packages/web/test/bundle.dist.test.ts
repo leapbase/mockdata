@@ -31,6 +31,8 @@ describe.skipIf(!built)("production bundle boundaries", () => {
     expect(workspace.has("src/components/SchemaDiagram.tsx")).toBe(false);
     // The landing page and the workspace are loaded independently.
     expect(staticImports(chunks, "src/landing/Landing.tsx").has("src/App.tsx")).toBe(false);
+    // The landing page's diagram (React Flow, ELK) loads only when its section scrolls near.
+    expect(staticImports(chunks, "src/landing/Landing.tsx").has("src/components/SchemaDiagram.tsx")).toBe(false);
     expect(workspace.has("src/landing/Landing.tsx")).toBe(false);
     expect(workspace.has("src/docs/Docs.tsx")).toBe(false);
     // Each docs translation is its own chunk, fetched only when that language is chosen.

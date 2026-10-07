@@ -76,10 +76,14 @@ function useLayout(data: DiagramData, engine: LayoutEngine, direction: Direction
   return { layout: fallback, engine: "dagre", failed: engine !== "dagre" && !!current };
 }
 
-/** `dataTables`: tables that have generated rows in the current preview (enables "Show data"). */
-export default function SchemaDiagram({ data, dataTables = [], onShowData }: { data: DiagramData; dataTables?: string[]; onShowData?: (table: string) => void }) {
-  const [direction, setDirection] = useState<Direction>(() => stored(DIRECTION_KEY, isDirection, "LR"));
-  const [chosen, setChosen] = useState<LayoutEngine>(() => stored(ENGINE_KEY, isLayoutEngine, "layered"));
+/**
+ * `dataTables`: tables that have generated rows in the current preview (enables "Show data").
+ * `embedded` (the landing page): the default layout whatever the visitor chose in the workspace, no toolbar, legend or
+ * table menu, and the mouse wheel scrolls the page instead of zooming the diagram.
+ */
+export default function SchemaDiagram({ data, dataTables = [], onShowData, embedded = false }: { data: DiagramData; dataTables?: string[]; onShowData?: (table: string) => void; embedded?: boolean }) {
+  const [direction, setDirection] = useState<Direction>(() => (embedded ? "LR" : stored(DIRECTION_KEY, isDirection, "LR")));
+  const [chosen, setChosen] = useState<LayoutEngine>(() => (embedded ? "layered" : stored(ENGINE_KEY, isLayoutEngine, "layered")));
   const { layout: { nodes: layoutNodes, edges }, engine: shown, failed } = useLayout(data, chosen, direction);
   const theme = useResolvedTheme();
   // Controlled nodes must retain React Flow's measured dimensions before fitting.
@@ -94,7 +98,7 @@ export default function SchemaDiagram({ data, dataTables = [], onShowData }: { d
 
   /** Shift+F10 / the context-menu key opens the menu for the focused table, like a right-click. */
   function onKeyDown(e: ReactKeyboardEvent) {
-    if (e.key !== "ContextMenu" && !(e.shiftKey && e.key === "F10")) return;
+    if (embedded || (e.key !== "ContextMenu" && !(e.shiftKey && e.key === "F10"))) return;
     const card = (e.target as HTMLElement).closest<HTMLElement>(".react-flow__node");
     if (!card?.dataset.id) return;
     e.preventDefault();
@@ -116,13 +120,14 @@ export default function SchemaDiagram({ data, dataTables = [], onShowData }: { d
 
   return <div className="diagram-canvas" aria-label="Schema relationship diagram" data-layout-engine={shown} onKeyDown={onKeyDown}>
     <ReactFlow colorMode={theme} nodes={nodes} edges={edges} onNodesChange={onNodesChange} nodeTypes={nodeTypes} nodesDraggable={false} nodesConnectable={false} edgesReconnectable={false} elementsSelectable fitView minZoom={0.1} maxZoom={2} fitViewOptions={fitOptions} proOptions={{ hideAttribution: true }}
-      onNodeContextMenu={(e: ReactMouseEvent, node: Node) => { e.preventDefault(); setMenu({ table: node.id, x: e.clientX, y: e.clientY }); }}
+      zoomOnScroll={!embedded} preventScrolling={!embedded}
+      onNodeContextMenu={embedded ? undefined : (e: ReactMouseEvent, node: Node) => { e.preventDefault(); setMenu({ table: node.id, x: e.clientX, y: e.clientY }); }}
       onPaneContextMenu={(e: ReactMouseEvent | MouseEvent) => { e.preventDefault(); setMenu(null); }}
       onPaneClick={() => setMenu(null)} onNodeClick={() => setMenu(null)} onMoveStart={(e: MouseEvent | TouchEvent | null) => { if (e) setMenu(null); }}>
       <FitViewport nodes={layoutNodes} />
       <Background color="var(--grid-dot)" gap={22} size={1} /><Controls showInteractive={false} />
     </ReactFlow>
-    <div className="diagram-toolbar">
+    {!embedded && <><div className="diagram-toolbar">
       <label className="diagram-engine">Layout
         <select value={chosen} onChange={(e) => chooseEngine(e.target.value as LayoutEngine)} title={LAYOUT_ENGINES.find((e) => e.id === chosen)!.hint}>
           {LAYOUT_ENGINES.map((e) => <option key={e.id} value={e.id} title={e.hint}>{e.label}</option>)}
@@ -134,7 +139,7 @@ export default function SchemaDiagram({ data, dataTables = [], onShowData }: { d
       </div>
       {failed && <span className="diagram-layout-note" role="status">Layout engine unavailable; showing the basic layout</span>}
     </div>
-    <div className="diagram-legend">PK Primary key <span>FK Foreign key</span><span>UQ Unique</span><span>? Nullable</span><span>Right-click a table for DDL</span></div>
+    <div className="diagram-legend">PK Primary key <span>FK Foreign key</span><span>UQ Unique</span><span>? Nullable</span><span>Right-click a table for DDL</span></div></>}
     {menu && <TableMenu menu={menu} hasData={!!onShowData && dataTables.includes(menu.table)} onShowData={() => { onShowData?.(menu.table); setMenu(null); }} onClose={() => setMenu(null)}
       onDdl={(dialect) => { setDdl({ table: menu.table, dialect }); setMenu(null); }}
       onCopyName={() => { void copyTableName(menu.table); setMenu(null); }} />}

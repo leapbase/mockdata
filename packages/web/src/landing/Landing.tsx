@@ -1,10 +1,14 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { getMe, type Me } from "../api";
 import Header from "../components/Header";
 import { navigateTabs } from "../tabs";
 import { useLocale } from "../i18n";
 import { CLI_SNIPPET, FEATURE_ICONS, MCP_SNIPPET, SAMPLE_COLUMNS, SAMPLE_ROWS, SCHEMA_SNIPPET, SOURCE_URL } from "./content";
 import { LANDING_COPY, type LandingCopy } from "./copy";
+import { DIAGRAM } from "./diagram";
+
+// The workspace's own diagram (React Flow + ELK), fetched only when its section comes near the screen.
+const SchemaDiagram = lazy(() => import("../components/SchemaDiagram"));
 import "./landing.css";
 
 const ICONS: Record<(typeof FEATURE_ICONS)[number], ReactNode> = {
@@ -30,6 +34,25 @@ const SNIPPETS = [
   { id: "cli", text: CLI_SNIPPET },
   { id: "mcp", text: MCP_SNIPPET },
 ] as const;
+
+/** Loads the diagram once the section is within a screen of view; without IntersectionObserver it stays a placeholder. */
+function DiagramPreview({ t }: { t: LandingCopy["diagram"] }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [near, setNear] = useState(false);
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined" || !box.current) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) { setNear(true); observer.disconnect(); }
+    }, { rootMargin: "600px 0px" });
+    observer.observe(box.current);
+    return () => observer.disconnect();
+  }, []);
+  const placeholder = <p className="landing-diagram-loading" role="status">{t.loading}</p>;
+  return <figure className="landing-diagram card" aria-label={t.title}>
+    <div ref={box} className="landing-diagram-canvas">{near ? <Suspense fallback={placeholder}><SchemaDiagram data={DIAGRAM} embedded /></Suspense> : placeholder}</div>
+    <figcaption>{t.caption}</figcaption>
+  </figure>;
+}
 
 /** Labels for the calls to action: a signed-out visitor in accounts mode is asked to sign in, everyone else goes straight in. */
 function useCta(t: LandingCopy): { primary: string; nav: string } {
@@ -119,7 +142,16 @@ export default function Landing() {
           </ol>
         </section>
 
-        <section id="features" aria-labelledby="features-title">
+        <section id="diagram" aria-labelledby="diagram-title">
+          <header className="section-head">
+            <p className="eyebrow">{t.diagram.eyebrow}</p>
+            <h2 id="diagram-title">{t.diagram.title}</h2>
+            <p>{t.diagram.intro}</p>
+          </header>
+          <DiagramPreview t={t.diagram} />
+        </section>
+
+        <section id="features" className="band" aria-labelledby="features-title">
           <header className="section-head">
             <p className="eyebrow">{t.features.eyebrow}</p>
             <h2 id="features-title">{t.features.title}</h2>
@@ -136,7 +168,7 @@ export default function Landing() {
           </ul>
         </section>
 
-        <section id="snippets" className="band" aria-labelledby="snippets-title">
+        <section id="snippets" aria-labelledby="snippets-title">
           <header className="section-head">
             <p className="eyebrow">{t.snippets.eyebrow}</p>
             <h2 id="snippets-title">{t.snippets.title}</h2>
@@ -154,7 +186,7 @@ export default function Landing() {
           </div>
         </section>
 
-        <section id="use-cases" aria-labelledby="use-cases-title">
+        <section id="use-cases" className="band" aria-labelledby="use-cases-title">
           <header className="section-head">
             <p className="eyebrow">{t.useCases.eyebrow}</p>
             <h2 id="use-cases-title">{t.useCases.title}</h2>
@@ -169,7 +201,7 @@ export default function Landing() {
           </ul>
         </section>
 
-        <section id="faq" className="band" aria-labelledby="faq-title">
+        <section id="faq" aria-labelledby="faq-title">
           <header className="section-head">
             <p className="eyebrow">{t.faq.eyebrow}</p>
             <h2 id="faq-title">{t.faq.title}</h2>
