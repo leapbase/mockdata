@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { Background, Controls, Handle, MarkerType, Position, ReactFlow, useNodesInitialized, useNodesState, useReactFlow, useStore, type Node, type NodeProps, type Edge } from "@xyflow/react";
-import dagre from "@dagrejs/dagre";
+import { Background, Controls, Handle, Position, ReactFlow, useNodesInitialized, useNodesState, useReactFlow, useStore, type Node, type NodeProps } from "@xyflow/react";
 import type { SchemaDiagram as DiagramData } from "../api";
+import { dagreLayout, elkLayout, loadElk, type DiagramLayout, type Direction, type TableNode } from "../diagramLayout";
 import { DdlDialog, TableMenu, copyTableName, type MenuState } from "./DiagramMenu";
 import type { Dialect } from "../ddl";
 import { useResolvedTheme } from "../theme";
 import "@xyflow/react/dist/style.css";
 
-type TableNode = Node<{ table: DiagramData["tables"][number] }, "table">;
 function TableCard({ data }: NodeProps<TableNode>) {
   const selfTargets = new Set(data.table.columns.filter((c) => c.ref?.split(".")[0] === data.table.name).map((c) => c.ref!.split(".")[1]));
   return <div className="diagram-table">
@@ -38,28 +37,38 @@ function FitViewport({ nodes }: { nodes: TableNode[] }) {
   return null;
 }
 
-export function diagramGraph(data: DiagramData): { nodes: TableNode[]; edges: Edge[] } {
-  const graph = new dagre.graphlib.Graph({ multigraph: true }).setGraph({ rankdir: "LR", nodesep: 60, ranksep: 120, marginx: 40, marginy: 40 }).setDefaultEdgeLabel(() => ({}));
-  for (const t of data.tables) graph.setNode(t.name, { width: 290, height: 48 + t.columns.length * 32 });
-  const edges: Edge[] = [];
-  for (const table of data.tables) for (const c of table.columns) {
-    if (!c.ref) continue;
-    const [target, targetHandle] = c.ref.split(".");
-    if (!target || !targetHandle || !data.tables.some((t) => t.name === target && t.columns.some((col) => col.name === targetHandle))) continue;
-    const id = `${table.name}.${c.name}->${c.ref}`;
-    graph.setEdge(table.name, target, {}, id);
-    edges.push({ id, source: table.name, sourceHandle: c.name, target, targetHandle: table.name === target ? `self-${targetHandle}` : targetHandle, type: "smoothstep", label: c.name, style: { stroke: "var(--edge)", strokeWidth: 1.5 }, labelStyle: { fill: "var(--edge)", fontSize: 10 }, labelBgStyle: { fill: "var(--surface)" }, markerEnd: { type: MarkerType.ArrowClosed, color: "var(--edge)" }, ariaLabel: `${table.name}.${c.name} references ${c.ref}` });
-  }
-  dagre.layout(graph);
-  return { edges, nodes: data.tables.map((table) => {
-    const pos = graph.node(table.name);
-    return { id: table.name, type: "table", data: { table }, position: { x: pos.x - 145, y: pos.y - (48 + table.columns.length * 32) / 2 }, ariaLabel: `Table ${table.name}, ${table.rows} rows` };
-  }) };
+const DIRECTION_KEY = "mockdata-diagram-direction";
+/** Storage can be missing or blocked (private windows), which means the default. */
+function storedDirection(): Direction {
+  try { return localStorage.getItem(DIRECTION_KEY) === "TB" ? "TB" : "LR"; } catch { return "LR"; }
+}
+function saveDirection(direction: Direction): void {
+  try { localStorage.setItem(DIRECTION_KEY, direction); } catch { /* applied for this page only */ }
+}
+
+let warned = false;
+/**
+ * Dagre's layout is shown at once; ELK's port-aware layout replaces it when the worker answers. A result only applies
+ * to the data and direction it was computed for, so a stale answer from a previous edit is ignored.
+ */
+function useLayout(data: DiagramData, direction: Direction): { layout: DiagramLayout; engine: "dagre" | "elk" } {
+  const fallback = useMemo(() => dagreLayout(data, direction), [data, direction]);
+  const [elk, setElk] = useState<{ data: DiagramData; direction: Direction; layout: DiagramLayout } | null>(null);
+  useEffect(() => {
+    let live = true;
+    loadElk().then((engine) => elkLayout(engine, data, direction)).then(
+      (layout) => { if (live) setElk({ data, direction, layout }); },
+      (e: unknown) => { if (!warned) { warned = true; console.warn("Diagram: ELK layout unavailable, using the basic layout", e); } },
+    );
+    return () => { live = false; };
+  }, [data, direction]);
+  return elk && elk.data === data && elk.direction === direction ? { layout: elk.layout, engine: "elk" } : { layout: fallback, engine: "dagre" };
 }
 
 /** `dataTables`: tables that have generated rows in the current preview (enables "Show data"). */
 export default function SchemaDiagram({ data, dataTables = [], onShowData }: { data: DiagramData; dataTables?: string[]; onShowData?: (table: string) => void }) {
-  const { nodes: layoutNodes, edges } = useMemo(() => diagramGraph(data), [data]);
+  const [direction, setDirection] = useState<Direction>(storedDirection);
+  const { layout: { nodes: layoutNodes, edges }, engine } = useLayout(data, direction);
   const theme = useResolvedTheme();
   // Controlled nodes must retain React Flow's measured dimensions before fitting.
   const [nodes, setNodes, onNodesChange] = useNodesState(layoutNodes);
@@ -81,7 +90,13 @@ export default function SchemaDiagram({ data, dataTables = [], onShowData }: { d
     setMenu({ table: card.dataset.id, x: r.left + 16, y: r.top + 24 });
   }
 
-  return <div className="diagram-canvas" aria-label="Schema relationship diagram" onKeyDown={onKeyDown}>
+  function chooseDirection(next: Direction) {
+    setDirection(next);
+    saveDirection(next);
+    setMenu(null);
+  }
+
+  return <div className="diagram-canvas" aria-label="Schema relationship diagram" data-layout-engine={engine} onKeyDown={onKeyDown}>
     <ReactFlow colorMode={theme} nodes={nodes} edges={edges} onNodesChange={onNodesChange} nodeTypes={nodeTypes} nodesDraggable={false} nodesConnectable={false} edgesReconnectable={false} elementsSelectable fitView minZoom={0.1} maxZoom={2} fitViewOptions={fitOptions} proOptions={{ hideAttribution: true }}
       onNodeContextMenu={(e: ReactMouseEvent, node: Node) => { e.preventDefault(); setMenu({ table: node.id, x: e.clientX, y: e.clientY }); }}
       onPaneContextMenu={(e: ReactMouseEvent | MouseEvent) => { e.preventDefault(); setMenu(null); }}
@@ -89,6 +104,10 @@ export default function SchemaDiagram({ data, dataTables = [], onShowData }: { d
       <FitViewport nodes={layoutNodes} />
       <Background color="var(--grid-dot)" gap={22} size={1} /><Controls showInteractive={false} />
     </ReactFlow>
+    <div className="diagram-direction" role="group" aria-label="Layout direction">
+      {([["LR", "Left to right"], ["TB", "Top to bottom"]] as const).map(([value, label]) =>
+        <button key={value} type="button" aria-pressed={direction === value} onClick={() => chooseDirection(value)}>{label}</button>)}
+    </div>
     <div className="diagram-legend">PK Primary key <span>FK Foreign key</span><span>UQ Unique</span><span>? Nullable</span><span>Right-click a table for DDL</span></div>
     {menu && <TableMenu menu={menu} hasData={!!onShowData && dataTables.includes(menu.table)} onShowData={() => { onShowData?.(menu.table); setMenu(null); }} onClose={() => setMenu(null)}
       onDdl={(dialect) => { setDdl({ table: menu.table, dialect }); setMenu(null); }}

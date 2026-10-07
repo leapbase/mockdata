@@ -33,9 +33,18 @@ describe.skipIf(!built)("production bundle boundaries", () => {
     expect(staticImports(chunks, "src/landing/Landing.tsx").has("src/App.tsx")).toBe(false);
     expect(workspace.has("src/landing/Landing.tsx")).toBe(false);
   });
+  // The ELK layout engine is a prebuilt worker script (about 1.6 MB), fetched only when a diagram creates its Worker.
+  const isElkWorker = (key: string) => key.endsWith("elkjs/lib/elk-worker.min.js");
   it("keeps every JavaScript chunk below the existing 500 kB warning threshold", () => {
-    for (const chunk of Object.values(manifest())) {
-      if (chunk.file.endsWith(".js")) expect(statSync(new URL(chunk.file, dist)).size, chunk.file).toBeLessThan(500_000);
+    for (const [key, chunk] of Object.entries(manifest())) {
+      if (chunk.file.endsWith(".js") && !isElkWorker(key)) expect(statSync(new URL(chunk.file, dist)).size, chunk.file).toBeLessThan(500_000);
     }
+  });
+  it("ships the ELK worker as a separate asset that no chunk imports", () => {
+    const chunks = manifest();
+    const worker = Object.keys(chunks).find(isElkWorker);
+    expect(worker).toBeDefined();
+    for (const chunk of Object.values(chunks)) expect(chunk.imports ?? []).not.toContain(worker);
+    expect(statSync(new URL(chunks[worker!]!.file, dist)).size).toBeLessThan(2_500_000);
   });
 });
