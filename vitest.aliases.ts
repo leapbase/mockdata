@@ -11,6 +11,7 @@ export function mockdataAliases(repoRoot: string): Record<string, string> {
     "@mockdata/llm": src("llm"),
     "@mockdata/inputs": src("inputs"),
     "@mockdata/mcp": src("mcp"),
+    "@mockdata/server": src("server"),
     "@mockdata/cli": src("cli", "cli.ts"),
   };
 }

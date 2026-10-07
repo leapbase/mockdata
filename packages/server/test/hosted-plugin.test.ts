@@ -137,3 +137,13 @@ describe("HostedPlugin: the seam between the open server and a hosted layer", ()
     expect((await app.call("GET", "/api/auth/me")).json.auth.accountsEnabled).toBe(false);
   });
 });
+
+describe("the server's public API for a hosted layer", () => {
+  it("exports the helpers a plugin's routes and errors need", async () => {
+    const api = await import("../src/index.js");
+    for (const name of ["createApp", "startServer", "poolSettingsFromEnv", "HttpError", "readJson", "sendJson", "reqString", "optString", "optInt", "optBool", "optEnum", "optStringArray", "abortOnClose", "publicMessage", "statusFor", "beginRun"]) {
+      expect(typeof (api as Record<string, unknown>)[name], name).toBe("function");
+    }
+    expect(api.MODELS_OFF).toMatch(/not available/);
+  });
+});
