@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import Elk from "elkjs/lib/elk.bundled.js";
 import { parse } from "yaml";
 import { parseSchema } from "@mockdata/core";
-import { CARD_WIDTH, LAYOUT_ENGINES, dagreLayout, elkGraph, elkLayout, type DiagramLayout, type LayoutEngine } from "../src/diagramLayout";
+import { CARD_WIDTH, LAYOUT_ENGINES, dagreLayout, edgeSides, elkGraph, elkLayout, type DiagramLayout, type LayoutEngine } from "../src/diagramLayout";
 import type { DiagramColumn, SchemaDiagram } from "../src/api";
 const id: DiagramColumn = { name: "id", type: "integer", primaryKey: true, unique: false, nullable: false };
 const twoTables: SchemaDiagram = { tables: [
@@ -21,7 +21,7 @@ const at = (layout: DiagramLayout, name: string) => layout.nodes.find((n) => n.i
 describe("schema diagram layout (dagre)", () => {
   it("connects references to the correct column handles without overlapping tables", () => {
     const graph = dagreLayout(twoTables);
-    expect(graph.edges[0]).toMatchObject({ source: "orders", sourceHandle: "person_id", target: "people", targetHandle: "id" });
+    expect(graph.edges[0]).toMatchObject({ source: "orders", sourceHandle: "out-right:person_id", target: "people", targetHandle: "in-left:id" });
     const [a, b] = graph.nodes;
     expect(Math.abs(a!.position.x - b!.position.x)).toBeGreaterThanOrEqual(CARD_WIDTH);
     expect(graph.nodes[1]!.data.table.rows).toBe(4);
@@ -29,12 +29,28 @@ describe("schema diagram layout (dagre)", () => {
   it("lays out self references and cycles with finite positions", () => {
     const graph = dagreLayout(cyclic);
     expect(graph.edges).toHaveLength(3);
-    expect(graph.edges[0]).toMatchObject({ source: "a", target: "a", sourceHandle: "parent", targetHandle: "self-id" });
+    expect(graph.edges[0]).toMatchObject({ source: "a", target: "a", sourceHandle: "out-right:parent", targetHandle: "in-right:id" });
     expect(graph.nodes.every((n) => Number.isFinite(n.position.x) && Number.isFinite(n.position.y))).toBe(true);
   });
   it("stacks related tables vertically top to bottom", () => {
     const graph = dagreLayout(twoTables, "TB");
     expect(at(graph, "people").y).toBeGreaterThan(at(graph, "orders").y);
+  });
+});
+
+describe("edge sides", () => {
+  it("faces the cards toward each other, or loops on one side when they are stacked", () => {
+    expect(edgeSides({ x: 0 }, { x: CARD_WIDTH + 10 })).toEqual(["right", "left"]);
+    expect(edgeSides({ x: CARD_WIDTH + 10 }, { x: 0 })).toEqual(["left", "right"]);
+    expect(edgeSides({ x: 100 }, { x: 40 })).toEqual(["left", "left"]);
+    expect(edgeSides({ x: 100 }, { x: 100 })).toEqual(["right", "right"]);
+    expect(edgeSides({ x: 0 }, { x: 999 }, true)).toEqual(["right", "right"]);
+  });
+  it("follows the layout: top-to-bottom stacks loop instead of crossing the card", () => {
+    const lr = dagreLayout(twoTables, "LR").edges[0]!;
+    expect([lr.sourceHandle, lr.targetHandle]).toEqual(["out-right:person_id", "in-left:id"]);
+    const tb = dagreLayout(twoTables, "TB").edges[0]!;
+    expect(tb.sourceHandle!.split(":")[0]!.split("-")[1]).toBe(tb.targetHandle!.split(":")[0]!.split("-")[1]);
   });
 });
 

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -32,6 +32,11 @@ describe.skipIf(!built)("production bundle boundaries", () => {
     // The landing page and the workspace are loaded independently.
     expect(staticImports(chunks, "src/landing/Landing.tsx").has("src/App.tsx")).toBe(false);
     expect(workspace.has("src/landing/Landing.tsx")).toBe(false);
+  });
+  it("serves fonts as files, since the CSP blocks data: fonts", () => {
+    const css = readdirSync(new URL("assets/", dist)).filter((f) => f.endsWith(".css"));
+    expect(css.length).toBeGreaterThan(0);
+    for (const file of css) expect(readFileSync(new URL(`assets/${file}`, dist), "utf8"), file).not.toMatch(/data:font\//);
   });
   // The ELK layout engine is a prebuilt worker script (about 1.6 MB), fetched only when a diagram creates its Worker.
   const isElkWorker = (key: string) => key.endsWith("elkjs/lib/elk-worker.min.js");

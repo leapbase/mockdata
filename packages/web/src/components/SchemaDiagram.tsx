@@ -1,25 +1,26 @@
-import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { Fragment, useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { Background, Controls, Handle, Position, ReactFlow, useNodesInitialized, useNodesState, useReactFlow, useStore, type Node, type NodeProps } from "@xyflow/react";
 import type { SchemaDiagram as DiagramData } from "../api";
-import { LAYOUT_ENGINES, dagreLayout, elkLayout, isDirectional, isLayoutEngine, loadElk, type DiagramLayout, type Direction, type LayoutEngine, type TableNode } from "../diagramLayout";
+import { LAYOUT_ENGINES, dagreLayout, elkLayout, handleId, isDirectional, isLayoutEngine, loadElk, type DiagramLayout, type Direction, type LayoutEngine, type TableNode } from "../diagramLayout";
 import { DdlDialog, TableMenu, copyTableName, type MenuState } from "./DiagramMenu";
 import type { Dialect } from "../ddl";
 import { useResolvedTheme } from "../theme";
 import "@xyflow/react/dist/style.css";
 
 function TableCard({ data }: NodeProps<TableNode>) {
-  const selfTargets = new Set(data.table.columns.filter((c) => c.ref?.split(".")[0] === data.table.name).map((c) => c.ref!.split(".")[1]));
   return <div className="diagram-table">
     <header><strong>{data.table.name}</strong><span>{data.table.rows.toLocaleString()} rows</span></header>
     {data.table.columns.map((c) => <div className="diagram-column" key={c.name}>
-      <Handle type="target" position={Position.Left} id={c.name} isConnectable={false} />
-      {selfTargets.has(c.name) && <Handle type="target" position={Position.Right} id={`self-${c.name}`} isConnectable={false} />}
+      {sides.map(([side, position]) => <Fragment key={side}>
+        <Handle type="target" position={position} id={handleId("in", side, c.name)} isConnectable={false} />
+        <Handle type="source" position={position} id={handleId("out", side, c.name)} isConnectable={false} />
+      </Fragment>)}
       <span className="column-key" title={[c.primaryKey && "Primary key", c.ref && "Foreign key", c.unique && "Unique"].filter(Boolean).join(", ") || "Column"}>{[c.primaryKey && "PK", c.ref && "FK", c.unique && "UQ"].filter(Boolean).join(" ") || "·"}</span>
       <span className="column-name" title={c.name}>{c.name}</span><span className="column-type">{c.type}{c.nullable && "?"}</span>
-      <Handle type="source" position={Position.Right} id={c.name} isConnectable={false} />
     </div>)}
   </div>;
 }
+const sides = [["left", Position.Left], ["right", Position.Right]] as const;
 const nodeTypes = { table: TableCard };
 const fitOptions = { padding: 0.15, maxZoom: 1 };
 

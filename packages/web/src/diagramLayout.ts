@@ -47,8 +47,26 @@ function links(data: DiagramData): Link[] {
   return out;
 }
 
-function flowEdges(list: Link[]): Edge[] {
-  return list.map((l) => ({ id: l.id, source: l.source, sourceHandle: l.sourceColumn, target: l.target, targetHandle: l.self ? `self-${l.targetColumn}` : l.targetColumn, type: "smoothstep", label: l.sourceColumn, style: { stroke: "var(--edge)", strokeWidth: 1.5 }, labelStyle: { fill: "var(--edge)", fontSize: 10 }, labelBgStyle: { fill: "var(--surface)" }, markerEnd: { type: MarkerType.ArrowClosed, color: "var(--edge)" }, ariaLabel: `${l.source}.${l.sourceColumn} references ${l.target}.${l.targetColumn}` }));
+export type Side = "left" | "right";
+/** Every column row has an in and an out handle on both sides; edges pick theirs once the cards are placed. */
+export const handleId = (kind: "in" | "out", side: Side, column: string) => `${kind}-${side}:${column}`;
+
+/**
+ * The sides an arrow leaves and enters by, from where the two cards ended up: facing sides when one card is clear of
+ * the other horizontally, otherwise (stacked cards, or a self reference) a loop on the side the target leans towards.
+ */
+export function edgeSides(source: { x: number }, target: { x: number }, self = false): [Side, Side] {
+  if (self) return ["right", "right"];
+  if (target.x >= source.x + CARD_WIDTH) return ["right", "left"];
+  if (target.x + CARD_WIDTH <= source.x) return ["left", "right"];
+  return target.x < source.x ? ["left", "left"] : ["right", "right"];
+}
+
+function flowEdges(list: Link[], at: (name: string) => { x: number; y: number }): Edge[] {
+  return list.map((l) => {
+    const [from, to] = edgeSides(at(l.source), at(l.target), l.self);
+    return { id: l.id, source: l.source, sourceHandle: handleId("out", from, l.sourceColumn), target: l.target, targetHandle: handleId("in", to, l.targetColumn), type: "smoothstep", label: l.sourceColumn, style: { stroke: "var(--edge)", strokeWidth: 1.5 }, labelStyle: { fill: "var(--edge)", fontSize: 10 }, labelBgStyle: { fill: "var(--surface)" }, markerEnd: { type: MarkerType.ArrowClosed, color: "var(--edge)" }, ariaLabel: `${l.source}.${l.sourceColumn} references ${l.target}.${l.targetColumn}` };
+  });
 }
 
 function flowNodes(data: DiagramData, topLeft: (name: string) => { x: number; y: number }): TableNode[] {
@@ -64,7 +82,8 @@ export function dagreLayout(data: DiagramData, direction: Direction = "LR"): Dia
   dagre.layout(graph);
   const heights = new Map(data.tables.map((t) => [t.name, cardHeight(t)]));
   // Dagre reports centres; React Flow wants top-left corners.
-  return { edges: flowEdges(list), nodes: flowNodes(data, (name) => { const p = graph.node(name); return { x: p.x - CARD_WIDTH / 2, y: p.y - heights.get(name)! / 2 }; }) };
+  const at = (name: string) => { const p = graph.node(name); return { x: p.x - CARD_WIDTH / 2, y: p.y - heights.get(name)! / 2 }; };
+  return { edges: flowEdges(list, at), nodes: flowNodes(data, at) };
 }
 
 const portId = (table: string, column: string, side: "in" | "out" | "self") => `${table}\u0000${column}\u0000${side}`;
@@ -130,7 +149,8 @@ export async function elkLayout(elk: ELK, data: DiagramData, direction: Directio
   });
   const at = new Map((result.children ?? []).map((n) => [n.id, { x: n.x ?? 0, y: n.y ?? 0 }]));
   for (const t of data.tables) if (!at.has(t.name)) throw new Error(`ELK returned no position for ${t.name}`);
-  return { edges: flowEdges(links(data)), nodes: flowNodes(data, (name) => at.get(name)!) };
+  const position = (name: string) => at.get(name)!;
+  return { edges: flowEdges(links(data), position), nodes: flowNodes(data, position) };
 }
 
 let shared: Promise<ELK> | null = null;
