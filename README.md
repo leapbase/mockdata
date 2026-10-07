@@ -225,7 +225,7 @@ npm run build
 npm run ui -- examples          # or: node packages/server/dist/bin.js <folder> [--port 4747]
 ```
 
-Open http://127.0.0.1:4747 for the landing page (what mockdata does, examples, FAQ), http://127.0.0.1:4747/docs for the documentation (also at https://mockdata.com/docs), or go straight to the workspace at http://127.0.0.1:4747/app. The folder you pass is the root: schema files are listed in the sidebar, `.env` is read from there, and nothing outside it is ever read or written.
+Open http://127.0.0.1:4747 for the landing page (what mockdata does, examples, FAQ), http://127.0.0.1:4747/docs for the documentation (also at https://mockdata.com/docs; the landing page and docs are available in English, Español and 中文 from the language menu), or go straight to the workspace at http://127.0.0.1:4747/app. The folder you pass is the root: schema files are listed in the sidebar, `.env` is read from there, and nothing outside it is ever read or written.
 
 - **Schemas**: select, create, and save schemas in the left sidebar. The top bar holds the theme switch (System, Light, Dark; remembered in this browser) and account actions, or shows Local workspace when accounts are disabled.
 - **Editor / Diagram**: edit YAML or JSON with live validation, or switch to a read-only table and relationship diagram with pan, zoom, and fit controls. Errors appear inline and in the status strip, which also shows the generation order. Switching views preserves edits.

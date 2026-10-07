@@ -1,6 +1,9 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { createContext, Fragment, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import Header from "../components/Header";
-import { GROUPS, PAGES, SOURCE_URL, pageHref, type Block, type DocPage, type IconName } from "./content";
+import { useLocale, type Locale } from "../i18n";
+import { PAGES, SOURCE_URL, pageHref, type Block, type DocPage, type IconName } from "./content";
+import { DOCS_STRINGS } from "./strings";
+import { applyDictionary, loadDictionary, type Dictionary } from "./translate";
 import "./docs.css";
 
 const ICONS: Record<IconName, ReactNode> = {
@@ -49,17 +52,26 @@ function blockText(b: Block): string {
 
 export type SearchResult = { href: string; page: string; section?: string; snippet: string };
 type Entry = { href: string; page: string; section?: string; title: string; text: string };
-const INDEX: Entry[] = PAGES.flatMap((p) => [
-  { href: pageHref(p.slug), page: p.title, title: p.title, text: p.summary },
-  ...p.sections.map((s) => ({ href: `${pageHref(p.slug)}#${s.id}`, page: p.title, section: s.title, title: s.title, text: s.blocks.map(blockText).join(" ") })),
-]);
+const indexes = new WeakMap<DocPage[], Entry[]>();
+/** Built once per set of pages (one per language), on the first search. */
+function indexOf(pages: DocPage[]): Entry[] {
+  let index = indexes.get(pages);
+  if (!index) {
+    index = pages.flatMap((p) => [
+      { href: pageHref(p.slug), page: p.title, title: p.title, text: p.summary },
+      ...p.sections.map((s) => ({ href: `${pageHref(p.slug)}#${s.id}`, page: p.title, section: s.title, title: s.title, text: s.blocks.map(blockText).join(" ") })),
+    ]);
+    indexes.set(pages, index);
+  }
+  return index;
+}
 
 /** Every word must appear in a page or section; titles count most, then the exact phrase, then how often each word recurs. */
-export function searchDocs(query: string, limit = 8): SearchResult[] {
+export function searchDocs(query: string, limit = 8, pages: DocPage[] = PAGES): SearchResult[] {
   const q = query.trim().toLowerCase();
   const words = q.split(/\s+/).filter(Boolean);
   if (!words.length) return [];
-  const scored = INDEX.flatMap((e) => {
+  const scored = indexOf(pages).flatMap((e) => {
     const title = e.title.toLowerCase(), text = e.text.toLowerCase(), all = `${title} ${e.page.toLowerCase()} ${text}`;
     if (!words.every((w) => all.includes(w))) return [];
     // Repeats in the body count a little (at most 3 each), so a section about a word beats one that mentions it once.
@@ -72,15 +84,30 @@ export function searchDocs(query: string, limit = 8): SearchResult[] {
   return scored.sort((a, b) => b.score - a.score).slice(0, limit).map((s) => s.result);
 }
 
+const Strings = createContext(DOCS_STRINGS.en);
+
+/** The pages in the chosen language: English at once, a translation once its dictionary has loaded. */
+function usePages(locale: Locale): { pages: DocPage[]; translated: boolean } {
+  const [loaded, setLoaded] = useState<{ locale: Locale; dict: Dictionary } | null>(null);
+  useEffect(() => {
+    let live = true;
+    loadDictionary(locale).then((dict) => { if (live && dict) setLoaded({ locale, dict }); }, () => undefined);
+    return () => { live = false; };
+  }, [locale]);
+  const dict = loaded?.locale === locale ? loaded.dict : null;
+  return useMemo(() => (dict ? { pages: applyDictionary(PAGES, dict), translated: true } : { pages: PAGES, translated: false }), [dict]);
+}
+
 export const slugFromPath = (pathname: string) => pathname.replace(/^\/docs\/?/, "").replace(/\/$/, "");
 
 function CodeBlock({ code, title }: { code: string; title?: string }) {
+  const s = useContext(Strings);
   const [copied, setCopied] = useState(false);
   async function copy() {
     try { await navigator.clipboard.writeText(code); setCopied(true); window.setTimeout(() => setCopied(false), 1500); } catch { /* the text stays selectable */ }
   }
   return <div className="docs-code">
-    <div className={`docs-code-bar${title ? "" : " untitled"}`}>{title && <span>{title}</span>}<button type="button" onClick={copy} aria-label={title ? `Copy ${title}` : "Copy code"}>{copied ? "Copied" : "Copy"}</button></div>
+    <div className={`docs-code-bar${title ? "" : " untitled"}`}>{title && <span>{title}</span>}<button type="button" onClick={copy} aria-label={title ? s.copyNamed(title) : s.copyCode}>{copied ? s.copied : s.copy}</button></div>
     <pre><code>{code}</code></pre>
   </div>;
 }
@@ -102,11 +129,12 @@ function BlockView({ block }: { block: Block }) {
   return <ul className="docs-cards">{block.cards.map((c) => <li key={c.href}><a href={c.href}><strong>{c.title}</strong><span>{c.body}</span></a></li>)}</ul>;
 }
 
-function Search({ onPick }: { onPick: (href: string) => void }) {
+function Search({ onPick, pages }: { onPick: (href: string) => void; pages: DocPage[] }) {
+  const s = useContext(Strings);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const input = useRef<HTMLInputElement>(null);
-  const results = useMemo(() => searchDocs(query), [query]);
+  const results = useMemo(() => searchDocs(query, 8, pages), [query, pages]);
   useEffect(() => setActive(0), [query]);
   // "/" jumps to search from anywhere on the page, as on most documentation sites.
   useEffect(() => {
@@ -126,14 +154,14 @@ function Search({ onPick }: { onPick: (href: string) => void }) {
   }
   const open = query.trim() !== "";
   return <div className="docs-search">
-    <input ref={input} type="search" placeholder="Search docs…" aria-label="Search docs" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={onKeyDown}
+    <input ref={input} type="search" placeholder={s.search} aria-label={s.search.replace(/…$/, "")} value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={onKeyDown}
       role="combobox" aria-expanded={open} aria-controls="docs-search-results" aria-activedescendant={open && results[active] ? `docs-result-${active}` : undefined} aria-autocomplete="list" />
     <kbd aria-hidden="true">/</kbd>
-    {open && <ul id="docs-search-results" role="listbox" aria-label="Search results">
+    {open && <ul id="docs-search-results" role="listbox" aria-label={s.searchResults}>
       {results.length ? results.map((r, i) => <li key={r.href} id={`docs-result-${i}`} role="option" aria-selected={i === active}
         onMouseDown={(e) => { e.preventDefault(); pick(r.href); }} onMouseEnter={() => setActive(i)}>
         <strong>{r.section ? <>{r.page} <span>›</span> {r.section}</> : r.page}</strong><span>{r.snippet}</span>
-      </li>) : <li className="empty" role="presentation">No results for “{query.trim()}”</li>}
+      </li>) : <li className="empty" role="presentation">{s.noResults(query.trim())}</li>}
     </ul>}
   </div>;
 }
@@ -159,9 +187,13 @@ function useActiveSection(page: DocPage | undefined): string | undefined {
 export default function Docs({ location = window.location }: { location?: Pick<Location, "pathname" | "hash"> }) {
   const [path, setPath] = useState({ pathname: location.pathname, hash: location.hash });
   const [menuOpen, setMenuOpen] = useState(false);
+  const locale = useLocale();
+  const t = DOCS_STRINGS[locale];
+  const { pages, translated } = usePages(locale);
+  const groups = useMemo(() => [...new Set(pages.map((p) => p.group))], [pages]);
   const slug = slugFromPath(path.pathname);
-  const index = PAGES.findIndex((p) => p.slug === slug);
-  const page = PAGES[index];
+  const index = pages.findIndex((p) => p.slug === slug);
+  const page = pages[index];
   const active = useActiveSection(page);
 
   useEffect(() => {
@@ -169,7 +201,7 @@ export default function Docs({ location = window.location }: { location?: Pick<L
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
-  useEffect(() => { document.title = page ? `${slug ? `${page.title} · ` : ""}mockdata docs` : "Page not found · mockdata docs"; }, [page, slug]);
+  useEffect(() => { document.title = page ? `${slug ? `${page.title} · ` : ""}${t.titleSuffix}` : `${t.notFound} · ${t.titleSuffix}`; }, [page, slug, t]);
   // After a page change, go to the requested section or the top.
   useEffect(() => {
     const target = path.hash && document.getElementById(decodeURIComponent(path.hash.slice(1)));
@@ -192,24 +224,25 @@ export default function Docs({ location = window.location }: { location?: Pick<L
     if (href === "/docs" || href.startsWith("/docs/") || href.startsWith("/docs#")) { e.preventDefault(); go(href); }
   }
 
-  const prev = index > 0 ? PAGES[index - 1] : undefined;
-  const next = index >= 0 && index < PAGES.length - 1 ? PAGES[index + 1] : undefined;
+  const prev = index > 0 ? pages[index - 1] : undefined;
+  const next = index >= 0 && index < pages.length - 1 ? pages[index + 1] : undefined;
+  const label = (p: DocPage) => (p.slug ? p.title : t.overview);
 
-  return <div className="docs" onClick={onClick}>
-    <Header nav={<nav className="docs-topnav" aria-label="Site"><a href="/">Home</a><a href="/docs" aria-current="page">Docs</a><a href={SOURCE_URL}>GitHub</a></nav>}>
-      <a className="button primary" href="/app">Open workspace</a>
+  return <Strings.Provider value={t}><div className="docs" onClick={onClick}>
+    <Header localized nav={<nav className="docs-topnav" aria-label={t.site}><a href="/">{t.home}</a><a href="/docs" aria-current="page">{t.docs}</a><a href={SOURCE_URL}>{t.github}</a></nav>}>
+      <a className="button primary" href="/app">{t.openWorkspace}</a>
     </Header>
     <div className="docs-body">
       <button type="button" className="docs-menu-button" aria-expanded={menuOpen} aria-controls="docs-sidebar" onClick={() => setMenuOpen((o) => !o)}>
-        {menuOpen ? "Close menu" : "Menu"}{page && <span> · {page.slug ? page.title : "Overview"}</span>}
+        {menuOpen ? t.closeMenu : t.menu}{page && <span> · {label(page)}</span>}
       </button>
       <aside id="docs-sidebar" className={`docs-sidebar${menuOpen ? " open" : ""}`} aria-label="Documentation">
-        <Search onPick={go} />
-        <nav aria-label="Documentation pages">
-          {GROUPS.map((g) => <section key={g}>
+        <Search onPick={go} pages={pages} />
+        <nav aria-label={t.pages}>
+          {groups.map((g) => <section key={g}>
             <h2>{g}</h2>
-            <ul>{PAGES.filter((p) => p.group === g).map((p) => <li key={p.slug}>
-              <a href={pageHref(p.slug)} aria-current={p === page ? "page" : undefined}><Icon name={p.icon} />{p.slug ? p.title : "Overview"}</a>
+            <ul>{pages.filter((p) => p.group === g).map((p) => <li key={p.slug}>
+              <a href={pageHref(p.slug)} aria-current={p === page ? "page" : undefined}><Icon name={p.icon} />{label(p)}</a>
             </li>)}</ul>
           </section>)}
         </nav>
@@ -218,29 +251,29 @@ export default function Docs({ location = window.location }: { location?: Pick<L
       {page ? <>
         <main className="docs-article" id="docs-main">
           <article>
-            <header><p className="docs-group">{page.group}</p><h1>{page.title}</h1><p className="docs-summary">{page.summary}</p></header>
+            <header><p className="docs-group">{page.group}</p><h1>{page.title}</h1><p className="docs-summary">{page.summary}</p>{translated && t.translated && <p className="docs-translated">{t.translated}</p>}</header>
             {page.sections.map((s) => <section key={s.id} aria-labelledby={s.id}>
               <h2 id={s.id}><a href={`#${s.id}`} className="docs-anchor" aria-hidden="true" tabIndex={-1}>#</a>{s.title}</h2>
               {s.blocks.map((b, i) => <BlockView key={i} block={b} />)}
             </section>)}
           </article>
-          <nav className="docs-pager" aria-label="Previous and next page">
-            {prev ? <a href={pageHref(prev.slug)} rel="prev"><span>Previous</span> {prev.slug ? prev.title : "Overview"}</a> : <span />}
-            {next && <a href={pageHref(next.slug)} rel="next" className="next"><span>Next</span> {next.title}</a>}
+          <nav className="docs-pager" aria-label={t.pager}>
+            {prev ? <a href={pageHref(prev.slug)} rel="prev"><span>{t.previous}</span> {label(prev)}</a> : <span />}
+            {next && <a href={pageHref(next.slug)} rel="next" className="next"><span>{t.next}</span> {label(next)}</a>}
           </nav>
           <footer className="docs-footer">
-            <span>mockdata · open source under AGPL-3.0</span>
-            <a href={`${SOURCE_URL}/blob/develop/packages/web/src/docs/content.ts`}>Edit this page on GitHub</a>
+            <span>{t.footer}</span>
+            <a href={`${SOURCE_URL}/blob/develop/packages/web/src/docs/${translated ? `i18n/${locale}.ts` : "content.ts"}`}>{t.edit}</a>
           </footer>
         </main>
-        <nav className="docs-toc" aria-label="On this page">
-          <h2>On this page</h2>
+        <nav className="docs-toc" aria-label={t.onThisPage}>
+          <h2>{t.onThisPage}</h2>
           <ul>{page.sections.map((s) => <li key={s.id}><a href={`#${s.id}`} aria-current={active === s.id ? "location" : undefined}>{s.title}</a></li>)}</ul>
         </nav>
       </> : <main className="docs-article" id="docs-main">
-        <article><header><h1>Page not found</h1><p className="docs-summary">There is no documentation page at <code>{path.pathname}</code>.</p></header>
-          <p><a href="/docs">Go to the documentation home</a> or search above.</p></article>
+        <article><header><h1>{t.notFound}</h1><p className="docs-summary">{t.notFoundBody} <code>{path.pathname}</code></p></header>
+          <p><a href="/docs">{t.notFoundHome}</a> {t.notFoundSearch}</p></article>
       </main>}
     </div>
-  </div>;
+  </div></Strings.Provider>;
 }

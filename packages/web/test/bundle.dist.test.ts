@@ -33,6 +33,12 @@ describe.skipIf(!built)("production bundle boundaries", () => {
     expect(staticImports(chunks, "src/landing/Landing.tsx").has("src/App.tsx")).toBe(false);
     expect(workspace.has("src/landing/Landing.tsx")).toBe(false);
     expect(workspace.has("src/docs/Docs.tsx")).toBe(false);
+    // Each docs translation is its own chunk, fetched only when that language is chosen.
+    const docs = staticImports(chunks, "src/docs/Docs.tsx");
+    for (const key of ["src/docs/i18n/es.ts", "src/docs/i18n/zh.ts"]) {
+      expect(chunks[key]?.isDynamicEntry, key).toBe(true);
+      expect(docs.has(key), key).toBe(false);
+    }
   });
   it("serves fonts as files, since the CSP blocks data: fonts", () => {
     const css = readdirSync(new URL("assets/", dist)).filter((f) => f.endsWith(".css"));

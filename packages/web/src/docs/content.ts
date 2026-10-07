@@ -1,6 +1,7 @@
 /**
- * The documentation at /docs. Public copy: describe only what exists (as the README and CLI help do), and keep it in
- * step with README.md, the CLI help text and packages/mcp/src/reference.ts. Inline text supports `code`, **bold**
+ * The documentation at /docs, in English. Public copy: describe only what exists (as the README and CLI help do), and keep it in
+ * step with README.md, the CLI help text and packages/mcp/src/reference.ts. Translations are dictionaries in i18n/ keyed by
+ * these English strings; i18n.test.tsx lists any string an edit here leaves untranslated. Inline text supports `code`, **bold**
  * and [links](/docs/page#section); links to /docs pages are checked by Docs.test.tsx.
  */
 
@@ -596,5 +597,4 @@ MOCKDATA_ROOT=<folder> node packages/mcp/dist/bin.js --http --allow 100.100.1.x`
   },
 ];
 
-export const GROUPS = [...new Set(PAGES.map((p) => p.group))];
 export const pageHref = (slug: string) => (slug ? `/docs/${slug}` : "/docs");
