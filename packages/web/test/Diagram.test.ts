@@ -1,6 +1,9 @@
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import Elk from "elkjs/lib/elk.bundled.js";
-import { CARD_WIDTH, dagreLayout, elkGraph, elkLayout, type DiagramLayout } from "../src/diagramLayout";
+import { parse } from "yaml";
+import { parseSchema } from "@mockdata/core";
+import { CARD_WIDTH, LAYOUT_ENGINES, dagreLayout, elkGraph, elkLayout, type DiagramLayout, type LayoutEngine } from "../src/diagramLayout";
 import type { DiagramColumn, SchemaDiagram } from "../src/api";
 const id: DiagramColumn = { name: "id", type: "integer", primaryKey: true, unique: false, nullable: false };
 const twoTables: SchemaDiagram = { tables: [
@@ -66,4 +69,39 @@ describe("schema diagram layout (ELK)", () => {
     const broken = { layout: () => Promise.reject(new Error("worker died")) } as unknown as Parameters<typeof elkLayout>[0];
     await expect(elkLayout(broken, twoTables)).rejects.toThrow("worker died");
   });
+});
+
+/** The same shape `/api/validate` returns, built from a real example schema. */
+function exampleDiagram(file: string): SchemaDiagram {
+  const schema = parseSchema(parse(readFileSync(new URL(`../../../examples/${file}`, import.meta.url), "utf8")));
+  return { tables: Object.entries(schema.tables).map(([name, t]) => ({ name, rows: t.rows, columns: Object.entries(t.columns).map(([name, c]) => ({ name, type: c.type, primaryKey: !!c.primaryKey, unique: !!c.unique, nullable: !!c.nullable, ...(c.ref ? { ref: c.ref } : {}) })) })) };
+}
+const examples = readdirSync(new URL("../../../examples/", import.meta.url)).filter((f) => f.endsWith(".yaml") && !f.includes("openapi"));
+const run = (engine: LayoutEngine, data: SchemaDiagram, direction: "LR" | "TB" = "LR") => (engine === "dagre" ? Promise.resolve(dagreLayout(data, direction)) : elkLayout(elk, data, direction, engine));
+
+describe("every layout engine", () => {
+  it("lists each engine once, with layered first", () => {
+    expect(LAYOUT_ENGINES.map((e) => e.id)).toEqual(["layered", "dagre", "tree", "force", "stress", "grid"]);
+  });
+  it("uses column ports only for the layered engine", () => {
+    expect(elkGraph(cyclic, "LR", "force").children!.every((n) => !n.ports)).toBe(true);
+    expect(elkGraph(cyclic, "LR", "force").edges!.find((e) => e.id === "b.a->a.id")).toMatchObject({ sources: ["b"], targets: ["a"] });
+    expect(elkGraph(cyclic, "TB", "tree").layoutOptions).toMatchObject({ "elk.algorithm": "mrtree", "elk.direction": "DOWN" });
+  });
+  for (const engine of LAYOUT_ENGINES.map((e) => e.id)) {
+    it(`${engine}: places every example table without overlaps`, async () => {
+      for (const file of examples) {
+        const data = exampleDiagram(file);
+        const layout = await run(engine, data);
+        expect(layout.nodes.map((n) => n.id), file).toEqual(data.tables.map((t) => t.name));
+        const boxes = layout.nodes.map((n) => ({ ...n.position, h: 48 + n.data.table.columns.length * 32 }));
+        expect(boxes.every((b) => Number.isFinite(b.x) && Number.isFinite(b.y)), file).toBe(true);
+        for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+          const [a, b] = [boxes[i]!, boxes[j]!];
+          const overlap = a.x < b.x + CARD_WIDTH && b.x < a.x + CARD_WIDTH && a.y < b.y + b.h && b.y < a.y + a.h;
+          expect(overlap, `${file}: ${layout.nodes[i]!.id} overlaps ${layout.nodes[j]!.id}`).toBe(false);
+        }
+      }
+    });
+  }
 });
