@@ -121,7 +121,7 @@ async function send(method: string, url: string, body?: unknown, signal?: AbortS
   return res;
 }
 
-async function json<T>(method: string, url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+export async function json<T>(method: string, url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const res = await send(method, url, body, signal);
   if (!res.ok) throw await failure(res);
   return (await res.json()) as T;

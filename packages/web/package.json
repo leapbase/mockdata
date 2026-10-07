@@ -4,6 +4,11 @@
   "version": "0.0.1",
   "license": "AGPL-3.0-or-later",
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles.css": "./src/styles.css",
+    "./vite.config": "./vite.config.ts"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -p . && vite build"
