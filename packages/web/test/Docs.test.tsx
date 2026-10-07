@@ -62,7 +62,8 @@ describe("docs search", () => {
     const hits = searchDocs("maxPerParent");
     expect(hits.some((h) => h.href === "/docs/relationships#one-to-one-and-caps")).toBe(true);
     expect(searchDocs("self references")[0]!.href).toBe("/docs/relationships#self-references");
-    expect(searchDocs("api key mcp").some((h) => h.href.startsWith("/docs/mcp"))).toBe(true);
+    expect(searchDocs("api key mcp")[0]!.href).toMatch(/^\/docs\/mcp(#|$)/);
+    expect(searchDocs("connectionEnv").map((h) => h.href)).toContain("/docs/mcp-local#databases");
   });
   it("needs every word and returns nothing for an empty query", () => {
     expect(searchDocs("")).toEqual([]);

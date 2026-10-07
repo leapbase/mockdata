@@ -67,7 +67,8 @@ export const PAGES: DocPage[] = [
           { title: "Command line", href: "/docs/cli", body: "generate, validate and infer" },
           { title: "Infer a schema", href: "/docs/infer", body: "From a database, OpenAPI or samples" },
           { title: "LLM-written text", href: "/docs/llm", body: "Model-written columns with context" },
-          { title: "MCP for AI agents", href: "/docs/mcp", body: "Hosted endpoint and local server" },
+          { title: "MCP on the web", href: "/docs/mcp", body: "Connect an agent to mockdata.com" },
+          { title: "MCP locally", href: "/docs/mcp-local", body: "Run the server on your machine" },
           { title: "Self-hosting", href: "/docs/self-hosting", body: "Run the servers yourself" },
         ] },
       ] },
@@ -393,34 +394,92 @@ npx mockdata infer env:DATABASE_URL -o schema.yaml      # a database, password k
     ],
   },
   {
-    slug: "mcp", title: "MCP for AI agents", group: "AI agents", icon: "agent",
-    summary: "Let an agent such as Claude write schemas, infer them and generate data through the Model Context Protocol.",
+    slug: "mcp", title: "MCP on the web", group: "AI agents", icon: "agent",
+    summary: "Connect an AI agent such as Claude to mockdata.com over the Model Context Protocol, with nothing to install.",
     sections: [
-      { id: "hosted", title: "Hosted endpoint", blocks: [
+      { id: "connect", title: "Connect", blocks: [
         { list: [
           "Sign in to the [workspace](/app).",
-          "Open the account menu, choose **API keys**, and create a key. It is shown once.",
+          "Open the account menu, choose **API keys**, and create a key. Copy it now: it is shown only once.",
           "Add the server to your client:",
         ], ordered: true },
         { code: `claude mcp add --transport http mockdata ${MCP_URL} --header "Authorization: Bearer <your API key>"` },
-        { p: "The tools work in your private folder, with the same limits as the web workspace. The key goes in the `Authorization` header only. You may hold 10 keys and revoke any of them from the same dialog; resetting your password with \"Forgot password?\" revokes them all." },
+        { p: "Other clients take the same two things: the URL `" + MCP_URL + "` (Streamable HTTP) and the header `Authorization: Bearer <your API key>`." },
+      ] },
+      { id: "api-keys", title: "API keys", blocks: [
+        { list: [
+          "Each key is shown once; only a hash of it is stored. The list shows each key's name, its first characters and when it was last used.",
+          "You may hold 10 keys and revoke any of them at any time from the same dialog.",
+          "The key goes in the `Authorization` header only. Your browser's sign-in is never accepted at `/mcp`, so a web page cannot use it to call the tools.",
+          "Resetting your password with \"Forgot password?\" revokes all your keys. Changing the password while signed in, or \"Sign out everywhere\", does not: revoke keys in the list if you need to.",
+        ] },
+      ] },
+      { id: "your-folder", title: "Your folder and limits", blocks: [
+        { p: "The tools work in your private folder, the same one the web workspace uses: an agent can read the schemas you saved there by name, or pass a schema inline, and generated files it writes land in that folder. The site's own model settings and limits apply: rows and cells per run, storage, files, and model-written rows per day." },
+        { p: "Not available on the web: inferring from a database (`infer_schema` with `connectionEnv`), and choosing a model, provider, address or key in a schema's `llm:` block." },
+        { table: { head: ["Limit", "Value"], rows: [
+          ["Open sessions", "5 per user; idle sessions close after 30 minutes"],
+          ["Requests", "240 a minute per user"],
+          ["Wrong keys", "An address that sends 30 wrong keys in 15 minutes is refused for a while"],
+        ] } },
       ] },
       { id: "tools", title: "Tools", blocks: [
         { table: { head: ["Tool", "Does"], rows: [
           ["`describe_schema_format`", "Returns the schema reference so an agent can write valid schemas"],
           ["`validate_schema`", "Checks a schema"],
-          ["`infer_schema`", "Builds a schema from a file or folder, inline content, or (self-hosted only) a database URL held in an environment variable"],
+          ["`infer_schema`", "Builds a schema from a file or folder in your folder, or from inline content such as sample rows or an OpenAPI document"],
+          ["`generate_data`", "Returns row counts and a small preview; can write every row to files in your folder"],
+          ["`get_run_report`", "Seed, row counts, files written, model calls and tokens for the last run"],
+        ] } },
+        { note: "Running your own [accounts-mode site](/docs/accounts)? It serves the same endpoint at `<MOCKDATA_PUBLIC_URL>/mcp`, with the same keys and limits.", title: "Self-hosted sites" },
+      ] },
+    ],
+  },
+  {
+    slug: "mcp-local", title: "MCP locally", group: "AI agents", icon: "terminal",
+    summary: "Run the MCP server on your own machine against a folder of your own, over stdio or local HTTP.",
+    sections: [
+      { id: "stdio", title: "Over stdio", blocks: [
+        { p: "Build the repository first (`npm run build`, see [Quick start](/docs/quick-start#on-your-machine)). The client starts the server itself; give it absolute paths and a working folder:" },
+        { code: `claude mcp add mockdata -e MOCKDATA_ROOT=/path/to/folder -- node /path/to/mockdata/packages/mcp/dist/bin.js` },
+        { p: "Or register it in `.mcp.json`:" },
+        { code: `{
+  "mcpServers": {
+    "mockdata": {
+      "command": "node",
+      "args": ["/path/to/mockdata/packages/mcp/dist/bin.js"],
+      "env": { "MOCKDATA_ROOT": "/path/to/a/working/folder" }
+    }
+  }
+}`, title: ".mcp.json" },
+      ] },
+      { id: "http", title: "Over HTTP", blocks: [
+        { p: "For clients that connect to a URL instead of starting a process:" },
+        { code: `MOCKDATA_ROOT=/path/to/folder node packages/mcp/dist/bin.js --http [--port 4748]
+claude mcp add --transport http mockdata http://127.0.0.1:4748/mcp` },
+        { p: "It listens on 127.0.0.1 only and refuses requests whose `Host` or `Origin` is not localhost. Each client session gets its own server, so `get_run_report` is per client; up to 20 sessions, and idle ones close after 30 minutes." },
+        { note: "There is no login: the tools read and write files and can spend your model credits. Do not put it behind a public address or tunnel. To share it on a trusted network, use [private network access](/docs/network), which adds a token.", tone: "warn" },
+      ] },
+      { id: "your-folder", title: "Your folder", blocks: [
+        { list: [
+          "The agent reads schemas and writes output only inside `MOCKDATA_ROOT`; symlinks that lead outside it are refused.",
+          "It never reads `.env` files and never overwrites an existing file unless asked (`overwrite: true`).",
+          "Model settings come from `.env` in that folder or the environment, as for the [command line](/docs/llm#providers).",
+          "`generate_data` refuses schemas that add up to more than 1,000,000 rows, since it builds everything in memory; the command line has no such limit.",
+        ] },
+      ] },
+      { id: "databases", title: "Inferring from a database", blocks: [
+        { p: "An agent can never pass a connection string. Put the URL in `.env` and let `infer_schema` name the variable with `connectionEnv`. The name must be upper case and mention DATABASE, DB, POSTGRES, MYSQL, MARIADB or SQLITE, so it cannot be pointed at an API key, and the value is never echoed back." },
+        { code: `DATABASE_URL=postgres://user:password@localhost:5432/shop`, title: ".env" },
+      ] },
+      { id: "tools", title: "Tools", blocks: [
+        { table: { head: ["Tool", "Does"], rows: [
+          ["`describe_schema_format`", "Returns the schema reference so an agent can write valid schemas"],
+          ["`validate_schema`", "Checks a schema"],
+          ["`infer_schema`", "Builds a schema from a file or folder under the root, inline content, or a database URL held in an environment variable"],
           ["`generate_data`", "Returns row counts and a small preview; can write every row to files"],
           ["`get_run_report`", "Seed, row counts, files written, model calls and tokens for the last run"],
         ] } },
-      ] },
-      { id: "local", title: "Local server", blocks: [
-        { p: "Running mockdata yourself, register the stdio server with an absolute path to a working folder. The agent can read schemas and write output only inside that folder, never reads `.env` files, and never overwrites a file unless asked." },
-        { code: `claude mcp add mockdata -e MOCKDATA_ROOT=/path/to/folder -- node /path/to/mockdata/packages/mcp/dist/bin.js` },
-        { p: "Or over HTTP, for clients that connect to a URL:" },
-        { code: `MOCKDATA_ROOT=/path/to/folder node packages/mcp/dist/bin.js --http [--port 4748]
-claude mcp add --transport http mockdata http://127.0.0.1:4748/mcp` },
-        { note: "The local HTTP server has no login: it listens on 127.0.0.1 only and refuses other hosts and origins. Do not put it behind a public address or tunnel.", tone: "warn" },
       ] },
     ],
   },
@@ -432,8 +491,8 @@ claude mcp add --transport http mockdata http://127.0.0.1:4748/mcp` },
         { p: "Run `npm run build` first (and again after code changes). Both servers listen on 127.0.0.1 only unless you allow a [private network](/docs/network) or turn on [accounts](/docs/accounts)." },
         { table: { head: ["What", "Command", "Address"], rows: [
           ["Web UI", "`npm run ui -- <folder>`", "http://127.0.0.1:4747 (workspace at `/app`)"],
-          ["MCP over HTTP", "`MOCKDATA_ROOT=<folder> node packages/mcp/dist/bin.js --http`", "http://127.0.0.1:4748/mcp"],
-          ["MCP over stdio", "started by the client, see [MCP](/docs/mcp#local)", "(none)"],
+          ["MCP over HTTP", "`MOCKDATA_ROOT=<folder> node packages/mcp/dist/bin.js --http`, see [MCP locally](/docs/mcp-local#http)", "http://127.0.0.1:4748/mcp"],
+          ["MCP over stdio", "started by the client, see [MCP locally](/docs/mcp-local#stdio)", "(none)"],
         ] } },
         { p: "`<folder>` holds your schema files and `.env`; nothing outside it is read or written. Connection strings are never typed into the browser: keep them in `.env` and pick the variable name." },
       ] },
@@ -505,7 +564,7 @@ MOCKDATA_ROOT=<folder> node packages/mcp/dist/bin.js --http --allow 100.100.1.x`
           ["`MOCKDATA_USER_QUOTA_MB`, `MOCKDATA_USER_MAX_FILES`", "50 MB and 500 files per user"],
           ["`MOCKDATA_MAX_RUNS`", "4 runs at once across all users"],
         ] } },
-        { p: "Users cannot infer from a database variable or choose a model, provider, address or key in a schema: the operator's settings are used. The same site serves [hosted MCP](/docs/mcp#hosted) at `/mcp` with per-user API keys." },
+        { p: "Users cannot infer from a database variable or choose a model, provider, address or key in a schema: the operator's settings are used. The same site serves [MCP](/docs/mcp) at `/mcp` with per-user API keys." },
       ] },
     ],
   },

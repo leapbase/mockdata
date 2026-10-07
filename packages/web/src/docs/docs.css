@@ -64,7 +64,7 @@
 .docs-code pre { margin: 0; padding: 14px 16px; overflow-x: auto; font: 12.5px/1.65 var(--mono); color: var(--fg); }
 .docs-code pre code { background: none; border: 0; padding: 0; font: inherit; }
 .docs-code-bar.untitled { position: absolute; top: 6px; right: 6px; padding: 0; border: 0; background: none; }
-.docs-code-bar.untitled + pre { padding-right: 72px; }
+.docs-code-bar.untitled + pre { padding-right: 72px; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .docs-table { margin: 14px 0 20px; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-lg); }
 .docs-table table { width: 100%; border-collapse: collapse; }
