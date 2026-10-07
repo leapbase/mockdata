@@ -109,6 +109,18 @@ describe("static files", () => {
     for (const p of ["/docs/x.js", "/docs/a/b", "/docs/Schema"]) expect((await get(p)).status, p).toBe(404);
     expect((await get("/elsewhere")).status).toBe(404);
     expect((await get("/f.woff2")).headers.get("content-type")).toBe("font/woff2");
+    writeFileSync(join(staticDir, "robots.txt"), "User-agent: *");
+    expect((await get("/robots.txt")).headers.get("content-type")).toBe("text/plain; charset=utf-8");
+  });
+
+  it("answers a health check with nothing but ok", async () => {
+    const { get, call } = await boot();
+    const r = await get("/healthz");
+    expect(r.status).toBe(200);
+    expect(r.json).toEqual({ ok: true });
+    expect(r.headers.get("cache-control")).toBe("no-store");
+    expect((await call("HEAD", "/healthz")).status).toBe(200);
+    expect((await call("POST", "/healthz", {})).status).not.toBe(200);
   });
 
   it("says the UI is not built when the directory is missing", async () => {

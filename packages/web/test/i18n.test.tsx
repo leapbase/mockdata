@@ -110,7 +110,7 @@ describe("language menu", () => {
     stubApi({ "GET /api/auth/me": () => ME_OFF });
     render(<Landing />);
     expect(screen.getByRole("heading", { level: 1, name: /realistic, related test data/i })).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: "Language: English" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Language: English" }));
     const menu = screen.getByRole("menu", { name: "Language" });
     expect(within(menu).getByRole("menuitemradio", { name: "English" }).getAttribute("aria-checked")).toBe("true");
     expect(document.activeElement).toBe(within(menu).getByRole("menuitemradio", { name: "English" }));
@@ -125,7 +125,7 @@ describe("language menu", () => {
   it("closes on Escape without changing the language", async () => {
     stubApi({ "GET /api/auth/me": () => ME_OFF });
     render(<Landing />);
-    await userEvent.click(screen.getByRole("button", { name: "Language: English" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Language: English" }));
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByRole("menu")).toBeNull();
     expect(storedLocale()).toBe("en");

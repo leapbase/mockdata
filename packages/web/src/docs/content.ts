@@ -496,6 +496,7 @@ claude mcp add --transport http mockdata http://127.0.0.1:4748/mcp` },
           ["MCP over stdio", "started by the client, see [MCP locally](/docs/mcp-local#stdio)", "(none)"],
         ] } },
         { p: "`<folder>` holds your schema files and `.env`; nothing outside it is read or written. Connection strings are never typed into the browser: keep them in `.env` and pick the variable name." },
+        { p: "`GET /healthz` answers `{\"ok\":true}` for uptime monitors and reverse proxies, after the same host and token checks as every other request." },
       ] },
       { id: "workers", title: "Worker threads", blocks: [
         { p: "The web server generates data in worker threads, so a big run does not hold up other requests. The same seed gives byte-identical output with or without them." },

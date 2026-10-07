@@ -345,6 +345,7 @@ const dictionary: Dictionary = {
   "Accounts": "Cuentas",
   "`MOCKDATA_PUBLIC_URL`, `MOCKDATA_DATA_DIR`, `MOCKDATA_TRUST_PROXY`, the `SMTP_*` and `GOOGLE_*` settings, and the per-user limits are described in [Accounts mode](/docs/accounts).": "`MOCKDATA_PUBLIC_URL`, `MOCKDATA_DATA_DIR`, `MOCKDATA_TRUST_PROXY`, los ajustes `SMTP_*` y `GOOGLE_*`, y los límites por usuario se describen en [Modo de cuentas](/docs/accounts).",
   "Never commit `.env`: it holds API keys and passwords. The servers never serve it, and neither browsers nor agents can read it.": "Nunca subas `.env` al repositorio: contiene claves de API y contraseñas. Los servidores nunca lo sirven, y ni los navegadores ni los agentes pueden leerlo.",
+  "`GET /healthz` answers `{\"ok\":true}` for uptime monitors and reverse proxies, after the same host and token checks as every other request.": "`GET /healthz` responde `{\"ok\":true}` para monitores de disponibilidad y proxies inversos, tras las mismas comprobaciones de host y token que cualquier otra petición.",
 };
 
 export default dictionary;

@@ -1,0 +1,6 @@
+# The landing page and docs are public; the workspace, its API and MCP need an account.
+User-agent: *
+Allow: /
+Disallow: /app
+Disallow: /api/
+Disallow: /mcp

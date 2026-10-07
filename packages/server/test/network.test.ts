@@ -48,6 +48,12 @@ describe("shared secret token", () => {
     expect((await call("GET", "/", undefined, {})).status).toBe(401);
   });
 
+  it("asks for the token on the health check too", async () => {
+    const { get, call } = await open();
+    expect((await get("/healthz")).status).toBe(401);
+    expect((await call("GET", "/healthz", undefined, { authorization: `Bearer ${TOKEN}` })).status).toBe(200);
+  });
+
   it("accepts a Bearer header", async () => {
     const { call } = await open();
     expect((await call("GET", "/api/config", undefined, { authorization: `Bearer ${TOKEN}` })).status).toBe(200);

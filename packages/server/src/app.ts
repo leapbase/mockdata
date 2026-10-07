@@ -95,6 +95,11 @@ export function createApp(opts: AppOptions = {}): (req: IncomingMessage, res: Se
       res.setHeader("www-authenticate", 'Bearer realm="mockdata"');
       throw new HttpError(401, "A token is required: send Authorization: Bearer <token>, or open the UI once with ?token=<token>");
     }
+    // For uptime monitors and reverse proxies: says only that the process answers, after the same host and token checks as everything else.
+    if (url.pathname === "/healthz" && (req.method === "GET" || req.method === "HEAD")) {
+      res.setHeader("cache-control", "no-store");
+      return sendJson(res, 200, { ok: true });
+    }
     if (mcp && url.pathname === "/mcp") return mcp.handle(req, res);
     if (accounts && url.pathname.startsWith("/api/")) {
       if (Number(req.headers["content-length"]) > ACCOUNT_BODY_MAX) throw new HttpError(413, "Request body is too large"); // refused before it is read

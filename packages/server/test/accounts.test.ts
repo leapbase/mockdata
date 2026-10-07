@@ -9,6 +9,14 @@ describe("accounts: sign up, verify, sign in", () => {
     expect(r.json).toEqual({ user: null, auth: { accountsEnabled: true, googleConfigured: false, emailEnabled: true } });
   });
 
+  it("answers the health check without a session, and reveals nothing else", async () => {
+    const { get } = await bootAccounts();
+    const r = await get("/healthz");
+    expect(r.status).toBe(200);
+    expect(r.json).toEqual({ ok: true });
+    expect(r.headers.get("referrer-policy")).toBe("no-referrer");
+  });
+
   it("reports accounts off in local mode, so the UI skips the login screen", async () => {
     const { get } = await boot();
     expect((await get("/api/auth/me")).json).toEqual({ user: null, auth: { accountsEnabled: false, googleConfigured: false, emailEnabled: false } });

@@ -345,6 +345,7 @@ const dictionary: Dictionary = {
   "Accounts": "账号",
   "`MOCKDATA_PUBLIC_URL`, `MOCKDATA_DATA_DIR`, `MOCKDATA_TRUST_PROXY`, the `SMTP_*` and `GOOGLE_*` settings, and the per-user limits are described in [Accounts mode](/docs/accounts).": "`MOCKDATA_PUBLIC_URL`、`MOCKDATA_DATA_DIR`、`MOCKDATA_TRUST_PROXY`、`SMTP_*` 和 `GOOGLE_*` 设置，以及每位用户的限制，详见[账号模式](/docs/accounts)。",
   "Never commit `.env`: it holds API keys and passwords. The servers never serve it, and neither browsers nor agents can read it.": "切勿提交 `.env`：其中保存着 API 密钥和密码。服务器从不提供它，浏览器和智能体也都无法读取它。",
+  "`GET /healthz` answers `{\"ok\":true}` for uptime monitors and reverse proxies, after the same host and token checks as every other request.": "`GET /healthz` 会为可用性监控和反向代理返回 `{\"ok\":true}`，并与其他所有请求一样先经过主机和令牌检查。",
 };
 
 export default dictionary;

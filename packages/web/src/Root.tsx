@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import AuthGate from "./AuthGate";
+import ErrorBoundary from "./components/ErrorBoundary";
 
 const App = lazy(() => import("./App"));
 const Landing = lazy(() => import("./landing/Landing"));
@@ -13,7 +14,7 @@ export const isDocsPath = (pathname: string) => /^\/docs(\/[a-z0-9-]+)?\/?$/.tes
 export const legacyAuthHash = (hash: string) => /^#(verify_token|reset_token)=/.test(hash);
 
 /** "/" is the landing page, "/app" the workspace and "/docs" the documentation. The server serves this same page for all three. */
-export default function Root({ location = window.location }: { location?: Pick<Location, "pathname" | "hash" | "replace"> }) {
+function Pages({ location = window.location }: { location?: Pick<Location, "pathname" | "hash" | "replace"> }) {
   if (isWorkspacePath(location.pathname)) {
     return (
       <AuthGate>
@@ -39,4 +40,9 @@ export default function Root({ location = window.location }: { location?: Pick<L
       <Landing />
     </Suspense>
   );
+}
+
+/** Every page sits inside one error boundary, so a render error never leaves a blank screen. */
+export default function Root(props: Parameters<typeof Pages>[0]) {
+  return <ErrorBoundary><Pages {...props} /></ErrorBoundary>;
 }

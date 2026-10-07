@@ -326,3 +326,6 @@ button.link { background: none; border: 0; padding: 0; text-decoration: underlin
 .key-list li > div { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
 .key-list .muted { flex-basis: 100%; font-size: 11px; }
 .api-keys pre.ddl-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.error-boundary { min-height: 100dvh; padding: 24px; }
+.error-boundary p { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.language-placeholder { display: inline-block; visibility: hidden; }

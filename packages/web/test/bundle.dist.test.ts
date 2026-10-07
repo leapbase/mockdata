@@ -42,6 +42,15 @@ describe.skipIf(!built)("production bundle boundaries", () => {
       expect(docs.has(key), key).toBe(false);
     }
   });
+  it("ships a favicon, robots.txt and a page description", () => {
+    const html = readFileSync(new URL("index.html", dist), "utf8");
+    expect(html).toMatch(/<meta name="description" content="[^"]{50,}"/);
+    expect(html).toContain('property="og:title"');
+    expect(html).toContain('href="/favicon.svg"');
+    expect(existsSync(new URL("favicon.svg", dist))).toBe(true);
+    expect(readFileSync(new URL("robots.txt", dist), "utf8")).toMatch(/Disallow: \/app/);
+  });
+
   it("serves fonts as files, since the CSP blocks data: fonts", () => {
     const css = readdirSync(new URL("assets/", dist)).filter((f) => f.endsWith(".css"));
     expect(css.length).toBeGreaterThan(0);

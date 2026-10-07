@@ -1,11 +1,13 @@
-import type { ReactNode } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import { useLocale, type Locale } from "../i18n";
-import LanguageMenu from "./LanguageMenu";
 import ThemeToggle from "./ThemeToggle";
 
 export function Logo({ size = 32 }: { size?: number }) {
   return <svg viewBox="0 0 32 32" width={size} height={size} aria-hidden="true"><rect width="32" height="32" rx="9" fill="currentColor" /><g fill="none" stroke="white" strokeWidth="1.6"><rect x="7" y="7" width="7" height="7" rx="1.5"/><rect x="18" y="18" width="7" height="7" rx="1.5"/><path d="M14 10.5h7.5V18M10.5 14v7.5H18"/></g></svg>;
 }
+
+// Only the landing page and docs show it, so it stays out of the startup bundle the workspace shares.
+const LanguageMenu = lazy(() => import("./LanguageMenu"));
 
 const COPY: Record<Locale, { caption: string; home: string; docs: string }> = {
   en: { caption: "Schema to synthetic data", home: "Mockdata home", docs: "Docs" },
@@ -24,6 +26,6 @@ export default function Header({ children, nav, localized = false }: { children:
       <span>mockdata<span className="brand-caption">{copy.caption}</span></span>
     </a>
     {nav}
-    <div className="header-account">{!nav && <a className="header-link" href="/docs">{copy.docs}</a>}{localized && <LanguageMenu />}<ThemeToggle />{children}</div>
+    <div className="header-account">{!nav && <a className="header-link" href="/docs">{copy.docs}</a>}{localized && <Suspense fallback={<span className="icon-button language-placeholder" aria-hidden="true" />}><LanguageMenu /></Suspense>}<ThemeToggle />{children}</div>
   </header>;
 }
