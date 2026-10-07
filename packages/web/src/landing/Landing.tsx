@@ -1,9 +1,9 @@
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import Header from "../components/Header";
-import type { Slots } from "../slots";
+import type { LandingCopyFn, Slots } from "../slots";
 import { navigateTabs } from "../tabs";
 import { useLocale } from "../i18n";
-import { CLI_SNIPPET, FEATURE_ICONS, LLM_SNIPPET, MCP_COMMAND, MCP_TOOLS, SAMPLE_COLUMNS, SAMPLE_ROWS, SCHEMA_SNIPPET, SOURCE_URL } from "./content";
+import { CLI_SNIPPET, FEATURE_ICONS, LLM_SNIPPET, MCP_TOOLS, SAMPLE_COLUMNS, SAMPLE_ROWS, SCHEMA_SNIPPET, SOURCE_URL } from "./content";
 import { LANDING_COPY, type LandingCopy } from "./copy";
 import { DIAGRAM } from "./diagram";
 
@@ -51,11 +51,11 @@ function AiPanel({ t }: { t: LandingCopy["ai"] }) {
     <section aria-labelledby="ai-mcp-title">
       <h3 id="ai-mcp-title"><Icon name="agent" />{t.mcpTitle}</h3>
       <p>{t.mcpIntro}</p>
-      <pre className="code"><code>{MCP_COMMAND}</code></pre>
+      <pre className="code"><code>{t.mcpCommand}</code></pre>
       <p className="ai-tools-label">{t.toolsLabel}</p>
       <ul className="ai-tools">{MCP_TOOLS.map((tool) => <li key={tool}><code>{tool}</code></li>)}</ul>
       <ul>{t.mcpPoints.map((p) => <li key={p}>{p}</li>)}</ul>
-      <a href="/docs/mcp">{t.mcpMore} →</a>
+      <a href={t.mcpHref}>{t.mcpMore} →</a>
     </section>
   </div>;
 }
@@ -82,9 +82,10 @@ function DiagramPreview({ t }: { t: LandingCopy["diagram"] }) {
 /** Everyone goes straight into the workspace; a hosted shell passes its own hook to ask signed-out visitors to sign in. */
 const useLocalCta: NonNullable<Slots["useLandingCta"]> = (t) => ({ primary: t.cta.openWorkspace, nav: t.cta.openWorkspace });
 
-export default function Landing({ useCta = useLocalCta }: { useCta?: Slots["useLandingCta"] }) {
-  const t = LANDING_COPY[useLocale()];
-  const cta = useCta!(t);
+export default function Landing({ useCta = useLocalCta, copy }: { useCta?: Slots["useLandingCta"]; copy?: LandingCopyFn }) {
+  const locale = useLocale();
+  const t = copy ? copy(LANDING_COPY[locale], locale) : LANDING_COPY[locale];
+  const cta = useCta!(t, locale);
   const [tab, setTab] = useState<(typeof SNIPPETS)[number]["id"]>("schema");
   const snippet = SNIPPETS.find((s) => s.id === tab)!;
 

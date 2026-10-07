@@ -2,9 +2,9 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import AuthGate from "../src/AuthGate";
-import { setOnUnauthorized } from "../src/api";
-import { stubApi } from "./stub";
+import AuthGate from "../../src/hosted/AuthGate";
+import { setOnUnauthorized } from "../../src/api";
+import { stubApi } from "../stub";
 
 const USER = { id: 1, email: "ann@example.com", displayName: "ann", avatarUrl: null };
 const ME_OFF = { user: null, auth: { accountsEnabled: false, googleConfigured: false, emailEnabled: false } };
@@ -98,7 +98,7 @@ describe("AuthGate", () => {
     render(app());
     await screen.findByText("the app");
     await fetch("/api/files"); // what the app does in the background
-    const { getFiles } = await import("../src/api");
+    const { getFiles } = await import("../../src/api");
     await getFiles().catch(() => undefined);
     expect(await screen.findByLabelText("Email")).toBeTruthy();
   });

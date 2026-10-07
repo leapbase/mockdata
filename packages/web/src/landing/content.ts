@@ -35,11 +35,8 @@ npx mockdata generate examples/shop.yaml -s 123          # same seed = same data
 npx mockdata infer examples/samples -o my-schema.yaml    # CSVs -> schema
 npx mockdata infer env:DATABASE_URL                      # Postgres / MySQL catalog -> schema`;
 
-/** Public source repository. AGPL-3.0 section 13 asks a hosted copy to offer users its source; this link does that. */
+/** Public source repository. AGPL-3.0 section 13 asks a copy served over a network to offer its users the source; this link does that. */
 export const SOURCE_URL = "https://github.com/leapbase/mockdata";
-
-/** The hosted MCP endpoint (Streamable HTTP; API key from the account menu). */
-export const MCP_URL = "https://mockdata.com/mcp";
 
 /** The AI tab's schema: the tables of examples/shop-llm.yaml, verbatim (a test checks), so the prompt shown is a real one. */
 export const LLM_SNIPPET = `tables:
@@ -57,10 +54,6 @@ export const LLM_SNIPPET = `tables:
       body:
         type: string
         llm: { prompt: "A one or two sentence customer review whose tone matches the rating (1 = angry, 5 = delighted)" }`;
-
-/** Connecting Claude Code to the hosted MCP endpoint (API key from the account menu). */
-export const MCP_COMMAND = `claude mcp add --transport http mockdata ${MCP_URL} \\
-  --header "Authorization: Bearer <your API key>"`;
 
 /** The tools an agent gets, as registered in packages/mcp/src/server.ts. */
 export const MCP_TOOLS = ["describe_schema_format", "validate_schema", "infer_schema", "generate_data", "get_run_report"] as const;

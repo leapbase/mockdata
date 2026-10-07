@@ -1,6 +1,7 @@
 import { createContext, Fragment, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import Header from "../components/Header";
 import { useLocale, type Locale } from "../i18n";
+import type { DocsExtension } from "../slots";
 import { PAGES, SOURCE_URL, pageHref, type Block, type DocPage, type IconName } from "./content";
 import { DOCS_STRINGS } from "./strings";
 import { applyDictionary, loadDictionary, type Dictionary } from "./translate";
@@ -87,15 +88,17 @@ export function searchDocs(query: string, limit = 8, pages: DocPage[] = PAGES): 
 const Strings = createContext(DOCS_STRINGS.en);
 
 /** The pages in the chosen language: English at once, a translation once its dictionary has loaded. */
-function usePages(locale: Locale): { pages: DocPage[]; translated: boolean } {
+function usePages(locale: Locale, extension?: DocsExtension): { pages: DocPage[]; translated: boolean } {
+  const base = useMemo(() => extension?.pages?.(PAGES) ?? PAGES, [extension]);
   const [loaded, setLoaded] = useState<{ locale: Locale; dict: Dictionary } | null>(null);
   useEffect(() => {
     let live = true;
-    loadDictionary(locale).then((dict) => { if (live && dict) setLoaded({ locale, dict }); }, () => undefined);
+    const extra = locale === "en" ? undefined : extension?.dictionaries?.[locale];
+    Promise.all([loadDictionary(locale), extra?.()]).then(([dict, more]) => { if (live && dict) setLoaded({ locale, dict: { ...dict, ...more } }); }, () => undefined);
     return () => { live = false; };
-  }, [locale]);
+  }, [locale, extension]);
   const dict = loaded?.locale === locale ? loaded.dict : null;
-  return useMemo(() => (dict ? { pages: applyDictionary(PAGES, dict), translated: true } : { pages: PAGES, translated: false }), [dict]);
+  return useMemo(() => (dict ? { pages: applyDictionary(base, dict), translated: true } : { pages: base, translated: false }), [base, dict]);
 }
 
 export const slugFromPath = (pathname: string) => pathname.replace(/^\/docs\/?/, "").replace(/\/$/, "");
@@ -184,12 +187,12 @@ function useActiveSection(page: DocPage | undefined): string | undefined {
   return active;
 }
 
-export default function Docs({ location = window.location }: { location?: Pick<Location, "pathname" | "hash"> }) {
+export default function Docs({ location = window.location, extension }: { location?: Pick<Location, "pathname" | "hash">; extension?: DocsExtension }) {
   const [path, setPath] = useState({ pathname: location.pathname, hash: location.hash });
   const [menuOpen, setMenuOpen] = useState(false);
   const locale = useLocale();
   const t = DOCS_STRINGS[locale];
-  const { pages, translated } = usePages(locale);
+  const { pages, translated } = usePages(locale, extension);
   const groups = useMemo(() => [...new Set(pages.map((p) => p.group))], [pages]);
   const slug = slugFromPath(path.pathname);
   const index = pages.findIndex((p) => p.slug === slug);

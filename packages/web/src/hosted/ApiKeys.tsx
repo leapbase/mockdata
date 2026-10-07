@@ -1,8 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { createApiKey, listApiKeys, revokeApiKey, type ApiKeyInfo } from "../api";
-import { messageOf } from "../hooks";
-import { copyText } from "./DiagramMenu";
-import Modal from "./Modal";
+import { createApiKey, listApiKeys, revokeApiKey, type ApiKeyInfo } from "./hostedApi";
+import { Modal, copyText, messageOf } from "@mockdata/web";
 
 const when = (epoch: number | null) => (epoch === null ? "never" : new Date(epoch * 1000).toLocaleString());
 

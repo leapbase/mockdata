@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { ApiError, forgotPassword, login, register, resendVerification, resetPassword, verifyEmail, type AuthUser, type Me } from "../api";
-import { messageOf } from "../hooks";
+import { ApiError, messageOf } from "@mockdata/web";
+import { forgotPassword, login, register, resendVerification, resetPassword, verifyEmail, type AuthUser, type Me } from "./hostedApi";
 
 type Mode = "login" | "register" | "forgot" | "reset" | "verify" | "checkEmail" | "unverified" | "forgotSent";
 

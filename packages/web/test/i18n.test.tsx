@@ -11,7 +11,7 @@ import es from "../src/docs/i18n/es";
 import zh from "../src/docs/i18n/zh";
 import Landing from "../src/landing/Landing";
 import { LANDING_COPY, type LandingCopy } from "../src/landing/copy";
-import AuthGate from "../src/AuthGate";
+import AuthGate from "../src/hosted/AuthGate";
 import { stubApi } from "./stub";
 
 const ME_OFF = { user: null, auth: { accountsEnabled: false, googleConfigured: false, emailEnabled: false } };

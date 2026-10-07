@@ -3,7 +3,7 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import Landing from "../src/landing/Landing";
-import AuthGate, { useAccountCta } from "../src/AuthGate";
+import AuthGate, { useAccountCta } from "../src/hosted/AuthGate";
 import Root from "../src/Root";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -74,10 +74,10 @@ describe("Landing", () => {
     expect(panel.getByRole("heading", { name: "Columns a model writes" })).toBeTruthy();
     expect(panel.getByText(/llm: \{ prompt: "A one or two sentence customer review/)).toBeTruthy();
     expect(panel.getByRole("heading", { name: "Agents over MCP" })).toBeTruthy();
-    expect(screen.getByRole("tabpanel").textContent).toContain("claude mcp add --transport http mockdata https://mockdata.com/mcp");
+    expect(screen.getByRole("tabpanel").textContent).toContain("claude mcp add mockdata -e MOCKDATA_ROOT=/path/to/folder -- node /path/to/mockdata/packages/mcp/dist/bin.js");
     for (const tool of MCP_TOOLS) expect(panel.getByText(tool)).toBeTruthy();
     expect(panel.getByRole("link", { name: /LLM-written text/ }).getAttribute("href")).toBe("/docs/llm");
-    expect(panel.getByRole("link", { name: /MCP on the web/ }).getAttribute("href")).toBe("/docs/mcp");
+    expect(panel.getByRole("link", { name: /MCP in your editor/ }).getAttribute("href")).toBe("/docs/mcp-local");
   });
 
   it("opens the AI tab from the AI link in the header", async () => {
@@ -128,6 +128,19 @@ describe("Root", () => {
       expect(loc.replace).toHaveBeenCalledWith(`/app${hash}`);
       expect(container.textContent).toBe("");
       cleanup();
+    }
+  });
+});
+
+describe("Landing: what the AI tab promises matches the docs", () => {
+  it("shows the same local MCP command, and links to the page that documents it", async () => {
+    const { PAGES } = await import("../src/docs/content");
+    const { LANDING_COPY } = await import("../src/landing/copy");
+    const local = PAGES.find((p) => p.slug === "mcp-local")!;
+    const codes = local.sections.flatMap((s) => s.blocks).flatMap((b) => ("code" in b ? [b.code] : []));
+    for (const locale of ["en", "es", "zh"] as const) {
+      expect(codes).toContain(LANDING_COPY[locale].ai.mcpCommand);
+      expect(LANDING_COPY[locale].ai.mcpHref).toBe("/docs/mcp-local");
     }
   });
 });

@@ -18,7 +18,6 @@ export type DocPage = { slug: string; title: string; group: string; summary: str
 export type IconName = "book" | "rocket" | "table" | "link" | "rule" | "folder" | "window" | "terminal" | "import" | "spark" | "agent" | "server" | "network" | "users" | "key";
 
 export const SOURCE_URL = "https://github.com/leapbase/mockdata";
-export const MCP_URL = "https://mockdata.com/mcp";
 
 const SHOP = `seed: 42
 tables:
@@ -46,7 +45,7 @@ export const PAGES: DocPage[] = [
     sections: [
       { id: "welcome", title: "Welcome to mockdata", blocks: [
         { p: "mockdata turns a short YAML or JSON schema into tables of test data that hang together: every foreign key points at a real row, dates follow each other, and values stay inside the ranges you set. Deterministic generators handle keys, numbers, dates and enums; an LLM writes only the free-text columns you mark." },
-        { note: "Sign in at [mockdata.com](/app) and follow the [Quick start](/docs/quick-start) to generate your first dataset in a couple of minutes, with nothing to install.", title: "New to mockdata?" },
+        { note: "Open the [workspace](/app) and follow the [Quick start](/docs/quick-start) to generate your first dataset in a couple of minutes.", title: "New to mockdata?" },
       ] },
       { id: "key-features", title: "Key features", blocks: [
         { list: [
@@ -68,7 +67,6 @@ export const PAGES: DocPage[] = [
           { title: "Command line", href: "/docs/cli", body: "generate, validate and infer" },
           { title: "Infer a schema", href: "/docs/infer", body: "From a database, OpenAPI or samples" },
           { title: "LLM-written text", href: "/docs/llm", body: "Model-written columns with context" },
-          { title: "MCP on the web", href: "/docs/mcp", body: "Connect an agent to mockdata.com" },
           { title: "MCP locally", href: "/docs/mcp-local", body: "Run the server on your machine" },
           { title: "Self-hosting", href: "/docs/self-hosting", body: "Run the servers yourself" },
         ] },
@@ -83,7 +81,7 @@ export const PAGES: DocPage[] = [
         ], ordered: true },
       ] },
       { id: "open-source", title: "Open source", blocks: [
-        { p: `mockdata is open source under the GNU Affero General Public License, version 3 or later, at [github.com/leapbase/mockdata](${SOURCE_URL}). The hosted copy at mockdata.com is free to use. Data you generate is yours and is not covered by the license.` },
+        { p: `mockdata is open source under the GNU Affero General Public License, version 3 or later, at [github.com/leapbase/mockdata](${SOURCE_URL}). Data you generate is yours and is not covered by the license.` },
       ] },
     ],
   },
@@ -93,7 +91,7 @@ export const PAGES: DocPage[] = [
     sections: [
       { id: "in-the-browser", title: "In the browser", blocks: [
         { list: [
-          "Open the [workspace](/app) and sign in, or create an account.",
+          "Open the [workspace](/app).",
           "Choose **New** in the Schemas sidebar and paste the schema below, or start from **Import**.",
           "Check the **Diagram** tab: two tables, with an arrow from `orders.customer_id` to `customers.id`.",
           "Open **Generate data** on the right and choose Generate. You get the first 50 rows of each table; foreign key values link to their parent row.",
@@ -271,7 +269,7 @@ shipped_at: { type: date, after: placed_at, within: 14 }     # same row, at most
     summary: "Write schemas, see their relationships, preview data and export it, all in the browser.",
     sections: [
       { id: "schemas-sidebar", title: "Schemas", blocks: [
-        { p: "The left sidebar lists your schemas. Select one to open it, choose **New** to start a draft, and name or rename it in the header field next to **Save**. The top bar holds the theme switch (System, Light, Dark) and your account menu." },
+        { p: "The left sidebar lists your schemas. Select one to open it, choose **New** to start a draft, and name or rename it in the header field next to **Save**. The top bar holds the theme switch (System, Light, Dark)." },
       ] },
       { id: "editor", title: "Editor", blocks: [
         { p: "Edit YAML or JSON with live validation. Errors appear inline and in the status strip, which also shows the order tables will be generated in. Switching to the diagram and back keeps your edits." },
@@ -293,7 +291,7 @@ shipped_at: { type: date, after: placed_at, within: 14 }     # same row, at most
         { p: "Turn on **Fill LLM columns** to have model-written columns filled, with progress and a Cancel button. It is available when a model provider is configured." },
       ] },
       { id: "import", title: "Import", blocks: [
-        { p: "The **Import** tab builds a schema from a file in your folder, from pasted sample rows, or from a pasted JSON Schema or OpenAPI document; a self-hosted workspace can also read a database whose URL is kept in `.env`. The result opens as an unsaved draft with any warnings listed. See [Infer a schema](/docs/infer) for what is inferred." },
+        { p: "The **Import** tab builds a schema from a file in your folder, from pasted sample rows, or from a pasted JSON Schema or OpenAPI document; the workspace can also read a database whose URL is kept in `.env`. The result opens as an unsaved draft with any warnings listed. See [Infer a schema](/docs/infer) for what is inferred." },
       ] },
       { id: "export", title: "Export", blocks: [
         { p: "From the generation panel, download every row as JSON, NDJSON or CSV in a zip, or write the files to a folder. Existing files are kept unless you tick Overwrite." },
@@ -374,7 +372,7 @@ npx mockdata infer env:DATABASE_URL -o schema.yaml      # a database, password k
         { p: "Each row's prompt includes the row's other values and, through foreign keys, the parent rows it belongs to, so a review can be about the actual product. Parent tables are filled first, so children also see text written for their parents. `llm.contextDepth` (0 to 2, default 1) sets how many foreign-key hops are shown." },
       ] },
       { id: "providers", title: "Providers", blocks: [
-        { p: "On mockdata.com the model is set by the site. When you run mockdata yourself, settings come from `.env` in the folder you run from; real environment variables override it, and a schema's top-level `llm:` block overrides both." },
+        { p: "Settings come from `.env` in the folder you run from; real environment variables override it, and a schema's top-level `llm:` block overrides both." },
         { table: { head: ["Variable", "Meaning"], rows: [
           ["`AI_PROVIDER`", "`anthropic`, `openai`, `ollama` or `openai-compatible`"],
           ["`ANTHROPIC_MODEL`, `OPENAI_MODEL`, `OLLAMA_MODEL`", "Model name for that provider (no default)"],
@@ -391,48 +389,6 @@ npx mockdata infer env:DATABASE_URL -o schema.yaml      # a database, password k
       { id: "costs-and-limits", title: "Costs and limits", blocks: [
         { p: "Rows are sent in batches and bad or cut-off replies are retried. A run reports the calls and tokens it used. Model output is not reproducible from the seed (the other columns are), and it costs tokens, so try a small `rows` first." },
         { note: "A schema can come from someone else, so its `llm:` block cannot redirect your keys: `baseUrl` is accepted only for `ollama` and `openai-compatible`, private network addresses are refused, and keys are sent only over https or to localhost.", tone: "warn" },
-      ] },
-    ],
-  },
-  {
-    slug: "mcp", title: "MCP on the web", group: "AI agents", icon: "agent",
-    summary: "Connect an AI agent such as Claude to mockdata.com over the Model Context Protocol, with nothing to install.",
-    sections: [
-      { id: "connect", title: "Connect", blocks: [
-        { list: [
-          "Sign in to the [workspace](/app).",
-          "Open the account menu, choose **API keys**, and create a key. Copy it now: it is shown only once.",
-          "Add the server to your client:",
-        ], ordered: true },
-        { code: `claude mcp add --transport http mockdata ${MCP_URL} --header "Authorization: Bearer <your API key>"` },
-        { p: "Other clients take the same two things: the URL `" + MCP_URL + "` (Streamable HTTP) and the header `Authorization: Bearer <your API key>`." },
-      ] },
-      { id: "api-keys", title: "API keys", blocks: [
-        { list: [
-          "Each key is shown once; only a hash of it is stored. The list shows each key's name, its first characters and when it was last used.",
-          "You may hold 10 keys and revoke any of them at any time from the same dialog.",
-          "The key goes in the `Authorization` header only. Your browser's sign-in is never accepted at `/mcp`, so a web page cannot use it to call the tools.",
-          "Resetting your password with \"Forgot password?\" revokes all your keys. Changing the password while signed in, or \"Sign out everywhere\", does not: revoke keys in the list if you need to.",
-        ] },
-      ] },
-      { id: "your-folder", title: "Your folder and limits", blocks: [
-        { p: "The tools work in your private folder, the same one the web workspace uses: an agent can read the schemas you saved there by name, or pass a schema inline, and generated files it writes land in that folder. The site's own model settings and limits apply: rows and cells per run, storage, files, and model-written rows per day." },
-        { p: "Not available on the web: inferring from a database (`infer_schema` with `connectionEnv`), and choosing a model, provider, address or key in a schema's `llm:` block." },
-        { table: { head: ["Limit", "Value"], rows: [
-          ["Open sessions", "5 per user; idle sessions close after 30 minutes"],
-          ["Requests", "240 a minute per user"],
-          ["Wrong keys", "An address that sends 30 wrong keys in 15 minutes is refused for a while"],
-        ] } },
-      ] },
-      { id: "tools", title: "Tools", blocks: [
-        { table: { head: ["Tool", "Does"], rows: [
-          ["`describe_schema_format`", "Returns the schema reference so an agent can write valid schemas"],
-          ["`validate_schema`", "Checks a schema"],
-          ["`infer_schema`", "Builds a schema from a file or folder in your folder, or from inline content such as sample rows or an OpenAPI document"],
-          ["`generate_data`", "Returns row counts and a small preview; can write every row to files in your folder"],
-          ["`get_run_report`", "Seed, row counts, files written, model calls and tokens for the last run"],
-        ] } },
-        { note: "Running your own [accounts-mode site](/docs/accounts)? It serves the same endpoint at `<MOCKDATA_PUBLIC_URL>/mcp`, with the same keys and limits.", title: "Self-hosted sites" },
       ] },
     ],
   },
@@ -489,7 +445,7 @@ claude mcp add --transport http mockdata http://127.0.0.1:4748/mcp` },
     summary: "Run the web workspace and the MCP server on your own machine.",
     sections: [
       { id: "servers", title: "Servers", blocks: [
-        { p: "Run `npm run build` first (and again after code changes). Both servers listen on 127.0.0.1 only unless you allow a [private network](/docs/network) or turn on [accounts](/docs/accounts)." },
+        { p: "Run `npm run build` first (and again after code changes). Both servers listen on 127.0.0.1 only unless you allow a [private network](/docs/network)." },
         { table: { head: ["What", "Command", "Address"], rows: [
           ["Web UI", "`npm run ui -- <folder>`", "http://127.0.0.1:4747 (workspace at `/app`)"],
           ["MCP over HTTP", "`MOCKDATA_ROOT=<folder> node packages/mcp/dist/bin.js --http`, see [MCP locally](/docs/mcp-local#http)", "http://127.0.0.1:4748/mcp"],
@@ -533,52 +489,6 @@ MOCKDATA_ROOT=<folder> node packages/mcp/dist/bin.js --http --allow 100.100.1.x`
     ],
   },
   {
-    slug: "accounts", title: "Accounts mode", group: "Self-hosting", icon: "users",
-    summary: "Run a public site that people sign in to, like mockdata.com.",
-    sections: [
-      { id: "modes", title: "Modes", blocks: [
-        { table: { head: ["Mode", "Turned on by", "Who gets in"], rows: [
-          ["Local (default)", "nothing", "anyone on this machine"],
-          ["Private network", "`--allow ranges`", "the listed private ranges, with a shared token"],
-          ["**Accounts**", "`MOCKDATA_PUBLIC_URL`", "everyone signs in, including localhost"],
-        ] } },
-        { p: "Localhost is not trusted in accounts mode because a reverse proxy that terminates https connects from localhost on behalf of everyone." },
-      ] },
-      { id: "setup", title: "Set it up", blocks: [
-        { p: "Set the variables below (environment or `.env`), put a reverse proxy that provides https in front, and start the UI as usual. It refuses to start unless people can sign up by email and/or Google." },
-        { code: `mockdata.example.com {
-  reverse_proxy 127.0.0.1:4747
-}`, title: "Caddyfile" },
-        { code: `MOCKDATA_PUBLIC_URL=https://mockdata.example.com MOCKDATA_TRUST_PROXY=1 npm run ui -- /path/holding/.env` },
-        { table: { head: ["Variable", "Meaning"], rows: [
-          ["`MOCKDATA_PUBLIC_URL`", "`https://your-domain` (plain http only for localhost)"],
-          ["`MOCKDATA_DATA_DIR`", "Accounts database and every user's private folder (default `./mockdata-data`); back it up"],
-          ["`MOCKDATA_ACCOUNTS_DB`", "Optional `postgres://` URL: the account database in Postgres instead of SQLite, needed to [run several servers](/docs/accounts#several-servers)"],
-          ["`SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`", "Email for verification and password reset"],
-          ["`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`", "Optional Google sign-in; redirect URI `<MOCKDATA_PUBLIC_URL>/api/auth/google/callback`"],
-          ["`MOCKDATA_TRUST_PROXY`", "Read the visitor's address from `X-Forwarded-For` (default on for https)"],
-        ] } },
-        { p: "Back up with `mockdata-ui --backup <file>`, which copies the account database safely while the server runs; copying `accounts.db` alone can miss recent writes. Back up `<data-dir>/users/` with any file tool, and test a restore." },
-      ] },
-      { id: "limits", title: "Per-user limits", blocks: [
-        { table: { head: ["Variable", "Default"], rows: [
-          ["`MOCKDATA_LLM_DAILY_ROWS`", "2,000 model-written rows per user per day"],
-          ["`MOCKDATA_LLM_GLOBAL_DAILY_ROWS`", "20,000 per day across all users: your spending ceiling"],
-          ["`MOCKDATA_MAX_ROWS`, `MOCKDATA_MAX_CELLS`", "200,000 rows and 500,000 cells per run"],
-          ["`MOCKDATA_USER_QUOTA_MB`, `MOCKDATA_USER_MAX_FILES`", "50 MB and 500 files per user"],
-          ["`MOCKDATA_MAX_RUNS`", "4 runs at once across all users"],
-        ] } },
-        { p: "Users cannot infer from a database variable or choose a model, provider, address or key in a schema: the operator's settings are used. The same site serves [MCP](/docs/mcp) at `/mcp` with per-user API keys." },
-      ] },
-      { id: "several-servers", title: "Several servers", blocks: [
-        { p: "To run several servers behind a load balancer, every server needs:" },
-        { list: ["**One Postgres account database:** the same `MOCKDATA_ACCOUNTS_DB` URL everywhere. Accounts, sessions, API keys, model budgets, rate limits and run slots are then shared, so a sign-in on one server works on all and each limit is counted once.", "**The same user files:** `<data-dir>/users` on shared storage (NFS, EFS or similar) at the same path on each server.", "**The same environment:** public address, email, Google and model settings identical everywhere.", "**MCP sessions routed consistently:** a session lives on the server that opened it, so route by the `Mcp-Session-Id` header; another server answers it with 404 and the client reconnects."] },
-        { code: "mockdata.example.com {\n  reverse_proxy 10.0.0.11:4747 10.0.0.12:4747 {\n    lb_policy header Mcp-Session-Id\n    health_uri /healthz\n  }\n}", title: "Caddyfile" },
-        { p: "Per server and not shared, by design: the password-hashing queue, the mail queue and the generation worker threads. One server on SQLite remains the simplest setup." },
-      ] },
-    ],
-  },
-  {
     slug: "environment", title: "Environment variables", group: "Self-hosting", icon: "key",
     summary: "Every setting read from the environment or .env, in one place.",
     sections: [
@@ -597,9 +507,6 @@ MOCKDATA_ROOT=<folder> node packages/mcp/dist/bin.js --http --allow 100.100.1.x`
           ["`MOCKDATA_TOKEN`", "Shared token for [private network access](/docs/network)"],
           ["`MOCKDATA_WORKERS`, `MOCKDATA_WORKER_QUEUE`, `MOCKDATA_JOB_TIMEOUT_SECS`, `MOCKDATA_WORKER_HEAP_MB`", "[Worker threads](/docs/self-hosting#workers)"],
         ] } },
-      ] },
-      { id: "accounts", title: "Accounts", blocks: [
-        { p: "`MOCKDATA_PUBLIC_URL`, `MOCKDATA_DATA_DIR`, `MOCKDATA_TRUST_PROXY`, the `SMTP_*` and `GOOGLE_*` settings, and the per-user limits are described in [Accounts mode](/docs/accounts)." },
         { note: "Never commit `.env`: it holds API keys and passwords. The servers never serve it, and neither browsers nor agents can read it.", tone: "warn" },
       ] },
     ],

@@ -1,11 +1,9 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useMemo, type ComponentProps } from "react";
 import ErrorBoundary from "./components/ErrorBoundary";
 import LocalGate from "./components/LocalGate";
 import type { Slots } from "./slots";
 
 const App = lazy(() => import("./App"));
-const Landing = lazy(() => import("./landing/Landing"));
-const Docs = lazy(() => import("./docs/Docs"));
 
 export const isWorkspacePath = (pathname: string) => pathname === "/app" || pathname === "/app/";
 /** Must match the paths the server answers with this page (`isDocsPath` in server/src/static.ts). */
@@ -15,7 +13,24 @@ export const isDocsPath = (pathname: string) => /^\/docs(\/[a-z0-9-]+)?\/?$/.tes
 export const legacyAuthHash = (hash: string) => /^#(verify_token|reset_token)=/.test(hash);
 
 /** "/" is the landing page, "/app" the workspace and "/docs" the documentation. The server serves this same page for all three. */
-function Pages({ location = window.location, gate: Gate = LocalGate, useLandingCta }: Slots & { location?: Pick<Location, "pathname" | "hash" | "replace"> }) {
+function Pages({ location = window.location, gate: Gate = LocalGate, useLandingCta, landingCopy, docs }: Slots & { location?: Pick<Location, "pathname" | "hash" | "replace"> }) {
+  // A hosted shell's copy and docs load beside the page that uses them, so they stay off the startup path and the page never shows open wording first.
+  const Landing = useMemo(
+    () =>
+      lazy(async () => {
+        const [{ default: Page }, copy] = await Promise.all([import("./landing/Landing"), landingCopy?.()]);
+        return { default: () => <Page useCta={useLandingCta} copy={copy} /> };
+      }),
+    [landingCopy, useLandingCta],
+  );
+  const Docs = useMemo(
+    () =>
+      lazy(async () => {
+        const [{ default: Page }, extension] = await Promise.all([import("./docs/Docs"), docs?.()]);
+        return { default: (props: Omit<ComponentProps<typeof Page>, "extension">) => <Page {...props} extension={extension} /> };
+      }),
+    [docs],
+  );
   if (isWorkspacePath(location.pathname)) {
     return (
       <Gate>
@@ -38,7 +53,7 @@ function Pages({ location = window.location, gate: Gate = LocalGate, useLandingC
   }
   return (
     <Suspense fallback={null}>
-      <Landing useCta={useLandingCta} />
+      <Landing />
     </Suspense>
   );
 }
