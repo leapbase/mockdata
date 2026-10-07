@@ -1,9 +1,7 @@
 import { lstatSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { BusyError, QuotaError } from "@mockdata/core";
 import type { AccountsDb } from "./db.js";
-
-/** Thrown when a user's limit is reached; the message is safe to show to that user. */
-export class QuotaError extends Error {}
 
 export interface Limits {
   /** LLM-written cells one user may request per UTC day. */
@@ -89,9 +87,6 @@ export class UsageStore {
     await this.accounts.run(UPSERT_USAGE, [userId, this.day(), rows]);
   }
 }
-
-/** Thrown when the server has too much queued work to take more right now. */
-export class BusyError extends Error {}
 
 /**
  * Bounds how many expensive jobs (password hashing) run at once so they cannot starve the rest of the server,

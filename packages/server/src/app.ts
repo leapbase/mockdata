@@ -1,16 +1,14 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { parseCookies, sessionCookieName } from "@mockdata/accounts";
 import { loadEnv, needsToken, peerAllowed, presentedToken, TOKEN_COOKIE, tokensEqual, type NetworkAccess } from "@mockdata/cli";
 import { assertLocal, HttpError, sendJson, setBodyLimit, type Ctx, type Handler } from "./http.js";
 import { publicMessage, statusFor } from "./errors.js";
 import { serveStatic } from "./static.js";
-import type { AccountsRuntime } from "./accounts/runtime.js";
-import { createHostedMcp } from "./accounts/mcp.js";
+import type { HostedPlugin } from "./hosted.js";
 import { InlineRunner } from "./workers/inline.js";
 import type { Runner } from "./workers/runner.js";
-import { AUTH_ROUTES, meWithoutAccounts } from "./routes/auth.js";
+import { meWithoutAccounts } from "./routes/me.js";
 import { getConfig } from "./routes/config.js";
 import { listFiles, readFile, renameFile, writeFile } from "./routes/files.js";
 import { exportRoute } from "./routes/export.js";
@@ -28,14 +26,11 @@ export interface AppOptions {
   access?: NetworkAccess;
   /** Where heavy jobs run. Default: the calling thread for now (a worker pool replaces this). */
   runner?: Runner;
-  /** Accounts mode (see createAccounts): every API call needs a session and runs in that user's private folder. */
-  accounts?: AccountsRuntime;
+  /** Hosted mode (see HostedPlugin): every API call is authenticated by the plugin and runs in the caller's own folder. */
+  hosted?: HostedPlugin;
   /** Built web app (default: packages/web/dist next to this package). */
   staticDir?: string;
 }
-
-/** Most a signed-in user may send in one request (the saved-file limit is 1 MB; a run carries the schema text). */
-const ACCOUNT_BODY_MAX = 2 * 1024 * 1024;
 
 const ROUTES: Record<string, Handler> = {
   "GET /api/config": getConfig,
@@ -67,17 +62,14 @@ export function createApp(opts: AppOptions = {}): (req: IncomingMessage, res: Se
   const baseEnv = opts.env ?? process.env;
   const staticDir = opts.staticDir ?? fileURLToPath(new URL("../../web/dist", import.meta.url));
   const ctx: Ctx = { root, env: () => loadEnv(root, baseEnv), llm: opts.llm ?? {}, runner: opts.runner ?? new InlineRunner(opts.llm) };
-  // Accounts mode also serves MCP at /mcp for clients holding one of the user's API keys.
-  const mcp = opts.accounts ? createHostedMcp({ ...ctx, accounts: opts.accounts }) : undefined;
+  // A hosted layer may also serve MCP at /mcp for its own callers.
+  const hosted = opts.hosted;
+  const mcp = hosted?.mcp(ctx);
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     assertLocal(req, opts.access);
     if (!peerAllowed(opts.access, req.socket.remoteAddress)) throw new HttpError(403, "Address not allowed");
-    const accounts = opts.accounts;
-    // A certificate is someone else's job (the reverse proxy), but once people sign in over https the browser should insist on it.
-    if (accounts?.config.publicUrl.secure) res.setHeader("strict-transport-security", "max-age=31536000");
-    // Emailed links and OAuth returns carry one-time values: never let a page we serve pass them on in a Referer.
-    if (accounts) res.setHeader("referrer-policy", "no-referrer");
+    if (hosted) for (const [name, value] of Object.entries(hosted.responseHeaders())) res.setHeader(name, value);
     const url = new URL(req.url ?? "/", "http://localhost");
     if (needsToken(opts.access, req.socket.remoteAddress) && !tokensEqual(presentedToken(req.headers), opts.access!.token)) {
       // A browser arrives once with ?token=: trade it for a cookie and a URL that no longer carries it.
@@ -101,33 +93,22 @@ export function createApp(opts: AppOptions = {}): (req: IncomingMessage, res: Se
       return sendJson(res, 200, { ok: true });
     }
     if (mcp && url.pathname === "/mcp") return mcp.handle(req, res);
-    if (accounts && url.pathname.startsWith("/api/")) {
-      if (Number(req.headers["content-length"]) > ACCOUNT_BODY_MAX) throw new HttpError(413, "Request body is too large"); // refused before it is read
-      setBodyLimit(req, ACCOUNT_BODY_MAX); // and capped while it is read, for a body with no Content-Length
-    }
-    if (accounts && url.pathname.startsWith("/api/auth/")) {
-      const route = AUTH_ROUTES[`${req.method} ${url.pathname}`];
-      if (!route) throw new HttpError(404, "No such API route");
-      const sessionId = parseCookies(req.headers.cookie)[sessionCookieName(accounts.config.publicUrl.secure)];
-      const user = await accounts.sessions.lookup(sessionId);
-      await route(accounts, { user, sessionId: user ? sessionId : undefined }, req, res, url);
-      return;
+    if (hosted && url.pathname.startsWith("/api/")) {
+      if (Number(req.headers["content-length"]) > hosted.bodyMax) throw new HttpError(413, "Request body is too large"); // refused before it is read
+      setBodyLimit(req, hosted.bodyMax); // and capped while it is read, for a body with no Content-Length
+      if (await hosted.handleApi(req, res, url)) return;
     }
     if (url.pathname.startsWith("/api/")) {
       const route = ROUTES[`${req.method} ${url.pathname}`];
       if (!route) throw new HttpError(404, "No such API route");
-      if (!accounts) return route(ctx, req, res, url);
-      // Accounts mode: a session is required for everything, even from localhost (a reverse proxy connects from there).
-      const user = await accounts.sessions.lookup(parseCookies(req.headers.cookie)[sessionCookieName(accounts.config.publicUrl.secure)]);
-      if (!user) throw new HttpError(401, "Sign in required");
-      await route({ ...ctx, root: accounts.userRoot(user), accounts, user }, req, res, url);
-      return;
+      // Hosted: the plugin names the caller (a session is required for everything, even from localhost, since a reverse proxy connects from there).
+      return route(hosted ? await hosted.contextFor(ctx, req) : ctx, req, res, url);
     }
     if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405, "Method not allowed");
     serveStatic(staticDir, url.pathname, res);
   }
 
   return (req, res) => {
-    handle(req, res).catch((e) => sendError(res, e, !!opts.accounts));
+    handle(req, res).catch((e) => sendError(res, e, !!opts.hosted));
   };
 }

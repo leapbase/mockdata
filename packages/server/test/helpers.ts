@@ -7,7 +7,7 @@ import type { Mailer, MailerMessage } from "@mockdata/auth-kit";
 import { parsePublicUrl } from "@mockdata/cli";
 import { PGlite } from "@electric-sql/pglite";
 import { AccountsDb, pgliteDriver, type Limits } from "@mockdata/accounts";
-import { createAccounts, startServer } from "../src/index.js";
+import { createAccounts, createAccountsPlugin, startServer } from "../src/index.js";
 
 type AppOptions = NonNullable<Parameters<typeof startServer>[0]>;
 
@@ -129,7 +129,7 @@ export async function bootAccounts(
     trustProxy: opts.trustProxy,
     enumerationTimingFloorMs: 0,
   });
-  const app = await boot({ root: configRoot, accounts, env, llm: opts.llm });
+  const app = await boot({ root: configRoot, hosted: createAccountsPlugin(accounts), env, llm: opts.llm });
 
   /** Requests carrying a session cookie. */
   const as = (cookie: string) => ({

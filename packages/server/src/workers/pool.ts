@@ -1,4 +1,4 @@
-import { BusyError } from "@mockdata/accounts";
+import { BusyError } from "@mockdata/core";
 import { LlmCancelledError, type LlmProgress } from "@mockdata/llm";
 import { decodeError, JobTimeoutError } from "./errors.js";
 import type { Job, JobHooks, ResultOf } from "./job.js";

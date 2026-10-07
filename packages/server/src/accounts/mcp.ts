@@ -1,11 +1,11 @@
 import { existsSync, lstatSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { assertWithinDiskQuota } from "@mockdata/accounts";
 import { UserError } from "@mockdata/cli";
 import { createServer, McpSessions, mcpReply, type HostedHooks } from "@mockdata/mcp";
 import { publicMessage } from "../errors.js";
 import type { Ctx } from "../http.js";
-import { assertSchemaShape, beginRun, throttleRun, throttleValidate } from "./guards.js";
+import type { Policy } from "../hosted.js";
+import { accountPolicy } from "./policy.js";
 import type { AccountsRuntime } from "./runtime.js";
 
 /** Sessions the whole server keeps open, and per user. Each holds an MCP server (a few kB) until it idles out. */
@@ -34,20 +34,20 @@ export function describeHostedError(e: unknown): string {
 }
 
 /** The tools' view of a shared server: the operator's model settings, this user's quotas, and the worker pool. */
-export function hostedHooks(ctx: Ctx & { accounts: AccountsRuntime }): HostedHooks {
-  const acc = ctx.accounts;
+export function hostedHooks(ctx: Ctx & { policy: Policy }): HostedHooks {
+  const policy = ctx.policy;
   return {
     env: ctx.env,
     allowConnectionEnv: false, // a variable named by a user would read the operator's database
     async beforeValidate(schema) {
-      await throttleValidate(ctx);
-      assertSchemaShape(ctx, schema);
+      await policy.throttleValidate();
+      policy.checkSchema(schema);
     },
     async beforeInfer() {
-      await throttleRun(ctx);
+      await policy.throttleRun();
     },
     async generate(schema, want) {
-      const run = await beginRun(ctx, schema); // rate, size and row caps, daily model budget, run slot
+      const run = await policy.beginRun(schema); // rate, size and row caps, daily model budget, run slot
       try {
         const result = await ctx.runner.run({ kind: "sample", schema: run.schema, seed: want.seed, sampleRows: want.sampleRows, format: want.format, env: ctx.env() }, { signal: want.signal });
         return { counts: result.counts, report: result.report, sample: result.sample, texts: result.texts };
@@ -59,10 +59,7 @@ export function hostedHooks(ctx: Ctx & { accounts: AccountsRuntime }): HostedHoo
     beforeWrite(files) {
       const incoming = files.reduce((n, f) => n + f.bytes, 0);
       const replaced = files.reduce((n, f) => n + (existsSync(f.file) ? lstatSync(f.file).size : 0), 0);
-      assertWithinDiskQuota(ctx.root, Math.max(0, incoming - replaced), acc.limits.userQuotaBytes, {
-        newFiles: files.filter((f) => !existsSync(f.file)).length,
-        maxFiles: acc.limits.maxFiles,
-      });
+      policy.checkWrite(ctx.root, { netBytes: Math.max(0, incoming - replaced), newFiles: files.filter((f) => !existsSync(f.file)).length });
     },
   };
 }
@@ -72,8 +69,7 @@ export function hostedHooks(ctx: Ctx & { accounts: AccountsRuntime }): HostedHoo
  * Authorization header (never a cookie, so a web page cannot ride a signed-in browser). Each user works in their own
  * folder, with the same quotas as the web UI; a session can only be used with a key of the user who opened it.
  */
-export function createHostedMcp(base: Ctx & { accounts: AccountsRuntime }) {
-  const acc = base.accounts;
+export function createHostedMcp(base: Ctx, acc: AccountsRuntime) {
   const sessions = new McpSessions({ maxSessions: MAX_SESSIONS, maxPerOwner: MAX_SESSIONS_PER_USER, sessionIdleMs: SESSION_IDLE_MS, maxBody: MAX_BODY });
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -95,7 +91,7 @@ export function createHostedMcp(base: Ctx & { accounts: AccountsRuntime }) {
       res.setHeader("retry-after", String(Math.max(1, (await acc.limiters.mcpUser.retryAfterSeconds(owner)))));
       return mcpReply(res, 429, "You are sending requests too quickly. Try again in a moment.");
     }
-    const ctx = { ...base, root: acc.userRoot(user), user };
+    const ctx = { ...base, root: acc.userRoot(user), policy: accountPolicy(acc, user) };
     return sessions.handle(req, res, owner, () => createServer({ root: ctx.root, hosted: hostedHooks(ctx) }));
   }
 

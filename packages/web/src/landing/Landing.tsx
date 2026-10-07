@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
-import { getMe, type Me } from "../api";
 import Header from "../components/Header";
+import type { Slots } from "../slots";
 import { navigateTabs } from "../tabs";
 import { useLocale } from "../i18n";
 import { CLI_SNIPPET, FEATURE_ICONS, LLM_SNIPPET, MCP_COMMAND, MCP_TOOLS, SAMPLE_COLUMNS, SAMPLE_ROWS, SCHEMA_SNIPPET, SOURCE_URL } from "./content";
@@ -79,23 +79,12 @@ function DiagramPreview({ t }: { t: LandingCopy["diagram"] }) {
   </figure>;
 }
 
-/** Labels for the calls to action: a signed-out visitor in accounts mode is asked to sign in, everyone else goes straight in. */
-function useCta(t: LandingCopy): { primary: string; nav: string } {
-  const [me, setMe] = useState<Me | undefined>();
-  useEffect(() => {
-    let live = true;
-    getMe().then((m) => live && setMe(m), () => undefined);
-    return () => {
-      live = false;
-    };
-  }, []);
-  const signedOut = me?.auth.accountsEnabled && !me.user;
-  return signedOut ? { primary: t.cta.getStarted, nav: t.cta.signIn } : { primary: t.cta.openWorkspace, nav: t.cta.openWorkspace };
-}
+/** Everyone goes straight into the workspace; a hosted shell passes its own hook to ask signed-out visitors to sign in. */
+const useLocalCta: NonNullable<Slots["useLandingCta"]> = (t) => ({ primary: t.cta.openWorkspace, nav: t.cta.openWorkspace });
 
-export default function Landing() {
+export default function Landing({ useCta = useLocalCta }: { useCta?: Slots["useLandingCta"] }) {
   const t = LANDING_COPY[useLocale()];
-  const cta = useCta(t);
+  const cta = useCta!(t);
   const [tab, setTab] = useState<(typeof SNIPPETS)[number]["id"]>("schema");
   const snippet = SNIPPETS.find((s) => s.id === tab)!;
 

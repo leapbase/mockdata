@@ -1,6 +1,5 @@
-import { BusyError, QuotaError } from "@mockdata/accounts";
 import { UserError } from "@mockdata/cli";
-import { CycleError, GenerationError, SchemaError, ValidationError } from "@mockdata/core";
+import { BusyError, CycleError, GenerationError, SchemaError, QuotaError, ValidationError } from "@mockdata/core";
 import { LlmCancelledError, LlmConfigError, LlmFillError, LlmHttpError } from "@mockdata/llm";
 
 /** A job ran past its time limit and its worker was stopped. */

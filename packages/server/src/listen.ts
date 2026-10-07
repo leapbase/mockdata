@@ -16,7 +16,7 @@ export async function startServer(
     workers?: PoolSettings & { workerFile?: string };
   } = {},
 ): Promise<{ server: http.Server; url: string; token?: string; tokenGenerated: boolean }> {
-  const { host, access, tokenGenerated } = listenPlan({ ...opts, publicUrl: opts.accounts?.config.publicUrl });
+  const { host, access, tokenGenerated } = listenPlan({ ...opts, publicUrl: opts.hosted?.publicUrl });
   // A pool we create is ours to stop; a runner passed in belongs to the caller.
   const ownRunner = !opts.runner && opts.workers ? createRunner(opts.workers, { workerFile: opts.workers.workerFile, llm: opts.llm }) : undefined;
   const server = http.createServer(createApp({ ...opts, access, runner: opts.runner ?? ownRunner }));

@@ -4,7 +4,7 @@ import path from "node:path";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { parseArgs } from "node:util";
 import { parsePublicUrl } from "@mockdata/cli";
-import { createAccounts, poolSettingsFromEnv, startServer } from "@mockdata/server";
+import { createAccounts, createAccountsPlugin, poolSettingsFromEnv, startServer } from "@mockdata/server";
 import type { Mailer } from "@mockdata/auth-kit";
 import { runLoadTest, type RampOptions, type RequestRecord, type StepStats } from "./kit/index.js";
 
@@ -46,7 +46,7 @@ for (const limiter of Object.values(accounts.limiters)) {
   limiter.hit = async () => true;
   limiter.isLimited = async () => false;
 }
-const { server, url } = await startServer({ accounts, root: dir, port: 0, env: {}, workers: poolSettings });
+const { server, url } = await startServer({ hosted: createAccountsPlugin(accounts), root: dir, port: 0, env: {}, workers: poolSettings });
 
 console.log(`mockdata load test against ${url} (account database: ${accounts.db.dialect === "postgres" ? "Postgres" : "real SQLite file"}, real password hashing, ${userCount} seeded users, ${process.version})`);
 console.log(poolSettings.size > 0 ? `generation: ${poolSettings.size} worker thread(s), queue ${poolSettings.maxQueue}` : "generation: on the main thread (no workers)");

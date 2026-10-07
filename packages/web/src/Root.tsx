@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
-import AuthGate from "./AuthGate";
 import ErrorBoundary from "./components/ErrorBoundary";
+import LocalGate from "./components/LocalGate";
+import type { Slots } from "./slots";
 
 const App = lazy(() => import("./App"));
 const Landing = lazy(() => import("./landing/Landing"));
@@ -14,14 +15,14 @@ export const isDocsPath = (pathname: string) => /^\/docs(\/[a-z0-9-]+)?\/?$/.tes
 export const legacyAuthHash = (hash: string) => /^#(verify_token|reset_token)=/.test(hash);
 
 /** "/" is the landing page, "/app" the workspace and "/docs" the documentation. The server serves this same page for all three. */
-function Pages({ location = window.location }: { location?: Pick<Location, "pathname" | "hash" | "replace"> }) {
+function Pages({ location = window.location, gate: Gate = LocalGate, useLandingCta }: Slots & { location?: Pick<Location, "pathname" | "hash" | "replace"> }) {
   if (isWorkspacePath(location.pathname)) {
     return (
-      <AuthGate>
+      <Gate>
         <Suspense fallback={<div className="workspace-empty" role="status">Loading workspace…</div>}>
           <App />
         </Suspense>
-      </AuthGate>
+      </Gate>
     );
   }
   if (isDocsPath(location.pathname)) {
@@ -37,7 +38,7 @@ function Pages({ location = window.location }: { location?: Pick<Location, "path
   }
   return (
     <Suspense fallback={null}>
-      <Landing />
+      <Landing useCta={useLandingCta} />
     </Suspense>
   );
 }

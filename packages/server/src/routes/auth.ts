@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { ApiKeyLimitError, BusyError, clearCookie, sendPasswordResetEmail, sendVerificationEmail, sessionCookieName, type AccountUser } from "@mockdata/accounts";
+import { BusyError } from "@mockdata/core";
+import { ApiKeyLimitError, clearCookie, sendPasswordResetEmail, sendVerificationEmail, sessionCookieName, type AccountUser } from "@mockdata/accounts";
 import { EmailTakenError } from "@mockdata/auth-kit";
 import type { AccountsRuntime } from "../accounts/runtime.js";
 import { googleCallback, googleStart } from "../accounts/google.js";
@@ -330,8 +331,3 @@ export const AUTH_ROUTES: Record<string, AuthHandler> = {
   "GET /api/auth/google": googleStart,
   "GET /api/auth/google/callback": googleCallback,
 };
-
-/** `/api/auth/me` when accounts are off, so the page knows to skip the login screen. */
-export function meWithoutAccounts(res: ServerResponse): void {
-  sendJson(res, 200, { user: null, auth: { accountsEnabled: false, googleConfigured: false, emailEnabled: false } });
-}

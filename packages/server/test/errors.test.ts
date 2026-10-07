@@ -1,4 +1,4 @@
-import { BusyError, QuotaError } from "@mockdata/accounts";
+import { BusyError, QuotaError } from "@mockdata/core";
 import { UserError } from "@mockdata/cli";
 import { CycleError, GenerationError, SchemaError, ValidationError } from "@mockdata/core";
 import { LlmCancelledError, LlmConfigError, LlmFillError, LlmHttpError } from "@mockdata/llm";

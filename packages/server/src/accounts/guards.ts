@@ -1,7 +1,9 @@
-import { QuotaError } from "@mockdata/accounts";
 import { assertRowBudget } from "@mockdata/cli";
-import { llmColumns, type DataSchemaT, type LlmConfig } from "@mockdata/core";
-import { HttpError, type Ctx } from "../http.js";
+import { QuotaError, llmColumns, type DataSchemaT, type LlmConfig } from "@mockdata/core";
+import type { AccountUser } from "@mockdata/accounts";
+import { HttpError } from "../http.js";
+import type { RunTicket } from "../hosted.js";
+import type { AccountsRuntime } from "./runtime.js";
 
 /** What one schema may ask of a shared server (the row count has its own, configurable limit). */
 export const MAX_TABLES = 50;
@@ -37,11 +39,10 @@ export function llmCellCount(schema: DataSchemaT): number {
 const table = (c: { table: string }): string => c.table;
 
 /**
- * Accounts mode: refuse schemas that are cheap to send but expensive to build (too many tables or columns, too many
- * cells, a huge model instruction). A no-op outside accounts mode.
+ * Refuse schemas that are cheap to send but expensive to build (too many tables or columns, too many cells, a huge
+ * model instruction).
  */
-export function assertSchemaShape(ctx: Ctx, schema: DataSchemaT): void {
-  if (!ctx.accounts) return;
+export function assertSchemaShape(accounts: AccountsRuntime, schema: DataSchemaT): void {
   const tables = Object.values(schema.tables);
   if (tables.length > MAX_TABLES) throw new HttpError(400, `Schemas are limited to ${MAX_TABLES} tables`);
   let cells = 0;
@@ -60,46 +61,34 @@ export function assertSchemaShape(ctx: Ctx, schema: DataSchemaT): void {
       if (prompt && prompt.length > MAX_LLM_PROMPT) throw new HttpError(400, `The instruction for a model-written column is limited to ${MAX_LLM_PROMPT} characters`);
     }
   }
-  if (cells > ctx.accounts.limits.maxCells) {
-    throw new HttpError(400, `This schema would build ${cells} cells (rows x columns); the limit is ${ctx.accounts.limits.maxCells}`);
+  if (cells > accounts.limits.maxCells) {
+    throw new HttpError(400, `This schema would build ${cells} cells (rows x columns); the limit is ${accounts.limits.maxCells}`);
   }
 }
 
 /**
  * Generation runs on the one event loop (about a second for 500,000 cells), so a signed-in user may not repeat it
- * without limit. Counted per user, for every expensive route. A no-op outside accounts mode.
+ * without limit. Counted per user, for every expensive route.
  */
-export async function throttleRun(ctx: Ctx): Promise<void> {
-  if (!ctx.accounts || !ctx.user) return;
-  const key = String(ctx.user.id);
-  if (!(await ctx.accounts.limiters.runUser.hit(key))) throw new QuotaError(`You are sending runs too quickly: wait ${(await ctx.accounts.limiters.runUser.retryAfterSeconds(key))} seconds`);
+export async function throttleRun(accounts: AccountsRuntime, user: AccountUser): Promise<void> {
+  const key = String(user.id);
+  if (!(await accounts.limiters.runUser.hit(key))) throw new QuotaError(`You are sending runs too quickly: wait ${(await accounts.limiters.runUser.retryAfterSeconds(key))} seconds`);
 }
 
 /** Checking a schema is cheap but parses up to 2 MB each time, so it has its own, higher, per-user limit. */
-export async function throttleValidate(ctx: Ctx): Promise<void> {
-  if (!ctx.accounts || !ctx.user) return;
-  const key = String(ctx.user.id);
-  if (!(await ctx.accounts.limiters.validateUser.hit(key))) throw new QuotaError(`You are checking schemas too quickly: wait ${(await ctx.accounts.limiters.validateUser.retryAfterSeconds(key))} seconds`);
-}
-
-export interface Run {
-  /** The schema to generate from (locked to the operator's model settings in accounts mode). */
-  schema: DataSchemaT;
-  /** Free the user's run slot. Safe to call more than once. */
-  done(): void;
+export async function throttleValidate(accounts: AccountsRuntime, user: AccountUser): Promise<void> {
+  const key = String(user.id);
+  if (!(await accounts.limiters.validateUser.hit(key))) throw new QuotaError(`You are checking schemas too quickly: wait ${(await accounts.limiters.validateUser.retryAfterSeconds(key))} seconds`);
 }
 
 /**
  * Before a generation: the schema size caps, the row cap, the per-user and server-wide daily LLM budgets and the run
- * slot. A no-op outside accounts mode. Usage is charged up front, so cancelling and retrying cannot be used to dodge
+ * slot. Usage is charged up front, so cancelling and retrying cannot be used to dodge
  * the budget.
  */
-export async function beginRun(ctx: Ctx, schema: DataSchemaT): Promise<Run> {
-  const accounts = ctx.accounts;
-  const user = ctx.user;
-  if (!accounts || !user) return { schema, done: () => undefined };
-  await throttleRun(ctx);
-  assertSchemaShape(ctx, schema);
+export async function beginRun(accounts: AccountsRuntime, user: AccountUser, schema: DataSchemaT): Promise<RunTicket> {
+  await throttleRun(accounts, user);
+  assertSchemaShape(accounts, schema);
   assertRowBudget(schema, accounts.limits.maxRows);
   const release = await accounts.runs.tryStart(user.id);
   if (!release) throw new QuotaError("A generation is already running for you, or the server is busy: try again in a moment");

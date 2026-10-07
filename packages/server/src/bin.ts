@@ -2,6 +2,7 @@
 import { parseArgs } from "node:util";
 import { loadEnv, localAddresses, parseAllow, tokenFromEnv, type Cidr } from "@mockdata/cli";
 import { accountsFromEnv, backupAccounts } from "./accounts/runtime.js";
+import { createAccountsPlugin } from "./accounts/plugin.js";
 import { poolSettingsFromEnv } from "./workers/factory.js";
 import { startServer } from "./listen.js";
 
@@ -73,7 +74,7 @@ if (values.help) {
       const accounts = await accountsFromEnv(process.env, { configRoot: root, dataDir: values["data-dir"] });
       const token = allow ? tokenFromEnv(loadEnv(root, process.env)) : undefined;
       const workers = poolSettingsFromEnv(loadEnv(root, process.env));
-      const { url, server, token: active, tokenGenerated } = await startServer({ root, port, allow, host: values.host, token, accounts, workers });
+      const { url, server, token: active, tokenGenerated } = await startServer({ root, port, allow, host: values.host, token, hosted: accounts && createAccountsPlugin(accounts), workers });
       const listening = (server.address() as { port: number }).port;
       process.stdout.write(`mockdata UI on ${url}  (workspace: ${new URL("/app", url)}, root: ${root})\n`);
       process.stdout.write(workers.size > 0 ? `Generation: ${workers.size} worker thread${workers.size === 1 ? "" : "s"}, queue of ${workers.maxQueue}, ${workers.jobTimeoutSecs} s limit per job\n` : "Generation: on the main thread (MOCKDATA_WORKERS=0); a big run will block the page\n");

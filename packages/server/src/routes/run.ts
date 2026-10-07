@@ -1,7 +1,7 @@
-import { assertRowBudget, parseSchemaText, UserError } from "@mockdata/cli";
+import { parseSchemaText, UserError } from "@mockdata/cli";
 import { CycleError, llmColumns, parseSchema, planGeneration, SchemaError, type DataSchemaT } from "@mockdata/core";
 import { LlmCancelledError } from "@mockdata/llm";
-import { assertSchemaShape, beginRun, throttleRun, throttleValidate } from "../accounts/guards.js";
+import { beginRun } from "../hosted.js";
 import { publicMessage, statusFor } from "../errors.js";
 import { llmStatus } from "./config.js";
 import { abortOnClose, optInt, optStringArray, readJson, reqString, sendJson, type Handler } from "../http.js";
@@ -23,12 +23,12 @@ function parseText(text: string): unknown {
 }
 
 export const validateRoute: Handler = async (ctx, req, res) => {
-  await throttleValidate(ctx);
+  await ctx.policy?.throttleValidate();
   const body = await readJson(req);
   const text = reqString(body, "text");
   try {
     const schema = parseSchema(parseText(text));
-    assertSchemaShape(ctx, schema);
+    ctx.policy?.checkSchema(schema);
     const plan = planGeneration(schema);
     sendJson(res, 200, {
       ok: true,
@@ -77,9 +77,8 @@ export function readRunParams(body: Record<string, unknown>): RunParams {
 
 export const generateRoute: Handler = async (ctx, req, res) => {
   const { schema, seed, previewRows, tables } = readRunParams(await readJson(req));
-  await throttleRun(ctx);
-  assertSchemaShape(ctx, schema);
-  if (ctx.accounts) assertRowBudget(schema, ctx.accounts.limits.maxRows);
+  await ctx.policy?.throttleRun();
+  ctx.policy?.checkRun(schema);
   // llm columns stay pending here; the stream route fills them.
   const { preview } = await ctx.runner.run({ kind: "preview", schema, seed, previewRows, tables }, { signal: abortOnClose(res) });
   sendJson(res, 200, preview);
@@ -93,7 +92,7 @@ export const generateRoute: Handler = async (ctx, req, res) => {
 export const streamRoute: Handler = async (ctx, req, res) => {
   const params = readRunParams(await readJson(req));
   const { seed, previewRows, tables } = params;
-  const run = await beginRun(ctx, params.schema); // row cap, daily LLM budget and run slot (accounts mode); refused with a plain 429/400 before any stream starts
+  const run = await beginRun(ctx, params.schema); // row cap, daily LLM budget and run slot (hosted); refused with a plain 429/400 before any stream starts
   const schema = run.schema;
   res.writeHead(200, {
     "content-type": "text/event-stream; charset=utf-8",
@@ -109,7 +108,7 @@ export const streamRoute: Handler = async (ctx, req, res) => {
     send("done", { ...preview, report });
   } catch (e) {
     // A cancelled run has no listener left; anything else is reported (messages name variables, never values).
-    if (!(e instanceof LlmCancelledError)) send("error", { name: statusFor(e) >= 500 && ctx.accounts ? "Error" : (e as Error).name, message: publicMessage(e, !!ctx.accounts) });
+    if (!(e instanceof LlmCancelledError)) send("error", { name: statusFor(e) >= 500 && ctx.policy?.hideInternals ? "Error" : (e as Error).name, message: publicMessage(e, !!ctx.policy?.hideInternals) });
   } finally {
     run.done();
     res.end();

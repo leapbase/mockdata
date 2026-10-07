@@ -1,5 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import AuthGate, { useAccountCta } from "./AuthGate";
 import Root from "./Root";
 import { applyTheme, storedTheme } from "./theme";
 import "@fontsource/space-grotesk/400.css";
@@ -14,6 +15,6 @@ applyTheme(storedTheme());
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <Root />
+    <Root gate={AuthGate} useLandingCta={useAccountCta} />
   </StrictMode>,
 );

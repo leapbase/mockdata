@@ -1,8 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { localRequestProblem, type NetworkAccess } from "@mockdata/cli";
-import type { AccountUser } from "@mockdata/accounts";
 import type { GenerateWithLlmOptions } from "@mockdata/llm";
-import type { AccountsRuntime } from "./accounts/runtime.js";
+import type { Policy } from "./hosted.js";
 import type { Runner } from "./workers/runner.js";
 
 export interface Ctx {
@@ -13,9 +12,8 @@ export interface Ctx {
   llm: Pick<GenerateWithLlmOptions, "provider" | "fetch" | "sleep">;
   /** Where generation, filling and serializing run (a worker pool, or the calling thread in tests). */
   runner: Runner;
-  /** Accounts mode only: the account machinery and the signed-in user (`root` is then that user's private folder). */
-  accounts?: AccountsRuntime;
-  user?: AccountUser;
+  /** Hosted mode only: what the caller of this request may do (`root` is then their own folder). */
+  policy?: Policy;
 }
 
 export type Handler = (ctx: Ctx, req: IncomingMessage, res: ServerResponse, url: URL) => Promise<void>;

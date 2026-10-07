@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { AccountsDb, BusyError, QuotaError, RateLimiter, RunGate, Semaphore, SqlAuthAdapter, UsageStore, assertWithinDiskQuota, directoryBytes, directoryUsage, limitsFromEnv } from "../src/index.js";
+import { BusyError, QuotaError } from "@mockdata/core";
+import { AccountsDb, RateLimiter, RunGate, Semaphore, SqlAuthAdapter, UsageStore, assertWithinDiskQuota, directoryBytes, directoryUsage, limitsFromEnv } from "../src/index.js";
 import { eachEngine, openDb } from "./engines.js";
 
 describe("RateLimiter", () => {

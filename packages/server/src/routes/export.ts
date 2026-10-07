@@ -1,10 +1,9 @@
 import { existsSync, lstatSync } from "node:fs";
 import path from "node:path";
-import { assertWithinDiskQuota } from "@mockdata/accounts";
 import { assertNotSymlink, assertRowBudget, resolveInside, UserError, writeFileConfined } from "@mockdata/cli";
 import { LlmCancelledError } from "@mockdata/llm";
-import { beginRun } from "../accounts/guards.js";
 import { abortOnClose, HttpError, optBool, optEnum, optInt, optString, readJson, sendJson, type Handler } from "../http.js";
+import { beginRun } from "../hosted.js";
 import { parseSchemaBody } from "./run.js";
 
 const FORMATS = ["json", "ndjson", "csv"] as const;
@@ -33,7 +32,7 @@ export const exportRoute: Handler = async (ctx, req, res) => {
     }
   }
 
-  const run = await beginRun(ctx, parsed); // row cap, daily LLM budget and run slot (accounts mode)
+  const run = await beginRun(ctx, parsed); // hosted: row cap, daily LLM budget and run slot
   const schema = run.schema;
 
   // A closed connection (dialog or tab closed) stops the model calls and writes nothing. The slot is held until
@@ -62,14 +61,11 @@ export const exportRoute: Handler = async (ctx, req, res) => {
   }
 
   const texts = new Map(targets.map(({ table }) => [table, result.texts![table]!]));
-  if (ctx.accounts) {
+  if (ctx.policy) {
     // Refuse before writing anything if the files would not fit in this user's storage (replacing a file frees its old size).
     const incoming = [...texts.values()].reduce((n, t) => n + Buffer.byteLength(t), 0);
     const replaced = targets.reduce((n, { file }) => n + (existsSync(file) ? lstatSync(file).size : 0), 0);
-    assertWithinDiskQuota(ctx.root, Math.max(0, incoming - replaced), ctx.accounts.limits.userQuotaBytes, {
-      newFiles: targets.filter(({ file }) => !existsSync(file)).length,
-      maxFiles: ctx.accounts.limits.maxFiles,
-    });
+    ctx.policy.checkWrite(ctx.root, { netBytes: Math.max(0, incoming - replaced), newFiles: targets.filter(({ file }) => !existsSync(file)).length });
   }
 
   const files: string[] = [];

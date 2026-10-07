@@ -1,6 +1,5 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import path from "node:path";
-import { assertWithinDiskQuota } from "@mockdata/accounts";
 import { assertNotEnv, assertNotSymlink, checkSchemaPath, isEnvFile, resolveInside, SCHEMA_EXT, UserError, writeFileConfined } from "@mockdata/cli";
 import { HttpError, optBool, readJson, reqString, sendJson, type Ctx, type Handler } from "../http.js";
 
@@ -42,18 +41,15 @@ export const readFile: Handler = async (ctx, _req, res, url) => {
   sendJson(res, 200, { path: rel, text: readFileSync(file, "utf8") });
 };
 
-/** Largest schema file a signed-in user may save. */
-const MAX_ACCOUNT_FILE_BYTES = 1024 * 1024;
-
-/** Accounts mode: refuse a write that would pass the file size, disk quota or file count limits. */
-function checkAccountQuota(ctx: Ctx, file: string, text: string, freedBytes = 0): void {
-  if (!ctx.accounts) return;
+/** Hosted: the policy refuses a write that would pass the file size, disk quota or file count limits. */
+function checkWriteAllowed(ctx: Ctx, file: string, text: string, freedBytes = 0): void {
+  if (!ctx.policy) return;
   const bytes = Buffer.byteLength(text);
-  if (bytes > MAX_ACCOUNT_FILE_BYTES) throw new HttpError(413, "Schema files are limited to 1 MB");
   const exists = existsSync(file);
-  assertWithinDiskQuota(ctx.root, Math.max(0, bytes - (exists ? lstatSync(file).size : freedBytes)), ctx.accounts.limits.userQuotaBytes, {
+  ctx.policy.checkWrite(ctx.root, {
+    netBytes: Math.max(0, bytes - (exists ? lstatSync(file).size : freedBytes)),
     newFiles: exists || freedBytes > 0 ? 0 : 1,
-    maxFiles: ctx.accounts.limits.maxFiles,
+    fileBytes: bytes,
   });
 }
 
@@ -66,7 +62,7 @@ export const writeFile: Handler = async (ctx, req, res) => {
   assertNotSymlink(file);
   const create = optBool(body, "create") ?? false;
   if (create && existsSync(file)) throw new UserError(`${rel} already exists`);
-  checkAccountQuota(ctx, file, text);
+  checkWriteAllowed(ctx, file, text);
   writeFileConfined(ctx.root, file, text, { overwrite: !create });
   sendJson(res, 200, { path: rel });
 };
@@ -98,7 +94,7 @@ export const renameFile: Handler = async (ctx, req, res) => {
   assertNotEnv(source);
   assertNotSymlink(target);
   if (existsSync(target)) throw new UserError(`${to} already exists`);
-  checkAccountQuota(ctx, target, text, stat.size);
+  checkWriteAllowed(ctx, target, text, stat.size);
   writeFileConfined(ctx.root, target, text);
   unlinkSync(source);
   sendJson(res, 200, { path: to });

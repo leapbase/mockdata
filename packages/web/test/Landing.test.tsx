@@ -3,6 +3,7 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import Landing from "../src/landing/Landing";
+import AuthGate, { useAccountCta } from "../src/AuthGate";
 import Root from "../src/Root";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -38,16 +39,24 @@ describe("Landing", () => {
     expect(screen.getByRole("link", { name: "AGPL-3.0" }).getAttribute("href")).toMatch(/\/LICENSE$/);
   });
 
+  it("by default goes straight to the workspace and never asks the server who is signed in", async () => {
+    const calls = stubApi({});
+    render(<Landing />);
+    expect(screen.getAllByRole("link", { name: "Open workspace" }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("link", { name: "Sign in" })).toBeNull();
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
   it("asks a signed-out visitor to sign in when accounts are on", async () => {
     stubApi({ "GET /api/auth/me": () => ME_SIGNED_OUT });
-    render(<Landing />);
+    render(<Landing useCta={useAccountCta} />);
     expect((await screen.findByRole("link", { name: "Sign in" })).getAttribute("href")).toBe("/app");
     expect(screen.getAllByRole("link", { name: "Get started" }).length).toBeGreaterThan(0);
   });
 
   it("still links to the workspace when the server cannot say who is signed in", async () => {
     stubApi({});
-    render(<Landing />);
+    render(<Landing useCta={useAccountCta} />);
     expect(screen.getAllByRole("link", { name: "Open workspace" })[0]!.getAttribute("href")).toBe("/app");
   });
 
@@ -106,7 +115,7 @@ describe("Root", () => {
 
   it("renders the workspace behind the sign-in gate at /app", async () => {
     stubApi({ "GET /api/auth/me": () => ME_SIGNED_OUT });
-    render(<Root location={at("/app")} />);
+    render(<Root gate={AuthGate} location={at("/app")} />);
     expect(await screen.findByRole("button", { name: "Sign in" })).toBeTruthy();
     expect(screen.queryByRole("heading", { level: 1, name: /realistic/i })).toBeNull();
   });

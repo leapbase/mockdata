@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { BusyError } from "@mockdata/accounts";
+import { BusyError } from "@mockdata/core";
 import { UserError } from "@mockdata/cli";
 import { LlmCancelledError } from "@mockdata/llm";
 import { describe, expect, it } from "vitest";
