@@ -8,7 +8,7 @@ export const ENGINES: Dialect[] = ["sqlite", "postgres"];
 let current: Dialect = "sqlite";
 let shared: { pglite: PGlite; driver: PgDriver } | undefined;
 
-const TABLES = "users, identities, email_verification_tokens, password_reset_tokens, sessions, oauth_states, usage, api_keys";
+const TABLES = "users, identities, email_verification_tokens, password_reset_tokens, sessions, oauth_states, usage, api_keys, rate_events, run_slots";
 
 /**
  * A fresh, empty account database on the current engine. Starting PGlite takes a second or two, so one instance is
@@ -42,4 +42,19 @@ export function eachEngine(body: (engine: Dialect) => void): void {
       body(engine);
     });
   }
+}
+
+/**
+ * Live Postgres tests (MOCKDATA_TEST_POSTGRES_URL) run in parallel files against one database, so each gets its own
+ * schema, emptied on every call: the returned URL points the connection's search_path at it.
+ */
+export async function liveSchema(name: string): Promise<string> {
+  const base = process.env.MOCKDATA_TEST_POSTGRES_URL!;
+  const { pgPoolDriver } = await import("../src/index.js");
+  const admin = await pgPoolDriver(base, { max: 1 });
+  await admin.exec(`drop schema if exists ${name} cascade; create schema ${name}`);
+  await admin.close();
+  const url = new URL(base);
+  url.searchParams.set("options", `-c search_path=${name}`);
+  return url.toString();
 }

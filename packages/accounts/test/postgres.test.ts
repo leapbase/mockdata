@@ -1,6 +1,7 @@
 import { PGlite } from "@electric-sql/pglite";
 import { EmailTakenError } from "@mockdata/auth-kit";
 import { describe, expect, it } from "vitest";
+import { liveSchema } from "./engines.js";
 import { AccountsDb, ApiKeyLimitError, ApiKeyStore, MAX_API_KEYS_PER_USER, SqlAuthAdapter, UsageStore, isUniqueViolation, numberPlaceholders, pgPoolDriver, pgliteDriver } from "../src/index.js";
 
 describe("SQL helpers", () => {
@@ -21,7 +22,7 @@ describe("Postgres schema (PGlite)", () => {
     const keep = { ...pgliteDriver(pglite), close: async () => undefined };
     await AccountsDb.openPostgres(keep);
     const again = await AccountsDb.openPostgres(keep);
-    expect((await again.one<{ version: number }>("select version from mockdata_schema"))?.version).toBe(2);
+    expect((await again.one<{ version: number }>("select version from mockdata_schema"))?.version).toBe(3);
     expect((await again.all("select * from mockdata_schema")).length).toBe(1);
     await pglite.exec("update mockdata_schema set version = 99");
     await expect(AccountsDb.openPostgres(keep)).rejects.toThrow(/newer mockdata/);
@@ -38,18 +39,12 @@ if (!LIVE) console.warn("postgres.test.ts: set MOCKDATA_TEST_POSTGRES_URL to run
 
 describe.skipIf(!LIVE)("Postgres (live server, connection pool)", () => {
   async function fresh(): Promise<AccountsDb> {
-    const reset = await pgPoolDriver(LIVE!, { max: 1 });
-    await reset.exec("drop table if exists api_keys, usage, oauth_states, sessions, password_reset_tokens, email_verification_tokens, identities, users, mockdata_schema cascade");
-    await reset.close();
-    return AccountsDb.openPostgres(await pgPoolDriver(LIVE!, { max: 10 }));
+    return AccountsDb.openPostgres(await pgPoolDriver(await liveSchema("md_test_pg"), { max: 10 }));
   }
 
   it("migrates once when several servers start together", async () => {
-    await (await fresh()).close();
-    const reset = await pgPoolDriver(LIVE!, { max: 1 });
-    await reset.exec("drop table if exists api_keys, usage, oauth_states, sessions, password_reset_tokens, email_verification_tokens, identities, users, mockdata_schema cascade");
-    await reset.close();
-    const servers = await Promise.all([1, 2, 3].map(async () => AccountsDb.openPostgres(await pgPoolDriver(LIVE!, { max: 2 }))));
+    const url = await liveSchema("md_test_pg");
+    const servers = await Promise.all([1, 2, 3].map(async () => AccountsDb.openPostgres(await pgPoolDriver(url, { max: 2 }))));
     expect((await servers[0]!.all("select * from mockdata_schema")).length).toBe(1);
     await Promise.all(servers.map((s) => s.close()));
   });

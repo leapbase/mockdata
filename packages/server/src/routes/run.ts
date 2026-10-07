@@ -23,7 +23,7 @@ function parseText(text: string): unknown {
 }
 
 export const validateRoute: Handler = async (ctx, req, res) => {
-  throttleValidate(ctx);
+  await throttleValidate(ctx);
   const body = await readJson(req);
   const text = reqString(body, "text");
   try {
@@ -77,7 +77,7 @@ export function readRunParams(body: Record<string, unknown>): RunParams {
 
 export const generateRoute: Handler = async (ctx, req, res) => {
   const { schema, seed, previewRows, tables } = readRunParams(await readJson(req));
-  throttleRun(ctx);
+  await throttleRun(ctx);
   assertSchemaShape(ctx, schema);
   if (ctx.accounts) assertRowBudget(schema, ctx.accounts.limits.maxRows);
   // llm columns stay pending here; the stream route fills them.

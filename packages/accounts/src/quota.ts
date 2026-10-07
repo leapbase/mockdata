@@ -122,12 +122,17 @@ export class Semaphore {
   }
 }
 
-/** At most one run per user and `maxRuns` overall; `tryStart` returns a release function, or undefined when full. */
-export class RunGate {
+/** Where a run takes its slot: `tryStart` resolves to a release function, or undefined when full. Await it. */
+export interface RunSlots {
+  tryStart(userId: number): Promise<(() => void) | undefined>;
+}
+
+/** At most one run per user and `maxRuns` overall, in this server's memory (one server). */
+export class RunGate implements RunSlots {
   private readonly users = new Set<number>();
   constructor(private readonly maxRuns: number) {}
 
-  tryStart(userId: number): (() => void) | undefined {
+  async tryStart(userId: number): Promise<(() => void) | undefined> {
     if (this.users.has(userId) || this.users.size >= this.maxRuns) return undefined;
     this.users.add(userId);
     let released = false;

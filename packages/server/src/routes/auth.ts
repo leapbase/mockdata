@@ -73,9 +73,9 @@ async function hashing<T>(acc: AccountsRuntime, res: ServerResponse, job: () => 
 }
 
 /** The coarse per-address ceiling on unauthenticated auth requests. */
-function throttle(acc: AccountsRuntime, req: IncomingMessage, res: ServerResponse): string {
+async function throttle(acc: AccountsRuntime, req: IncomingMessage, res: ServerResponse): Promise<string> {
   const ip = acc.clientIp(req);
-  if (!acc.limiters.authIp.hit(ip)) throw tooMany(res, acc.limiters.authIp.retryAfterSeconds(ip));
+  if (!(await acc.limiters.authIp.hit(ip))) throw tooMany(res, (await acc.limiters.authIp.retryAfterSeconds(ip)));
   return ip;
 }
 
@@ -91,18 +91,18 @@ function requireEmail(acc: AccountsRuntime): void {
 
 const register: AuthHandler = async (acc, _caller, req, res) => {
   const body = await readJson(req, AUTH_BODY_MAX);
-  const ip = throttle(acc, req, res);
+  const ip = await throttle(acc, req, res);
   requireEmail(acc);
   // Cheap checks first: only an attempt that would hash a password and send mail counts against the sign-up limit.
   const email = emailOf(acc, body);
   const password = field(acc.auth.validateRegistrationPassword(body.password));
-  if (!acc.limiters.signupIp.hit(ip)) throw tooMany(res, acc.limiters.signupIp.retryAfterSeconds(ip));
+  if (!(await acc.limiters.signupIp.hit(ip))) throw tooMany(res, (await acc.limiters.signupIp.retryAfterSeconds(ip)));
   const started = Date.now();
   const verifyLink = (token: string) => verificationLink(acc, token);
   try {
     const user = await hashing(acc, res, () => acc.auth.register({ email, password }));
     const token = await acc.auth.createEmailVerificationToken(user.id);
-    acc.limiters.mailEmail.record(acc.auth.normalizeEmail(email)); // the first mail counts towards this mailbox's hourly allowance too
+    await acc.limiters.mailEmail.record(acc.auth.normalizeEmail(email)); // the first mail counts towards this mailbox's hourly allowance too
     queueMail(acc, () => sendVerificationEmail(acc.mailer, user.email!, verifyLink(token)));
   } catch (e) {
     if (!(e instanceof EmailTakenError)) throw e;
@@ -111,7 +111,7 @@ const register: AuthHandler = async (acc, _caller, req, res) => {
     // confirming any link needs the password that was stored at sign-up, so whoever signed up first cannot be handed
     // the account by a link: the real owner recovers with Forgot password, which proves the mailbox.
     const identity = await acc.auth.findEmailIdentity(email);
-    if (identity && !identity.verified && acc.limiters.mailEmail.hit(acc.auth.normalizeEmail(email))) {
+    if (identity && !identity.verified && (await acc.limiters.mailEmail.hit(acc.auth.normalizeEmail(email)))) {
       const token = await acc.auth.createEmailVerificationToken(identity.userId);
       queueMail(acc, () => sendVerificationEmail(acc.mailer, email, verifyLink(token)));
     }
@@ -122,26 +122,26 @@ const register: AuthHandler = async (acc, _caller, req, res) => {
 
 const login: AuthHandler = async (acc, _caller, req, res) => {
   const body = await readJson(req, AUTH_BODY_MAX);
-  const ip = throttle(acc, req, res);
+  const ip = await throttle(acc, req, res);
   // Every attempt is counted before any hashing, or a burst sent in parallel would all pass the check first.
-  if (!acc.limiters.loginIp.hit(ip)) throw tooMany(res, acc.limiters.loginIp.retryAfterSeconds(ip));
-  if (acc.limiters.ipFail.isLimited(ip)) throw tooMany(res, acc.limiters.ipFail.retryAfterSeconds(ip));
+  if (!(await acc.limiters.loginIp.hit(ip))) throw tooMany(res, (await acc.limiters.loginIp.retryAfterSeconds(ip)));
+  if ((await acc.limiters.ipFail.isLimited(ip))) throw tooMany(res, (await acc.limiters.ipFail.retryAfterSeconds(ip)));
   const email = emailOf(acc, body);
   const normalized = acc.auth.normalizeEmail(email);
   const mailbox = `${normalized}|${ip}`;
-  if (acc.limiters.emailIpFail.isLimited(mailbox)) throw tooMany(res, acc.limiters.emailIpFail.retryAfterSeconds(mailbox));
-  if (acc.limiters.emailFail.isLimited(normalized)) throw tooMany(res, acc.limiters.emailFail.retryAfterSeconds(normalized));
+  if ((await acc.limiters.emailIpFail.isLimited(mailbox))) throw tooMany(res, (await acc.limiters.emailIpFail.retryAfterSeconds(mailbox)));
+  if ((await acc.limiters.emailFail.isLimited(normalized))) throw tooMany(res, (await acc.limiters.emailFail.retryAfterSeconds(normalized)));
   const password = field(acc.auth.validateLoginPasswordShape(body.password));
   const result = await hashing(acc, res, () => acc.auth.login(email, password));
   if (!result) {
-    acc.limiters.ipFail.record(ip);
-    acc.limiters.emailIpFail.record(mailbox);
-    acc.limiters.emailFail.record(normalized);
+    await acc.limiters.ipFail.record(ip);
+    await acc.limiters.emailIpFail.record(mailbox);
+    await acc.limiters.emailFail.record(normalized);
     throw new HttpError(401, "Invalid email or password");
   }
   // Only someone who knows the password learns the address is unverified.
   if (!result.emailVerified) throw new HttpError(403, "Verify your email before signing in", "email_unverified");
-  acc.limiters.emailIpFail.reset(mailbox);
+  await acc.limiters.emailIpFail.reset(mailbox);
   await startSession(acc, res, result.user.id);
   sendJson(res, 200, { user: publicUser(result.user) });
 };
@@ -174,33 +174,33 @@ const me: AuthHandler = async (acc, caller, _req, res) => {
  */
 const verifyEmail: AuthHandler = async (acc, _caller, req, res) => {
   const body = await readJson(req, AUTH_BODY_MAX);
-  const ip = throttle(acc, req, res);
-  if (!acc.limiters.loginIp.hit(ip)) throw tooMany(res, acc.limiters.loginIp.retryAfterSeconds(ip));
-  if (acc.limiters.ipFail.isLimited(ip)) throw tooMany(res, acc.limiters.ipFail.retryAfterSeconds(ip));
+  const ip = await throttle(acc, req, res);
+  if (!(await acc.limiters.loginIp.hit(ip))) throw tooMany(res, (await acc.limiters.loginIp.retryAfterSeconds(ip)));
+  if ((await acc.limiters.ipFail.isLimited(ip))) throw tooMany(res, (await acc.limiters.ipFail.retryAfterSeconds(ip)));
   const token = reqString(body, "token");
   const password = field(acc.auth.validateLoginPasswordShape(body.password));
   const invalid = () => new HttpError(400, "This verification link is invalid or has expired", "verify_invalid");
   const userId = await acc.auth.peekEmailVerificationToken(token);
   if (userId === null) {
-    acc.limiters.ipFail.record(ip);
+    await acc.limiters.ipFail.record(ip);
     throw invalid();
   }
   const user = await acc.auth.findUserById(userId);
   if (!user?.email) throw invalid();
   const mailbox = `${user.email}|${ip}`;
-  if (acc.limiters.emailIpFail.isLimited(mailbox)) throw tooMany(res, acc.limiters.emailIpFail.retryAfterSeconds(mailbox));
-  if (acc.limiters.emailFail.isLimited(user.email)) throw tooMany(res, acc.limiters.emailFail.retryAfterSeconds(user.email));
+  if ((await acc.limiters.emailIpFail.isLimited(mailbox))) throw tooMany(res, (await acc.limiters.emailIpFail.retryAfterSeconds(mailbox)));
+  if ((await acc.limiters.emailFail.isLimited(user.email))) throw tooMany(res, (await acc.limiters.emailFail.retryAfterSeconds(user.email)));
   const checked = await hashing(acc, res, () => acc.auth.login(user.email!, password));
   if (!checked) {
-    acc.limiters.ipFail.record(ip);
-    acc.limiters.emailIpFail.record(mailbox);
-    acc.limiters.emailFail.record(user.email);
+    await acc.limiters.ipFail.record(ip);
+    await acc.limiters.emailIpFail.record(mailbox);
+    await acc.limiters.emailFail.record(user.email);
     throw new HttpError(400, "That is not the password used to sign up. If you signed up earlier with a different password, use Forgot password.", "verify_password");
   }
   if ((await acc.auth.consumeEmailVerificationToken(token)) !== userId) throw invalid();
   await acc.auth.markEmailVerified(userId);
   await acc.auth.clearEmailVerificationTokens(userId);
-  acc.limiters.emailIpFail.reset(mailbox);
+  await acc.limiters.emailIpFail.reset(mailbox);
   await startSession(acc, res, userId);
   sendJson(res, 200, { user: publicUser(user) });
 };
@@ -209,13 +209,13 @@ const verifyEmail: AuthHandler = async (acc, _caller, req, res) => {
 function mailRoute(act: (acc: AccountsRuntime, email: string, normalized: string) => Promise<void>): AuthHandler {
   return async (acc, _caller, req, res) => {
     const body = await readJson(req, AUTH_BODY_MAX);
-    const ip = throttle(acc, req, res);
-    if (!acc.limiters.mailIp.hit(ip)) throw tooMany(res, acc.limiters.mailIp.retryAfterSeconds(ip));
+    const ip = await throttle(acc, req, res);
+    if (!(await acc.limiters.mailIp.hit(ip))) throw tooMany(res, (await acc.limiters.mailIp.retryAfterSeconds(ip)));
     requireEmail(acc);
     const email = emailOf(acc, body);
     const normalized = acc.auth.normalizeEmail(email);
     const started = Date.now();
-    if (acc.limiters.mailEmail.hit(normalized)) await act(acc, email, normalized);
+    if ((await acc.limiters.mailEmail.hit(normalized))) await act(acc, email, normalized);
     await acc.auth.padToTimingFloor(started);
     sendJson(res, 200, { ok: true });
   };
@@ -239,8 +239,8 @@ const resendVerification = mailRoute(async (acc, email) => {
 
 const resetPassword: AuthHandler = async (acc, _caller, req, res) => {
   const body = await readJson(req, AUTH_BODY_MAX);
-  const ip = throttle(acc, req, res);
-  if (acc.limiters.ipFail.isLimited(ip)) throw tooMany(res, acc.limiters.ipFail.retryAfterSeconds(ip));
+  const ip = await throttle(acc, req, res);
+  if ((await acc.limiters.ipFail.isLimited(ip))) throw tooMany(res, (await acc.limiters.ipFail.retryAfterSeconds(ip)));
   const token = reqString(body, "token");
   const password = field(acc.auth.validateRegistrationPassword(body.password)); // before consuming: a weak password must not burn the link
   // Take the hashing slot first and use the link up inside it: a "server busy" answer must not burn the link.
@@ -251,7 +251,7 @@ const resetPassword: AuthHandler = async (acc, _caller, req, res) => {
     return id;
   });
   if (userId === null) {
-    acc.limiters.ipFail.record(ip);
+    await acc.limiters.ipFail.record(ip);
     throw new HttpError(400, "This reset link is invalid or has expired", "reset_invalid");
   }
   await acc.auth.markEmailVerified(userId); // reading the emailed link proves the address
@@ -270,13 +270,13 @@ const changePassword: AuthHandler = async (acc, caller, req, res) => {
   const user = caller.user;
   const body = await readJson(req, AUTH_BODY_MAX);
   // Two password hashes per call, and a signed-in user's successes are not failures: bound them per user, before hashing.
-  if (!acc.limiters.changePasswordUser.hit(String(user.id))) throw tooMany(res, acc.limiters.changePasswordUser.retryAfterSeconds(String(user.id)));
+  if (!(await acc.limiters.changePasswordUser.hit(String(user.id)))) throw tooMany(res, (await acc.limiters.changePasswordUser.retryAfterSeconds(String(user.id))));
   const newPassword = field(acc.auth.validateRegistrationPassword(body.newPassword));
   const current = field(acc.auth.validateLoginPasswordShape(body.currentPassword));
   if (!user.email || !(await acc.auth.hasPasswordIdentity(user.id))) throw new HttpError(400, "This account has no password to change");
-  if (acc.limiters.emailIpFail.isLimited(user.email)) throw tooMany(res, acc.limiters.emailIpFail.retryAfterSeconds(user.email));
+  if ((await acc.limiters.emailIpFail.isLimited(user.email))) throw tooMany(res, (await acc.limiters.emailIpFail.retryAfterSeconds(user.email)));
   if (!(await hashing(acc, res, () => acc.auth.login(user.email!, current)))) {
-    acc.limiters.emailIpFail.record(user.email);
+    await acc.limiters.emailIpFail.record(user.email);
     throw new HttpError(400, "Current password is incorrect");
   }
   await hashing(acc, res, () => acc.auth.setPassword(user.id, newPassword));
@@ -293,7 +293,7 @@ const listKeys: AuthHandler = async (acc, caller, _req, res) => {
 const createKey: AuthHandler = async (acc, caller, req, res) => {
   if (!caller.user) throw new HttpError(401, "Sign in required");
   const id = String(caller.user.id);
-  if (!acc.limiters.apiKeyUser.hit(id)) throw tooMany(res, acc.limiters.apiKeyUser.retryAfterSeconds(id));
+  if (!(await acc.limiters.apiKeyUser.hit(id))) throw tooMany(res, (await acc.limiters.apiKeyUser.retryAfterSeconds(id)));
   const body = await readJson(req, AUTH_BODY_MAX);
   try {
     const { key, info } = await acc.apiKeys.create(caller.user.id, optString(body, "name") ?? "");

@@ -5,7 +5,7 @@ import { HttpError, optBool, optEnum, optInt, optString, readJson, sendJson, typ
 /** Build a draft schema from a file under the root, pasted content, or a database named by env var. */
 export const inferRoute: Handler = async (ctx, req, res) => {
   const body = await readJson(req);
-  throttleRun(ctx);
+  await throttleRun(ctx);
   // A variable named by a visitor would read the operator's database (catalog only, but still theirs to keep private).
   if (ctx.accounts && optString(body, "connectionEnv") !== undefined) throw new HttpError(400, "Inferring from a database is not available on this server");
   const result = await inferConfined(ctx.root, ctx.env(), {

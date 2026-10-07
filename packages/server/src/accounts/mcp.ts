@@ -39,12 +39,12 @@ export function hostedHooks(ctx: Ctx & { accounts: AccountsRuntime }): HostedHoo
   return {
     env: ctx.env,
     allowConnectionEnv: false, // a variable named by a user would read the operator's database
-    beforeValidate(schema) {
-      throttleValidate(ctx);
+    async beforeValidate(schema) {
+      await throttleValidate(ctx);
       assertSchemaShape(ctx, schema);
     },
-    beforeInfer() {
-      throttleRun(ctx);
+    async beforeInfer() {
+      await throttleRun(ctx);
     },
     async generate(schema, want) {
       const run = await beginRun(ctx, schema); // rate, size and row caps, daily model budget, run slot
@@ -79,20 +79,20 @@ export function createHostedMcp(base: Ctx & { accounts: AccountsRuntime }) {
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     res.setHeader("cache-control", "no-store");
     const ip = acc.clientIp(req);
-    if (acc.limiters.apiKeyFail.isLimited(ip)) {
-      res.setHeader("retry-after", String(Math.max(1, acc.limiters.apiKeyFail.retryAfterSeconds(ip))));
+    if ((await acc.limiters.apiKeyFail.isLimited(ip))) {
+      res.setHeader("retry-after", String(Math.max(1, (await acc.limiters.apiKeyFail.retryAfterSeconds(ip)))));
       return mcpReply(res, 429, "Too many requests with a wrong API key. Try again later.");
     }
     const key = bearer(req.headers.authorization);
     const user = await acc.apiKeys.lookup(key);
     if (!user) {
-      if (key) acc.limiters.apiKeyFail.record(ip);
+      if (key) (await acc.limiters.apiKeyFail.record(ip));
       res.setHeader("www-authenticate", 'Bearer realm="mockdata"');
       return mcpReply(res, 401, key ? "This API key is not valid (it may have been revoked)" : NEEDS_KEY);
     }
     const owner = String(user.id);
-    if (!acc.limiters.mcpUser.hit(owner)) {
-      res.setHeader("retry-after", String(Math.max(1, acc.limiters.mcpUser.retryAfterSeconds(owner))));
+    if (!(await acc.limiters.mcpUser.hit(owner))) {
+      res.setHeader("retry-after", String(Math.max(1, (await acc.limiters.mcpUser.retryAfterSeconds(owner)))));
       return mcpReply(res, 429, "You are sending requests too quickly. Try again in a moment.");
     }
     const ctx = { ...base, root: acc.userRoot(user), user };

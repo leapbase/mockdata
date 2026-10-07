@@ -37,9 +37,9 @@ export interface HostedHooks {
   /** Model settings (the operator's), instead of .env under root, which belongs to the caller. */
   env: () => Record<string, string | undefined>;
   /** Before a schema is checked: throw to refuse (rate limits, size caps). */
-  beforeValidate(schema: DataSchemaT): void;
+  beforeValidate(schema: DataSchemaT): void | Promise<void>;
   /** Before inference: throw to refuse (rate limits). */
-  beforeInfer(): void;
+  beforeInfer(): void | Promise<void>;
   /** Whether infer_schema may read a database named by an environment variable. */
   allowConnectionEnv: boolean;
   /** Generate under the caller's quotas, somewhere other than this thread. */
@@ -134,9 +134,9 @@ export function createServer(opts: ServerOptions = {}): McpServer {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     (args) =>
-      guarded(() => {
+      guarded(async () => {
         const schema = parseSchema(loadRaw(args));
-        hosted?.beforeValidate(schema);
+        await hosted?.beforeValidate(schema);
         return {
           ok: true,
           tables: Object.fromEntries(Object.entries(schema.tables).map(([n, t]) => [n, { rows: t.rows, columns: Object.keys(t.columns) }])),
@@ -171,7 +171,7 @@ export function createServer(opts: ServerOptions = {}): McpServer {
     (args) =>
       guarded(async () => {
         if (hosted) {
-          hosted.beforeInfer();
+          await hosted.beforeInfer();
           if (!hosted.allowConnectionEnv && args.connectionEnv !== undefined) throw new UserError("Inferring from a database is not available on this server");
         }
         const result = await inferConfined(root, hosted ? hosted.env() : baseEnv, args);

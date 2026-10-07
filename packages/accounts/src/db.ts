@@ -90,6 +90,19 @@ const MIGRATIONS: ((t: Types) => string)[] = [
     last_used_at ${t.int}
   );
   create index api_keys_user on api_keys(user_id);`,
+  // 3: rate limits and run slots shared by several servers (used on Postgres; the tables exist on SQLite too).
+  (t) => `create table rate_events (
+    limiter text not null,
+    key_hash text not null,
+    at ${t.int} not null
+  );
+  create index rate_events_key on rate_events(limiter, key_hash, at);
+  create index rate_events_at on rate_events(at);
+  create table run_slots (
+    user_id ${t.int} primary key references users(id) on delete cascade,
+    holder text not null,
+    expires_at ${t.int} not null
+  );`,
 ];
 
 const VERSION = 1 + MIGRATIONS.length;

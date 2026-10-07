@@ -5,4 +5,5 @@ export * from "./sessions.js";
 export * from "./apikeys.js";
 export * from "./ratelimit.js";
 export * from "./quota.js";
+export * from "./sharedLimits.js";
 export * from "./mail.js";

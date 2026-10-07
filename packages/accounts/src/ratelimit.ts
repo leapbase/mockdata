@@ -78,3 +78,30 @@ export class RateLimiter {
     }
   }
 }
+
+/**
+ * A rate limit as the server uses it. In memory for one server (`memoryLimiter`); in the account database when several
+ * servers share it (`SqlRateLimiter`). Every call must be awaited: a forgotten `await` would test a Promise, which is
+ * always truthy, and quietly turn the limit off (server/test/limiter-await.test.ts checks every call site).
+ */
+export interface Limiter {
+  /** Count one event; false when this key is over the limit (and the event is not counted). */
+  hit(key: string): Promise<boolean>;
+  /** Count an event unconditionally (for failures). */
+  record(key: string): Promise<void>;
+  isLimited(key: string): Promise<boolean>;
+  reset(key: string): Promise<void>;
+  retryAfterSeconds(key: string): Promise<number>;
+}
+
+/** The in-memory RateLimiter behind the async interface: this server only, reset on restart. */
+export function memoryLimiter(opts: RateLimiterOptions): Limiter {
+  const r = new RateLimiter(opts);
+  return {
+    hit: async (key) => r.hit(key),
+    record: async (key) => r.record(key),
+    isLimited: async (key) => r.isLimited(key),
+    reset: async (key) => r.reset(key),
+    retryAfterSeconds: async (key) => r.retryAfterSeconds(key),
+  };
+}

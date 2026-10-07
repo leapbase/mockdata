@@ -19,8 +19,8 @@ const callbackUrl = (origin: string): string => `${origin}/api/auth/google/callb
 export const googleStart: AuthHandler = async (acc, _caller, req, res) => {
   if (!acc.google) throw new HttpError(501, "Google sign-in is not configured on this server");
   const ip = acc.clientIp(req);
-  if (!acc.limiters.oauthIp.hit(ip)) {
-    res.setHeader("retry-after", String(Math.max(1, acc.limiters.oauthIp.retryAfterSeconds(ip))));
+  if (!(await acc.limiters.oauthIp.hit(ip))) {
+    res.setHeader("retry-after", String(Math.max(1, (await acc.limiters.oauthIp.retryAfterSeconds(ip)))));
     throw new HttpError(429, "Too many attempts. Try again later.");
   }
   const verifier = randomBytes(32).toString("base64url");

@@ -60,15 +60,29 @@ eachEngine(() => describe("ApiKeyStore", () => {
 }));
 
 describe("AccountsDb migrations", () => {
+  it("upgrades a version 2 database (API keys, before shared limits) in place", async () => {
+    const file = join(mkdtempSync(join(tmpdir(), "mockdata-migrate-")), "accounts.db");
+    const first = await AccountsDb.open(file);
+    const user = await new SqlAuthAdapter(first).createUserWithPasswordIdentity({ normalizedEmail: "v2@example.com", passwordHash: "h", displayName: "v2" });
+    const { key } = await new ApiKeyStore(first).create(user.id, "kept");
+    first.sqlite!.exec("drop table rate_events; drop table run_slots; pragma user_version = 2");
+    await first.close();
+    const db = await AccountsDb.open(file);
+    expect((db.sqlite!.prepare("pragma user_version").get() as { user_version: number }).user_version).toBe(3);
+    expect((await new ApiKeyStore(db).lookup(key))?.email).toBe("v2@example.com");
+    expect(await db.all("select * from run_slots")).toEqual([]);
+    await db.close();
+  });
+
   it("upgrades a version 1 database in place, keeping its users", async () => {
     const file = join(mkdtempSync(join(tmpdir(), "mockdata-migrate-")), "accounts.db");
     const first = await AccountsDb.open(file);
     const user = await new SqlAuthAdapter(first).createUserWithPasswordIdentity({ normalizedEmail: "old@example.com", passwordHash: "h", displayName: "old" });
-    first.sqlite!.exec("drop table api_keys; pragma user_version = 1"); // what a build from before API keys left behind
+    first.sqlite!.exec("drop table api_keys; drop table rate_events; drop table run_slots; pragma user_version = 1"); // what a build from before API keys left behind
     first.close();
 
     const db = await AccountsDb.open(file);
-    expect((db.sqlite!.prepare("pragma user_version").get() as { user_version: number }).user_version).toBe(2);
+    expect((db.sqlite!.prepare("pragma user_version").get() as { user_version: number }).user_version).toBe(3);
     const { key } = await new ApiKeyStore(db).create(user.id, "after upgrade");
     expect((await new ApiKeyStore(db).lookup(key))?.email).toBe("old@example.com");
     db.close();

@@ -69,17 +69,17 @@ export function assertSchemaShape(ctx: Ctx, schema: DataSchemaT): void {
  * Generation runs on the one event loop (about a second for 500,000 cells), so a signed-in user may not repeat it
  * without limit. Counted per user, for every expensive route. A no-op outside accounts mode.
  */
-export function throttleRun(ctx: Ctx): void {
+export async function throttleRun(ctx: Ctx): Promise<void> {
   if (!ctx.accounts || !ctx.user) return;
   const key = String(ctx.user.id);
-  if (!ctx.accounts.limiters.runUser.hit(key)) throw new QuotaError(`You are sending runs too quickly: wait ${ctx.accounts.limiters.runUser.retryAfterSeconds(key)} seconds`);
+  if (!(await ctx.accounts.limiters.runUser.hit(key))) throw new QuotaError(`You are sending runs too quickly: wait ${(await ctx.accounts.limiters.runUser.retryAfterSeconds(key))} seconds`);
 }
 
 /** Checking a schema is cheap but parses up to 2 MB each time, so it has its own, higher, per-user limit. */
-export function throttleValidate(ctx: Ctx): void {
+export async function throttleValidate(ctx: Ctx): Promise<void> {
   if (!ctx.accounts || !ctx.user) return;
   const key = String(ctx.user.id);
-  if (!ctx.accounts.limiters.validateUser.hit(key)) throw new QuotaError(`You are checking schemas too quickly: wait ${ctx.accounts.limiters.validateUser.retryAfterSeconds(key)} seconds`);
+  if (!(await ctx.accounts.limiters.validateUser.hit(key))) throw new QuotaError(`You are checking schemas too quickly: wait ${(await ctx.accounts.limiters.validateUser.retryAfterSeconds(key))} seconds`);
 }
 
 export interface Run {
@@ -98,10 +98,10 @@ export async function beginRun(ctx: Ctx, schema: DataSchemaT): Promise<Run> {
   const accounts = ctx.accounts;
   const user = ctx.user;
   if (!accounts || !user) return { schema, done: () => undefined };
-  throttleRun(ctx);
+  await throttleRun(ctx);
   assertSchemaShape(ctx, schema);
   assertRowBudget(schema, accounts.limits.maxRows);
-  const release = accounts.runs.tryStart(user.id);
+  const release = await accounts.runs.tryStart(user.id);
   if (!release) throw new QuotaError("A generation is already running for you, or the server is busy: try again in a moment");
   try {
     const cells = llmCellCount(schema);

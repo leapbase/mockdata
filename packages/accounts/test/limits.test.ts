@@ -75,21 +75,21 @@ eachEngine(() => describe("UsageStore", () => {
 }));
 
 describe("RunGate", () => {
-  it("allows one run per user and a global maximum, and frees slots on release", () => {
+  it("allows one run per user and a global maximum, and frees slots on release", async () => {
     const gate = new RunGate(2);
-    const a = gate.tryStart(1);
+    const a = await gate.tryStart(1);
     expect(a).toBeTypeOf("function");
-    expect(gate.tryStart(1)).toBeUndefined(); // same user already running
-    const b = gate.tryStart(2);
+    expect(await gate.tryStart(1)).toBeUndefined(); // same user already running
+    const b = await gate.tryStart(2);
     expect(b).toBeTypeOf("function");
-    expect(gate.tryStart(3)).toBeUndefined(); // global cap of 2
+    expect(await gate.tryStart(3)).toBeUndefined(); // global cap of 2
     a!();
     a!(); // releasing twice is harmless
-    const c = gate.tryStart(3);
+    const c = await gate.tryStart(3);
     expect(c).toBeTypeOf("function"); // user 1's slot is free again
-    expect(gate.tryStart(1)).toBeUndefined(); // but 2 and 3 fill the global cap
+    expect(await gate.tryStart(1)).toBeUndefined(); // but 2 and 3 fill the global cap
     b!();
-    expect(gate.tryStart(1)).toBeTypeOf("function");
+    expect(await gate.tryStart(1)).toBeTypeOf("function");
   });
 });
 

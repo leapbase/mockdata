@@ -1,7 +1,7 @@
 import { lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { isIP } from "node:net";
 import path from "node:path";
-import { AccountsDb, ApiKeyStore, pgPoolDriver, BusyError, OAuthStates, RateLimiter, RunGate, Semaphore, SessionStore, SqlAuthAdapter, UsageStore, limitsFromEnv, mailerFromEnv, type AccountUser, type Limits } from "@mockdata/accounts";
+import { AccountsDb, ApiKeyStore, SqlRateLimiter, SqlRunSlots, memoryLimiter, pgPoolDriver, purgeRateEvents, type Limiter, type RateLimiterOptions, type RunSlots, BusyError, OAuthStates, RunGate, Semaphore, SessionStore, SqlAuthAdapter, UsageStore, limitsFromEnv, mailerFromEnv, type AccountUser, type Limits } from "@mockdata/accounts";
 import { AuthService, getGoogleOAuthConfigFromEnv, isGoogleClientConfigured, type Mailer } from "@mockdata/auth-kit";
 import { isLoopback, loadEnv, NetworkConfigError, parsePublicUrl, type PublicUrl } from "@mockdata/cli";
 import type { IncomingMessage } from "node:http";
@@ -39,41 +39,41 @@ export interface AccountsRuntime {
   readonly apiKeys: ApiKeyStore;
   readonly oauth: OAuthStates;
   readonly usage: UsageStore;
-  readonly runs: RunGate;
+  readonly runs: RunSlots;
   readonly limits: Limits;
   readonly mailer: Mailer;
   readonly emailEnabled: boolean;
   readonly google?: { clientId: string; clientSecret: string };
   readonly limiters: {
     /** Every sign-in attempt per address, counted before the password is hashed so a parallel burst is cut off. */
-    loginIp: RateLimiter;
+    loginIp: Limiter;
     /** Any unauthenticated auth request per address (a coarse ceiling). */
-    authIp: RateLimiter;
+    authIp: Limiter;
     /** Failed sign-ins per address. */
-    ipFail: RateLimiter;
+    ipFail: Limiter;
     /** Failed sign-ins per mailbox from one address (an attacker's failures do not lock the owner out elsewhere). */
-    emailIpFail: RateLimiter;
+    emailIpFail: Limiter;
     /** Failed sign-ins per mailbox from anywhere, at a much higher threshold. */
-    emailFail: RateLimiter;
+    emailFail: Limiter;
     /** Sign-up attempts per address. */
-    signupIp: RateLimiter;
+    signupIp: Limiter;
     /** Emails requested (verification, reset) per address and per mailbox. */
-    mailIp: RateLimiter;
-    mailEmail: RateLimiter;
+    mailIp: Limiter;
+    mailEmail: Limiter;
     /** Starts of the Google flow per address. */
-    oauthIp: RateLimiter;
+    oauthIp: Limiter;
     /** Expensive requests (generate, run, export, infer) per signed-in user. */
-    runUser: RateLimiter;
+    runUser: Limiter;
     /** Schema checks per signed-in user (the editor checks as you type, so this is generous). */
-    validateUser: RateLimiter;
+    validateUser: Limiter;
     /** Password changes per signed-in user (each costs two hashes). */
-    changePasswordUser: RateLimiter;
+    changePasswordUser: Limiter;
     /** API keys made per signed-in user. */
-    apiKeyUser: RateLimiter;
+    apiKeyUser: Limiter;
     /** Requests to the hosted MCP endpoint per user (tool calls that generate are also counted by runUser). */
-    mcpUser: RateLimiter;
+    mcpUser: Limiter;
     /** Requests with a wrong API key per address. */
-    apiKeyFail: RateLimiter;
+    apiKeyFail: Limiter;
   };
   /** Run password hashing through this: at most two at once, a short queue, then `BusyError`. */
   readonly hashing: Semaphore;
@@ -99,8 +99,14 @@ export async function createAccounts(config: AccountsConfig): Promise<AccountsRu
   const google = config.google ?? googleFromEnv(config.env);
   const limits: Limits = { ...limitsFromEnv(config.env), ...config.limits };
 
+  // On Postgres every server may share the database, so rate limits and run slots live there too; on SQLite (one
+  // server) they stay in memory.
+  const shared = db.dialect === "postgres";
+  const limiter = (name: string, opts: RateLimiterOptions): Limiter => (shared ? new SqlRateLimiter(db, name, opts) : memoryLimiter(opts));
+
   const sweep = setInterval(() => {
     void sessions.purgeExpired().catch(() => undefined);
+    if (shared) void purgeRateEvents(db, 2 * 60 * MINUTE).catch(() => undefined); // the longest window is an hour
     db.secure(); // the -wal/-shm files appear after the first write
   }, 60 * MINUTE);
   sweep.unref();
@@ -118,27 +124,27 @@ export async function createAccounts(config: AccountsConfig): Promise<AccountsRu
     apiKeys: new ApiKeyStore(db),
     oauth: new OAuthStates(db),
     usage: new UsageStore(db),
-    runs: new RunGate(limits.maxRuns),
+    runs: shared ? new SqlRunSlots(db, limits.maxRuns) : new RunGate(limits.maxRuns),
     limits,
     mailer,
     emailEnabled: mailer.isConfigured(),
     google,
     limiters: {
-      loginIp: new RateLimiter({ max: 30, windowMs: 15 * MINUTE }),
-      authIp: new RateLimiter({ max: 120, windowMs: 15 * MINUTE }),
-      ipFail: new RateLimiter({ max: 20, windowMs: 15 * MINUTE }),
-      emailIpFail: new RateLimiter({ max: 10, windowMs: 15 * MINUTE }),
-      emailFail: new RateLimiter({ max: 100, windowMs: 15 * MINUTE }),
-      signupIp: new RateLimiter({ max: 5, windowMs: 60 * MINUTE }),
-      mailIp: new RateLimiter({ max: 20, windowMs: 60 * MINUTE }),
-      mailEmail: new RateLimiter({ max: 5, windowMs: 60 * MINUTE }),
-      oauthIp: new RateLimiter({ max: 30, windowMs: 15 * MINUTE }),
-      runUser: new RateLimiter({ max: 30, windowMs: MINUTE }),
-      validateUser: new RateLimiter({ max: 120, windowMs: MINUTE }),
-      changePasswordUser: new RateLimiter({ max: 5, windowMs: 15 * MINUTE }),
-      apiKeyUser: new RateLimiter({ max: 20, windowMs: 60 * MINUTE }),
-      mcpUser: new RateLimiter({ max: 240, windowMs: MINUTE }),
-      apiKeyFail: new RateLimiter({ max: 30, windowMs: 15 * MINUTE }),
+      loginIp: limiter("loginIp", { max: 30, windowMs: 15 * MINUTE }),
+      authIp: limiter("authIp", { max: 120, windowMs: 15 * MINUTE }),
+      ipFail: limiter("ipFail", { max: 20, windowMs: 15 * MINUTE }),
+      emailIpFail: limiter("emailIpFail", { max: 10, windowMs: 15 * MINUTE }),
+      emailFail: limiter("emailFail", { max: 100, windowMs: 15 * MINUTE }),
+      signupIp: limiter("signupIp", { max: 5, windowMs: 60 * MINUTE }),
+      mailIp: limiter("mailIp", { max: 20, windowMs: 60 * MINUTE }),
+      mailEmail: limiter("mailEmail", { max: 5, windowMs: 60 * MINUTE }),
+      oauthIp: limiter("oauthIp", { max: 30, windowMs: 15 * MINUTE }),
+      runUser: limiter("runUser", { max: 30, windowMs: MINUTE }),
+      validateUser: limiter("validateUser", { max: 120, windowMs: MINUTE }),
+      changePasswordUser: limiter("changePasswordUser", { max: 5, windowMs: 15 * MINUTE }),
+      apiKeyUser: limiter("apiKeyUser", { max: 20, windowMs: 60 * MINUTE }),
+      mcpUser: limiter("mcpUser", { max: 240, windowMs: MINUTE }),
+      apiKeyFail: limiter("apiKeyFail", { max: 30, windowMs: 15 * MINUTE }),
     },
     hashing: new Semaphore(2, 16),
     queueMail(job) {
