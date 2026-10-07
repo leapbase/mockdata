@@ -10,7 +10,7 @@ Usage:
   mockdata-ui [root] [--port <n>] [--allow <ranges>] [--host <address>]
 
   root            folder holding your schema files and .env (default: current directory)
-  --port <n>      port (default 4747)
+  --port <n>      port (default 8000)
   --allow <list>  also serve these private ranges, comma separated: 100.100.1.x (a /24),
                   a CIDR such as 192.168.0.0/16, or a single IP. Only 10/8, 172.16/12,
                   192.168/16 and 100.64/10 are accepted, at most a /16 wide. Without
@@ -40,7 +40,7 @@ if (values.help) {
   process.stderr.write(`Expected at most one folder\n\n${HELP}`);
   process.exitCode = 1;
 } else {
-  const port = values.port === undefined ? 4747 : Number(values.port);
+  const port = values.port === undefined ? 8000 : Number(values.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     process.stderr.write(`Invalid --port "${values.port}"\n`);
     process.exitCode = 1;
@@ -64,7 +64,7 @@ if (values.help) {
       process.stdout.write("Press Ctrl+C to stop.\n");
     } catch (e) {
       const err = e as NodeJS.ErrnoException;
-      process.stderr.write(err.code === "EADDRINUSE" ? `Port ${values.port ?? 4747} is already in use (try --port)\n` : `${err.message}\n`);
+      process.stderr.write(err.code === "EADDRINUSE" ? `Port ${values.port ?? 8000} is already in use (try --port)\n` : `${err.message}\n`);
       process.exitCode = 1;
     }
   }

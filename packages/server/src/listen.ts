@@ -27,7 +27,7 @@ export async function startServer(
   server.requestTimeout = 60_000;
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(opts.port ?? 4747, host, () => resolve());
+    server.listen(opts.port ?? 8000, host, () => resolve());
   });
   return { server, url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, token: access?.token, tokenGenerated };
 }

@@ -447,7 +447,7 @@ claude mcp add --transport http mockdata http://127.0.0.1:4748/mcp` },
       { id: "servers", title: "Servers", blocks: [
         { p: "Run `npm run build` first (and again after code changes). Both servers listen on 127.0.0.1 only unless you allow a [private network](/docs/network)." },
         { table: { head: ["What", "Command", "Address"], rows: [
-          ["Web UI", "`npm run ui -- <folder>`", "http://127.0.0.1:4747 (workspace at `/app`)"],
+          ["Web UI", "`npm run ui -- <folder>`", "http://127.0.0.1:8000 (workspace at `/app`)"],
           ["MCP over HTTP", "`MOCKDATA_ROOT=<folder> node packages/mcp/dist/bin.js --http`, see [MCP locally](/docs/mcp-local#http)", "http://127.0.0.1:4748/mcp"],
           ["MCP over stdio", "started by the client, see [MCP locally](/docs/mcp-local#stdio)", "(none)"],
         ] } },
@@ -480,7 +480,7 @@ MOCKDATA_ROOT=<folder> node packages/mcp/dist/bin.js --http --allow 100.100.1.x`
       { id: "token", title: "Token", blocks: [
         { p: "Everyone outside this machine also needs a shared token. Set `MOCKDATA_TOKEN` (16 or more characters from `A-Z a-z 0-9 . _ ~ -`, in the environment or `.env`), or let the server generate one and print it at start. There is no `--token` flag, since command lines show up in process lists." },
         { list: [
-          "**Browser:** open `http://<address>:4747/app?token=<token>` once. It becomes an `HttpOnly` cookie and the address bar is cleaned.",
+          "**Browser:** open `http://<address>:8000/app?token=<token>` once. It becomes an `HttpOnly` cookie and the address bar is cleaned.",
           "**Scripts and MCP clients:** send `Authorization: Bearer <token>`.",
           "**Localhost** needs no token.",
         ] },

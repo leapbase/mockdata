@@ -37,7 +37,7 @@ Run `npm run build` first (and again after code changes). Needs Node 22.13 or ne
 
 | What | Command | Address |
 |---|---|---|
-| Web UI | `npm run ui -- <folder>` (`--port n` to change) | http://127.0.0.1:4747 (workspace at `/app`) |
+| Web UI | `npm run ui -- <folder>` (`--port n` to change) | http://127.0.0.1:8000 (workspace at `/app`) |
 | MCP server over HTTP | `MOCKDATA_ROOT=<folder> node packages/mcp/dist/bin.js --http` (`--port n`) | http://127.0.0.1:4748/mcp |
 | MCP server over stdio | started by the client: `claude mcp add mockdata -e MOCKDATA_ROOT=<folder> -- node <repo>/packages/mcp/dist/bin.js` | (none) |
 
@@ -222,10 +222,10 @@ A local editor and preview, for people who prefer a browser to a terminal.
 
 ```
 npm run build
-npm run ui -- examples          # or: node packages/server/dist/bin.js <folder> [--port 4747]
+npm run ui -- examples          # or: node packages/server/dist/bin.js <folder> [--port 8000]
 ```
 
-Open http://127.0.0.1:4747 for the landing page (what mockdata does, examples, FAQ), http://127.0.0.1:4747/docs for the documentation (the landing page and docs are available in English, Español and 中文 from the language menu), or go straight to the workspace at http://127.0.0.1:4747/app. The folder you pass is the root: schema files are listed in the sidebar, `.env` is read from there, and nothing outside it is ever read or written.
+Open http://127.0.0.1:8000 for the landing page (what mockdata does, examples, FAQ), http://127.0.0.1:8000/docs for the documentation (the landing page and docs are available in English, Español and 中文 from the language menu), or go straight to the workspace at http://127.0.0.1:8000/app. The folder you pass is the root: schema files are listed in the sidebar, `.env` is read from there, and nothing outside it is ever read or written.
 
 - **Schemas**: select, create, and save schemas in the left sidebar. The top bar holds the theme switch (System, Light, Dark; remembered in this browser) and the Local workspace label.
 - **Editor / Diagram**: edit YAML or JSON with live validation, or switch to a read-only table and relationship diagram with pan, zoom, and fit controls. Errors appear inline and in the status strip, which also shows the generation order. Switching views preserves edits.
@@ -251,7 +251,7 @@ MOCKDATA_ROOT=<folder> node packages/mcp/dist/bin.js --http --allow 100.100.1.x
 
 Everyone outside this machine also needs a shared secret token. Set `MOCKDATA_TOKEN` (16 or more characters from `A-Z a-z 0-9 . _ ~ -`, in the environment or `.env`; `.env` is never served) or let the server generate one and print it at start. There is deliberately no `--token` flag, since command lines show up in process lists.
 
-- **Browser:** open `http://<address>:4747/app?token=<token>` once. The server swaps it for an `HttpOnly`, `SameSite=Strict` cookie and redirects to a clean URL, so the token does not stay in the address bar or history.
+- **Browser:** open `http://<address>:8000/app?token=<token>` once. The server swaps it for an `HttpOnly`, `SameSite=Strict` cookie and redirects to a clean URL, so the token does not stay in the address bar or history.
 - **Scripts and MCP clients:** send `Authorization: Bearer <token>`, for example `claude mcp add --transport http mockdata http://<address>:4748/mcp --header "Authorization: Bearer <token>"`. The MCP endpoint accepts the header only, never a cookie or query string.
 - **Localhost** needs no token.
 
