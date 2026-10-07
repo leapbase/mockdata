@@ -1,7 +1,7 @@
 import { lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { isIP } from "node:net";
 import path from "node:path";
-import { AccountsDb, ApiKeyStore, BusyError, OAuthStates, RateLimiter, RunGate, Semaphore, SessionStore, SqliteAuthAdapter, UsageStore, limitsFromEnv, mailerFromEnv, type AccountUser, type Limits } from "@mockdata/accounts";
+import { AccountsDb, ApiKeyStore, pgPoolDriver, BusyError, OAuthStates, RateLimiter, RunGate, Semaphore, SessionStore, SqlAuthAdapter, UsageStore, limitsFromEnv, mailerFromEnv, type AccountUser, type Limits } from "@mockdata/accounts";
 import { AuthService, getGoogleOAuthConfigFromEnv, isGoogleClientConfigured, type Mailer } from "@mockdata/auth-kit";
 import { isLoopback, loadEnv, NetworkConfigError, parsePublicUrl, type PublicUrl } from "@mockdata/cli";
 import type { IncomingMessage } from "node:http";
@@ -12,6 +12,10 @@ export interface AccountsConfig {
   dataDir: string;
   /** Test hook: use ":memory:" instead of <dataDir>/accounts.db. */
   dbFile?: string;
+  /** A Postgres URL (MOCKDATA_ACCOUNTS_DB) for the account database instead of SQLite under dataDir. */
+  databaseUrl?: string;
+  /** Test hook: an already open account database (for example on PGlite). */
+  db?: AccountsDb;
   /** Where the operator's .env (LLM keys, SMTP, Google) is read from. Users never read it. */
   configRoot: string;
   env: Record<string, string | undefined>;
@@ -28,7 +32,7 @@ export interface AccountsConfig {
 export interface AccountsRuntime {
   readonly config: { publicUrl: PublicUrl; dataDir: string; configRoot: string; fetch?: typeof fetch };
   readonly db: AccountsDb;
-  readonly adapter: SqliteAuthAdapter;
+  readonly adapter: SqlAuthAdapter;
   readonly auth: AuthService<AccountUser>;
   readonly sessions: SessionStore;
   /** Per-user keys for the hosted MCP endpoint. */
@@ -87,8 +91,8 @@ export async function createAccounts(config: AccountsConfig): Promise<AccountsRu
   const dataDir = path.resolve(config.dataDir);
   const usersDir = path.join(dataDir, "users");
   mkdirSync(usersDir, { recursive: true, mode: 0o700 });
-  const db = await AccountsDb.open(config.dbFile ?? path.join(dataDir, "accounts.db"));
-  const adapter = new SqliteAuthAdapter(db);
+  const db = config.db ?? (config.databaseUrl ? await openPostgres(config.databaseUrl) : await AccountsDb.open(config.dbFile ?? path.join(dataDir, "accounts.db")));
+  const adapter = new SqlAuthAdapter(db);
   const auth = new AuthService<AccountUser>({ adapter, enumerationTimingFloorMs: config.enumerationTimingFloorMs });
   const sessions = new SessionStore(db);
   const mailer = config.mailer ?? mailerFromEnv(config.env);
@@ -162,7 +166,7 @@ export async function createAccounts(config: AccountsConfig): Promise<AccountsRu
     },
     close() {
       clearInterval(sweep);
-      db.close();
+      void db.close().catch(() => undefined);
     },
   };
 }
@@ -197,6 +201,39 @@ function googleFromEnv(env: Record<string, string | undefined>): { clientId: str
  * MOCKDATA_TRUST_PROXY, quota variables), or undefined when MOCKDATA_PUBLIC_URL is unset. Refuses to
  * start when nobody could sign up. Errors name variables, never values.
  */
+/** A Postgres URL, its password masked, so it can appear in no message. */
+export function redactUrl(text: string, url: string): string {
+  let out = text.split(url).join("<MOCKDATA_ACCOUNTS_DB>");
+  try {
+    const password = new URL(url).password;
+    if (password) out = out.split(decodeURIComponent(password)).join("***").split(password).join("***");
+  } catch {
+    /* not a URL: nothing more to hide */
+  }
+  return out;
+}
+
+/** Validate MOCKDATA_ACCOUNTS_DB. Errors name the variable, never its value. */
+export function parseAccountsDbUrl(raw: string | undefined): string | undefined {
+  const url = raw?.trim();
+  if (!url) return undefined;
+  if (!/^postgres(ql)?:\/\//i.test(url)) throw new NetworkConfigError("MOCKDATA_ACCOUNTS_DB must be a postgres:// URL (leave it unset to keep accounts in SQLite)");
+  try {
+    new URL(url);
+  } catch {
+    throw new NetworkConfigError("MOCKDATA_ACCOUNTS_DB is not a valid URL");
+  }
+  return url;
+}
+
+async function openPostgres(url: string): Promise<AccountsDb> {
+  try {
+    return await AccountsDb.openPostgres(await pgPoolDriver(url));
+  } catch (e) {
+    throw new Error(`Could not open the account database in MOCKDATA_ACCOUNTS_DB: ${redactUrl((e as Error).message, url)}`);
+  }
+}
+
 /** Where accounts mode keeps its data: --data-dir, else MOCKDATA_DATA_DIR, else ./mockdata-data. */
 export function accountsDataDir(env: Record<string, string | undefined>, opts: { dataDir?: string; cwd?: string }): string {
   return path.resolve(opts.cwd ?? process.cwd(), opts.dataDir ?? env.MOCKDATA_DATA_DIR?.trim() ?? "mockdata-data");
@@ -204,7 +241,9 @@ export function accountsDataDir(env: Record<string, string | undefined>, opts: {
 
 /** Copy the account database to `target` (safe while the server runs). Returns the source path. */
 export async function backupAccounts(baseEnv: Record<string, string | undefined>, opts: { configRoot: string; dataDir?: string; cwd?: string; target: string }): Promise<string> {
-  const source = path.join(accountsDataDir(loadEnv(opts.configRoot, baseEnv), opts), "accounts.db");
+  const env = loadEnv(opts.configRoot, baseEnv);
+  if (parseAccountsDbUrl(env.MOCKDATA_ACCOUNTS_DB)) throw new Error("The account database is in Postgres (MOCKDATA_ACCOUNTS_DB): back it up with pg_dump or your provider's backups");
+  const source = path.join(accountsDataDir(env, opts), "accounts.db");
   await AccountsDb.backupFile(source, path.resolve(opts.cwd ?? process.cwd(), opts.target));
   return source;
 }
@@ -219,5 +258,6 @@ export async function accountsFromEnv(baseEnv: Record<string, string | undefined
     throw new NetworkConfigError("Accounts need a way to sign up: set SMTP_HOST and SMTP_FROM (email) and/or GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (Google sign-in)");
   }
   const dataDir = accountsDataDir(env, opts);
-  return createAccounts({ publicUrl, dataDir, configRoot: opts.configRoot, env, mailer, google, trustProxy: env.MOCKDATA_TRUST_PROXY === "1" ? true : env.MOCKDATA_TRUST_PROXY === "0" ? false : undefined });
+  const databaseUrl = parseAccountsDbUrl(env.MOCKDATA_ACCOUNTS_DB);
+  return createAccounts({ publicUrl, dataDir, databaseUrl, configRoot: opts.configRoot, env, mailer, google, trustProxy: env.MOCKDATA_TRUST_PROXY === "1" ? true : env.MOCKDATA_TRUST_PROXY === "0" ? false : undefined });
 }

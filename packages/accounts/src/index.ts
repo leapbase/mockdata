@@ -1,5 +1,6 @@
 export * from "./db.js";
-export * from "./sqliteAdapter.js";
+export * from "./sql.js";
+export * from "./sqlAdapter.js";
 export * from "./sessions.js";
 export * from "./apikeys.js";
 export * from "./ratelimit.js";

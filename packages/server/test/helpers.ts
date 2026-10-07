@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { afterEach } from "vitest";
 import type { Mailer, MailerMessage } from "@mockdata/auth-kit";
 import { parsePublicUrl } from "@mockdata/cli";
-import type { Limits } from "@mockdata/accounts";
+import { PGlite } from "@electric-sql/pglite";
+import { AccountsDb, pgliteDriver, type Limits } from "@mockdata/accounts";
 import { createAccounts, startServer } from "../src/index.js";
 
 type AppOptions = NonNullable<Parameters<typeof startServer>[0]>;
@@ -91,8 +92,17 @@ export async function bootAccounts(
     trustProxy?: boolean;
     /** Replace the mailer's send (default: capture into `sent`). */
     mail?: (m: MailerMessage) => Promise<void>;
+    /** The account database engine; default MOCKDATA_TEST_ACCOUNTS_ENGINE, else SQLite. Postgres is PGlite (in process). */
+    engine?: "sqlite" | "postgres";
   } = {},
 ) {
+  const engine = opts.engine ?? (process.env.MOCKDATA_TEST_ACCOUNTS_ENGINE === "postgres" ? "postgres" : "sqlite");
+  let db: AccountsDb | undefined;
+  if (engine === "postgres") {
+    db = await AccountsDb.openPostgres(pgliteDriver(new PGlite({ parsers: { 20: Number } })));
+    const opened = db;
+    closers.push(() => opened.close());
+  }
   const dataDir = tmpRoot();
   const configRoot = tmpRoot();
   const sent: MailerMessage[] = [];
@@ -109,6 +119,7 @@ export async function bootAccounts(
     publicUrl: parsePublicUrl(opts.publicUrl ?? "https://mockdata.example.com"),
     dataDir,
     dbFile: ":memory:",
+    db,
     configRoot,
     env,
     mailer,

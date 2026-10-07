@@ -347,6 +347,7 @@ const dictionary: Dictionary = {
   "Never commit `.env`: it holds API keys and passwords. The servers never serve it, and neither browsers nor agents can read it.": "Nunca subas `.env` al repositorio: contiene claves de API y contraseñas. Los servidores nunca lo sirven, y ni los navegadores ni los agentes pueden leerlo.",
   "`GET /healthz` answers `{\"ok\":true}` for uptime monitors and reverse proxies, after the same host and token checks as every other request.": "`GET /healthz` responde `{\"ok\":true}` para monitores de disponibilidad y proxies inversos, tras las mismas comprobaciones de host y token que cualquier otra petición.",
   "Back up with `mockdata-ui --backup <file>`, which copies the account database safely while the server runs; copying `accounts.db` alone can miss recent writes. Back up `<data-dir>/users/` with any file tool, and test a restore.": "Haz copias con `mockdata-ui --backup <file>`, que copia la base de datos de cuentas de forma segura mientras el servidor funciona; copiar solo `accounts.db` puede perder escrituras recientes. Copia `<data-dir>/users/` con cualquier herramienta de archivos y prueba una restauración.",
+  "Optional `postgres://` URL: the account database in Postgres instead of SQLite, needed to run several servers": "URL `postgres://` opcional: la base de datos de cuentas en Postgres en lugar de SQLite, necesaria para ejecutar varios servidores",
 };
 
 export default dictionary;

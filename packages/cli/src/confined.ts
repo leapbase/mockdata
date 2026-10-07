@@ -35,7 +35,8 @@ export const SCHEMA_EXT = new Set([".yaml", ".yml", ".json"]);
 export const isEnvFile = (p: string): boolean => path.basename(p).startsWith(".env");
 
 /** Env var names a caller may use for a database URL: must look like database config, never e.g. an API key. */
-const DB_ENV_NAME = /^(?=.*(DATABASE|DB|POSTGRES|MYSQL|MARIADB|SQLITE))[A-Z][A-Z0-9_]*$/;
+/** A database URL a caller may name for inference. MOCKDATA_* names are the operator's own settings (such as the account database), never a source. */
+const DB_ENV_NAME = /^(?!MOCKDATA_)(?=.*(DATABASE|DB|POSTGRES|MYSQL|MARIADB|SQLITE))[A-Z][A-Z0-9_]*$/;
 const MAX_INLINE_BYTES = 5 * 1024 * 1024;
 
 /**

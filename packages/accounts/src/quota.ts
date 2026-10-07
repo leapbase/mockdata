@@ -43,6 +43,7 @@ export function limitsFromEnv(env: Record<string, string | undefined>): Limits {
 }
 
 const utcDay = (): string => new Date().toISOString().slice(0, 10);
+const UPSERT_USAGE = "insert into usage (user_id, day, llm_rows) values (?, ?, ?) on conflict (user_id, day) do update set llm_rows = usage.llm_rows + excluded.llm_rows";
 
 /** LLM cells requested per user per UTC day. */
 export class UsageStore {
@@ -54,45 +55,38 @@ export class UsageStore {
     return this.opts.today?.() ?? utcDay();
   }
 
-  llmRowsToday(userId: number): Promise<number> {
-    return this.accounts.gated(() => {
-      const r = this.accounts.raw.prepare("select llm_rows from usage where user_id = ? and day = ?").get(userId, this.day()) as { llm_rows: number } | undefined;
-      return r?.llm_rows ?? 0;
-    });
+  async llmRowsToday(userId: number): Promise<number> {
+    const r = await this.accounts.one<{ llm_rows: number }>("select llm_rows from usage where user_id = ? and day = ?", [userId, this.day()]);
+    return Number(r?.llm_rows ?? 0);
   }
 
   /** LLM cells requested today by everyone. */
-  llmRowsAllUsersToday(): Promise<number> {
-    return this.accounts.gated(() => {
-      const r = this.accounts.raw.prepare("select coalesce(sum(llm_rows), 0) as n from usage where day = ?").get(this.day()) as { n: number };
-      return r.n;
-    });
+  async llmRowsAllUsersToday(): Promise<number> {
+    const r = await this.accounts.one<{ n: number }>("select coalesce(sum(llm_rows), 0) as n from usage where day = ?", [this.day()]);
+    return Number(r?.n ?? 0);
   }
 
   /**
-   * Check the user's and the server's daily budgets and charge the rows, in one step under the database gate, so runs
-   * started at the same moment cannot each see room that only one of them can have. A refusal charges nothing.
+   * Check the user's and the server's daily budgets and charge the rows in one transaction holding the day's usage
+   * lock, so runs started at the same moment (on any server) cannot each see room that only one of them can have.
+   * A refusal charges nothing.
    */
   reserveLlmRows(userId: number, rows: number, userLimit: number, serverLimit: number): Promise<{ ok: true } | { ok: false; reason: "user"; left: number } | { ok: false; reason: "server" }> {
-    return this.accounts.gated(() => {
-      const db = this.accounts.raw;
-      const day = this.day();
-      const mine = (db.prepare("select llm_rows from usage where user_id = ? and day = ?").get(userId, day) as { llm_rows: number } | undefined)?.llm_rows ?? 0;
+    const day = this.day();
+    return this.accounts.transaction(async (tx) => {
+      await tx.lock(`llm_usage:${day}`);
+      const mine = Number((await tx.one<{ llm_rows: number }>("select llm_rows from usage where user_id = ? and day = ?", [userId, day]))?.llm_rows ?? 0);
       const userLeft = userLimit - mine;
       if (rows > userLeft) return { ok: false as const, reason: "user" as const, left: Math.max(0, userLeft) };
-      const all = (db.prepare("select coalesce(sum(llm_rows), 0) as n from usage where day = ?").get(day) as { n: number }).n;
+      const all = Number((await tx.one<{ n: number }>("select coalesce(sum(llm_rows), 0) as n from usage where day = ?", [day]))?.n ?? 0);
       if (rows > serverLimit - all) return { ok: false as const, reason: "server" as const };
-      db.prepare("insert into usage (user_id, day, llm_rows) values (?, ?, ?) on conflict (user_id, day) do update set llm_rows = llm_rows + excluded.llm_rows").run(userId, day, rows);
+      await tx.run(UPSERT_USAGE, [userId, day, rows]);
       return { ok: true as const };
     });
   }
 
-  addLlmRows(userId: number, rows: number): Promise<void> {
-    return this.accounts.gated(() => {
-      this.accounts.raw
-        .prepare("insert into usage (user_id, day, llm_rows) values (?, ?, ?) on conflict (user_id, day) do update set llm_rows = llm_rows + excluded.llm_rows")
-        .run(userId, this.day(), rows);
-    });
+  async addLlmRows(userId: number, rows: number): Promise<void> {
+    await this.accounts.run(UPSERT_USAGE, [userId, this.day(), rows]);
   }
 }
 

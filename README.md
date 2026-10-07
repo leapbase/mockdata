@@ -288,6 +288,7 @@ Localhost is not trusted in accounts mode because a reverse proxy that terminate
 |---|---|
 | `MOCKDATA_PUBLIC_URL` | `https://your-domain` (plain http is accepted only for localhost) |
 | `MOCKDATA_DATA_DIR` or `--data-dir` | accounts database and every user's private folder (default `./mockdata-data`); back it up (see Backups below) |
+| `MOCKDATA_ACCOUNTS_DB` | optional `postgres://` URL: keep the account database in Postgres instead of SQLite under the data folder. One server runs well on SQLite; Postgres is what lets several servers share accounts. The schema is created on first start. User files still live under `MOCKDATA_DATA_DIR/users` |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | email for verification and password reset. **Resend:** `smtp.resend.com`, port `465`, secure `true`, user `resend`, password = your Resend API key; verify your sending domain in Resend first |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | optional Google sign-in; in Google Cloud add the redirect URI `<MOCKDATA_PUBLIC_URL>/api/auth/google/callback` |
 | `MOCKDATA_TRUST_PROXY` | `1` or `0`. Rate limits need each visitor's address, which a reverse proxy on this machine supplies in `X-Forwarded-For` (the **last** entry is used, and only when the connection comes from localhost). Default: on for an `https` address, off for plain-http localhost. Set `0` if a CDN sits in front of your proxy, because the last entry would then be the CDN, not the visitor |
@@ -307,7 +308,7 @@ mockdata.example.com {
 MOCKDATA_PUBLIC_URL=https://mockdata.example.com MOCKDATA_TRUST_PROXY=1 npm run ui -- /path/holding/.env
 ```
 
-**Backups.** The account database is SQLite in WAL mode, so copying `accounts.db` on its own while the server runs can give you a broken copy (recent writes sit in `accounts.db-wal`). Use the built-in command, which is safe while the server is running and never changes the source:
+**Backups.** With `MOCKDATA_ACCOUNTS_DB` set, back the account database up with `pg_dump` or your provider's backups. Otherwise it is SQLite in WAL mode, so copying `accounts.db` on its own while the server runs can give you a broken copy (recent writes sit in `accounts.db-wal`). Use the built-in command, which is safe while the server is running and never changes the source:
 
 ```
 npm run ui -- /path/holding/.env --backup /backups/accounts-$(date +%F).db    # or: node packages/server/dist/bin.js ... --backup <file>

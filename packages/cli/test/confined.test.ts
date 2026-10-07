@@ -54,6 +54,14 @@ describe("inferConfined", () => {
     expect(String(err.message)).not.toContain("sk-secret");
     await expect(inferConfined(root, {}, { connectionEnv: "DATABASE_URL" })).rejects.toThrow(/DATABASE_URL is not set/);
   });
+  it("never offers the operator's own MOCKDATA_ settings, such as the account database, as a source", async () => {
+    const root = tmp();
+    const env = { MOCKDATA_ACCOUNTS_DB: "postgres://ops:hunter2@db.internal/accounts", SHOP_DATABASE_URL: "postgres://app@localhost/shop" };
+    expect(dbEnvNames(env)).toEqual(["SHOP_DATABASE_URL"]);
+    const err = await inferConfined(root, env, { connectionEnv: "MOCKDATA_ACCOUNTS_DB" }).catch((e) => e as Error);
+    expect(String(err.message)).toMatch(/connectionEnv must be/);
+    expect(String(err.message)).not.toContain("hunter2");
+  });
   it("requires exactly one source, refuses .env paths and escapes", async () => {
     const root = tmp();
     await expect(inferConfined(root, {}, {})).rejects.toThrow(/exactly one/);

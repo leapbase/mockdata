@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { hashOpaqueToken } from "@mockdata/auth-kit";
 import type { AccountsDb } from "./db.js";
-import { rowToUser, type AccountUser, type UserRow } from "./sqliteAdapter.js";
+import { rowToUser, type AccountUser, type UserRow } from "./sqlAdapter.js";
 
 /** Every key starts with this, so a leaked one is easy to recognise (and to search for in a repository). */
 export const API_KEY_PREFIX = "md_";
@@ -50,51 +50,43 @@ export class ApiKeyStore {
     const key = API_KEY_PREFIX + randomBytes(32).toString("base64url");
     const prefix = key.slice(0, 10);
     const now = this.now();
-    return this.accounts.gated(() => {
-      const db = this.accounts.raw;
-      const { n } = db.prepare("select count(*) as n from api_keys where user_id = ?").get(userId) as { n: number };
-      if (n >= MAX_API_KEYS_PER_USER) throw new ApiKeyLimitError();
-      const r = db
-        .prepare("insert into api_keys (user_id, name, key_hash, prefix, created_at) values (?, ?, ?, ?, ?) returning id")
-        .get(userId, label, hashOpaqueToken(key), prefix, now) as { id: number };
+    // Count, then insert, under a per-user lock: two requests at once cannot both take the tenth slot, on any server.
+    return this.accounts.transaction(async (tx) => {
+      await tx.lock(`api_keys:${userId}`);
+      const { n } = (await tx.one<{ n: number }>("select count(*) as n from api_keys where user_id = ?", [userId]))!;
+      if (Number(n) >= MAX_API_KEYS_PER_USER) throw new ApiKeyLimitError();
+      const r = (await tx.one<{ id: number }>("insert into api_keys (user_id, name, key_hash, prefix, created_at) values (?, ?, ?, ?, ?) returning id", [userId, label, hashOpaqueToken(key), prefix, now]))!;
       return { key, info: { id: r.id, name: label, prefix, createdAt: now, lastUsedAt: null } };
     });
   }
 
-  list(userId: number): Promise<ApiKeyInfo[]> {
-    return this.accounts.gated(() =>
-      (this.accounts.raw.prepare("select id, name, prefix, created_at, last_used_at from api_keys where user_id = ? order by id").all(userId) as {
-        id: number;
-        name: string;
-        prefix: string;
-        created_at: number;
-        last_used_at: number | null;
-      }[]).map((r) => ({ id: r.id, name: r.name, prefix: r.prefix, createdAt: r.created_at, lastUsedAt: r.last_used_at })),
+  async list(userId: number): Promise<ApiKeyInfo[]> {
+    const rows = await this.accounts.all<{ id: number; name: string; prefix: string; created_at: number; last_used_at: number | null }>(
+      "select id, name, prefix, created_at, last_used_at from api_keys where user_id = ? order by id",
+      [userId],
     );
+    return rows.map((r) => ({ id: r.id, name: r.name, prefix: r.prefix, createdAt: r.created_at, lastUsedAt: r.last_used_at }));
   }
 
   /** Delete one of the user's keys; false when it is not theirs or does not exist. */
   revoke(userId: number, id: number): Promise<boolean> {
-    return this.accounts.gated(() => Number(this.accounts.raw.prepare("delete from api_keys where id = ? and user_id = ?").run(id, userId).changes) > 0);
+    return this.accounts.run("delete from api_keys where id = ? and user_id = ?", [id, userId]).then((n) => n > 0);
   }
 
   revokeAll(userId: number): Promise<number> {
-    return this.accounts.gated(() => Number(this.accounts.raw.prepare("delete from api_keys where user_id = ?").run(userId).changes));
+    return this.accounts.run("delete from api_keys where user_id = ?", [userId]);
   }
 
   /** The owner of a key, or null. Anything not shaped like a key is refused without touching the database. */
-  lookup(key: string | undefined): Promise<AccountUser | null> {
-    if (!key || !SHAPE.test(key)) return Promise.resolve(null);
+  async lookup(key: string | undefined): Promise<AccountUser | null> {
+    if (!key || !SHAPE.test(key)) return null;
     const now = this.now();
-    return this.accounts.gated(() => {
-      const db = this.accounts.raw;
-      const hash = hashOpaqueToken(key);
-      const r = db.prepare("select u.*, k.id as key_id, k.last_used_at from api_keys k join users u on u.id = k.user_id where k.key_hash = ?").get(hash) as
-        | (UserRow & { key_id: number; last_used_at: number | null })
-        | undefined;
-      if (!r) return null;
-      if (r.last_used_at === null || now - r.last_used_at >= TOUCH_AFTER_SECONDS) db.prepare("update api_keys set last_used_at = ? where id = ?").run(now, r.key_id);
-      return rowToUser(r);
-    });
+    const r = await this.accounts.one<UserRow & { key_id: number; last_used_at: number | null }>(
+      "select u.*, k.id as key_id, k.last_used_at from api_keys k join users u on u.id = k.user_id where k.key_hash = ?",
+      [hashOpaqueToken(key)],
+    );
+    if (!r) return null;
+    if (r.last_used_at === null || now - r.last_used_at >= TOUCH_AFTER_SECONDS) await this.accounts.run("update api_keys set last_used_at = ? where id = ?", [now, r.key_id]);
+    return rowToUser(r);
   }
 }

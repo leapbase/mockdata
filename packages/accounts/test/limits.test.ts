@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { AccountsDb, BusyError, QuotaError, RateLimiter, RunGate, Semaphore, SqliteAuthAdapter, UsageStore, assertWithinDiskQuota, directoryBytes, directoryUsage, limitsFromEnv } from "../src/index.js";
+import { AccountsDb, BusyError, QuotaError, RateLimiter, RunGate, Semaphore, SqlAuthAdapter, UsageStore, assertWithinDiskQuota, directoryBytes, directoryUsage, limitsFromEnv } from "../src/index.js";
+import { eachEngine, openDb } from "./engines.js";
 
 describe("RateLimiter", () => {
   it("allows max hits per window, then refuses until the window slides past", () => {
@@ -54,10 +55,10 @@ describe("limitsFromEnv", () => {
   });
 });
 
-describe("UsageStore", () => {
+eachEngine(() => describe("UsageStore", () => {
   it("counts LLM rows per user per UTC day", async () => {
-    const accounts = await AccountsDb.open(":memory:");
-    const adapter = new SqliteAuthAdapter(accounts);
+    const accounts = await openDb();
+    const adapter = new SqlAuthAdapter(accounts);
     const make = (email: string) => adapter.createUserWithPasswordIdentity({ normalizedEmail: email, passwordHash: "h", displayName: email });
     const [a, b] = [await make("a@example.com"), await make("b@example.com")];
     const day = { d: "2026-01-01" };
@@ -71,7 +72,7 @@ describe("UsageStore", () => {
     day.d = "2026-01-02";
     expect(await usage.llmRowsToday(a.id)).toBe(0);
   });
-});
+}));
 
 describe("RunGate", () => {
   it("allows one run per user and a global maximum, and frees slots on release", () => {
@@ -158,10 +159,10 @@ describe("Semaphore", () => {
   });
 });
 
-describe("server-wide usage and file counts", () => {
+eachEngine(() => describe("server-wide usage and file counts", () => {
   it("totals LLM rows across users for the day", async () => {
-    const accounts = await AccountsDb.open(":memory:");
-    const adapter = new SqliteAuthAdapter(accounts);
+    const accounts = await openDb();
+    const adapter = new SqlAuthAdapter(accounts);
     const a = await adapter.createUserWithPasswordIdentity({ normalizedEmail: "a@example.com", passwordHash: "h", displayName: "a" });
     const b = await adapter.createUserWithPasswordIdentity({ normalizedEmail: "b@example.com", passwordHash: "h", displayName: "b" });
     const usage = new UsageStore(accounts, { today: () => "2026-01-01" });
@@ -180,12 +181,12 @@ describe("server-wide usage and file counts", () => {
     expect(() => assertWithinDiskQuota(root, 1, 1000, { newFiles: 2, maxFiles: 4 })).toThrow(QuotaError);
     expect(() => assertWithinDiskQuota(root, 1, 1000, { newFiles: 2, maxFiles: 4 })).toThrow(/files/i);
   });
-});
+}));
 
-describe("UsageStore.reserveLlmRows", () => {
+eachEngine(() => describe("UsageStore.reserveLlmRows", () => {
   it("checks both limits and charges in one step, so concurrent runs cannot overshoot", async () => {
-    const accounts = await AccountsDb.open(":memory:");
-    const adapter = new SqliteAuthAdapter(accounts);
+    const accounts = await openDb();
+    const adapter = new SqlAuthAdapter(accounts);
     const users = [];
     for (const n of ["a", "b", "c"]) users.push(await adapter.createUserWithPasswordIdentity({ normalizedEmail: `${n}@example.com`, passwordHash: "h", displayName: n }));
     const usage = new UsageStore(accounts, { today: () => "2026-01-01" });
@@ -198,7 +199,7 @@ describe("UsageStore.reserveLlmRows", () => {
     expect(await usage.reserveLlmRows(users[0]!.id, 10, 8, 1000)).toEqual({ ok: false, reason: "user", left: 2 });
     expect(await usage.llmRowsToday(users[0]!.id)).toBe(6); // a refused reservation charges nothing
   });
-});
+}));
 
 describe("RateLimiter trimming is amortised", () => {
   it("makes room in bulk so a stream of new keys does not sort the table on every hit", () => {

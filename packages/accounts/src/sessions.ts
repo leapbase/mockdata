@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { AccountsDb } from "./db.js";
-import { rowToUser, sessionKey, type AccountUser, type UserRow } from "./sqliteAdapter.js";
+import { rowToUser, sessionKey, type AccountUser, type UserRow } from "./sqlAdapter.js";
 
 /**
  * Over https the `__Host-` prefix makes browsers refuse a cookie that is not Secure, scoped to "/" and set by this
@@ -39,39 +39,35 @@ export class SessionStore {
     const id = randomBytes(32).toString("base64url");
     const now = epoch(this.opts);
     const expiresAt = now + this.ttl;
-    return this.accounts.gated(() => {
-      this.accounts.raw.prepare("insert into sessions (id_hash, user_id, created_at, expires_at, last_seen_at) values (?, ?, ?, ?, ?)").run(sessionKey(id), userId, now, expiresAt, now);
-      return { id, expiresAt };
-    });
+    return this.accounts
+      .run("insert into sessions (id_hash, user_id, created_at, expires_at, last_seen_at) values (?, ?, ?, ?, ?)", [sessionKey(id), userId, now, expiresAt, now])
+      .then(() => ({ id, expiresAt }));
   }
 
   /** The user for a session id, or null if unknown or expired. Slides the expiry forward at most once per `slideAfterSeconds` (default an hour). */
-  lookup(rawId: string | undefined): Promise<AccountUser | null> {
-    if (!rawId) return Promise.resolve(null);
+  async lookup(rawId: string | undefined): Promise<AccountUser | null> {
+    if (!rawId) return null;
     const now = epoch(this.opts);
-    return this.accounts.gated(() => {
-      const db = this.accounts.raw;
-      const key = sessionKey(rawId);
-      const r = db
-        .prepare("select u.*, s.last_seen_at from sessions s join users u on u.id = s.user_id where s.id_hash = ? and s.expires_at > ? and s.created_at > ?")
-        .get(key, now, now - this.absolute) as (UserRow & { last_seen_at: number }) | undefined;
-      if (!r) return null;
-      if (now - r.last_seen_at >= this.slideAfter) db.prepare("update sessions set last_seen_at = ?, expires_at = ? where id_hash = ?").run(now, now + this.ttl, key);
-      return rowToUser(r);
-    });
+    const key = sessionKey(rawId);
+    const r = await this.accounts.one<UserRow & { last_seen_at: number }>(
+      "select u.*, s.last_seen_at from sessions s join users u on u.id = s.user_id where s.id_hash = ? and s.expires_at > ? and s.created_at > ?",
+      [key, now, now - this.absolute],
+    );
+    if (!r) return null;
+    // Two requests may both slide the same session; the later write wins, which is harmless.
+    if (now - r.last_seen_at >= this.slideAfter) await this.accounts.run("update sessions set last_seen_at = ?, expires_at = ? where id_hash = ?", [now, now + this.ttl, key]);
+    return rowToUser(r);
   }
 
   destroy(rawId: string | undefined): Promise<void> {
     if (!rawId) return Promise.resolve();
-    return this.accounts.gated(() => {
-      this.accounts.raw.prepare("delete from sessions where id_hash = ?").run(sessionKey(rawId));
-    });
+    return this.accounts.run("delete from sessions where id_hash = ?", [sessionKey(rawId)]).then(() => undefined);
   }
 
   /** Delete expired sessions; returns how many. */
   purgeExpired(): Promise<number> {
     const now = epoch(this.opts);
-    return this.accounts.gated(() => Number(this.accounts.raw.prepare("delete from sessions where expires_at <= ? or created_at <= ?").run(now, now - this.absolute).changes));
+    return this.accounts.run("delete from sessions where expires_at <= ? or created_at <= ?", [now, now - this.absolute]);
   }
 }
 
@@ -96,24 +92,24 @@ export class OAuthStates {
     const nonce = randomBytes(24).toString("base64url");
     const now = epoch(this.opts);
     const expires = now + this.ttl;
-    return this.accounts.gated(() => {
-      this.accounts.raw.prepare("delete from oauth_states where expires_at <= ?").run(now); // the start route is unauthenticated: keep the table from growing
-      this.accounts.raw.prepare("insert into oauth_states (state_hash, nonce_hash, code_verifier, expires_at) values (?, ?, ?, ?)").run(sha256(state), sha256(nonce), codeVerifier, expires);
+    return this.accounts.transaction(async (tx) => {
+      await tx.run("delete from oauth_states where expires_at <= ?", [now]); // the start route is unauthenticated: keep the table from growing
+      await tx.run("insert into oauth_states (state_hash, nonce_hash, code_verifier, expires_at) values (?, ?, ?, ?)", [sha256(state), sha256(nonce), codeVerifier, expires]);
       return { state, nonce };
     });
   }
 
   /** The PKCE verifier for this state, consuming it. A wrong nonce, an expired or an unknown state returns null. */
-  consume(state: string, nonce: string): Promise<string | null> {
+  async consume(state: string, nonce: string): Promise<string | null> {
     const now = epoch(this.opts);
-    return this.accounts.gated(() => {
-      const db = this.accounts.raw;
-      db.prepare("delete from oauth_states where expires_at <= ?").run(now);
-      const r = db
-        .prepare("delete from oauth_states where state_hash = ? and nonce_hash = ? and expires_at > ? returning code_verifier")
-        .get(sha256(state), sha256(nonce), now) as { code_verifier: string } | undefined;
-      return r ? r.code_verifier : null;
-    });
+    await this.accounts.run("delete from oauth_states where expires_at <= ?", [now]);
+    // Deleting and returning in one statement: two callbacks with the same state cannot both get the verifier.
+    const r = await this.accounts.one<{ code_verifier: string }>("delete from oauth_states where state_hash = ? and nonce_hash = ? and expires_at > ? returning code_verifier", [
+      sha256(state),
+      sha256(nonce),
+      now,
+    ]);
+    return r ? r.code_verifier : null;
   }
 }
 

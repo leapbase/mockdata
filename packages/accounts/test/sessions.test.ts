@@ -1,20 +1,21 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { AccountsDb, OAuthStates, SessionStore, SqliteAuthAdapter, clearCookie, oauthCookieName, parseCookies, serializeCookie, sessionCookieName } from "../src/index.js";
+import { AccountsDb, OAuthStates, SessionStore, SqlAuthAdapter, clearCookie, oauthCookieName, parseCookies, serializeCookie, sessionCookieName } from "../src/index.js";
+import { eachEngine, openDb } from "./engines.js";
 
 async function setup(now = { t: 1_000_000 }) {
-  const accounts = await AccountsDb.open(":memory:");
-  const adapter = new SqliteAuthAdapter(accounts);
+  const accounts = await openDb();
+  const adapter = new SqlAuthAdapter(accounts);
   const user = await adapter.createUserWithPasswordIdentity({ normalizedEmail: "ann@example.com", passwordHash: "h", displayName: "ann" });
   return { accounts, user, now, sessions: new SessionStore(accounts, { ttlSeconds: 1000, slideAfterSeconds: 100, now: () => now.t }) };
 }
 
-describe("SessionStore", () => {
+eachEngine(() => describe("SessionStore", () => {
   it("issues long random ids, stores only their hash, and resolves them to the user", async () => {
     const { accounts, sessions, user } = await setup();
     const s = await sessions.create(user.id);
     expect(s.id).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    const rows = await accounts.gated(() => accounts.raw.prepare("select id_hash from sessions").all() as { id_hash: string }[]);
+    const rows = await accounts.all<{ id_hash: string }>("select id_hash from sessions");
     expect(rows).toHaveLength(1);
     expect(rows[0]!.id_hash).toBe(createHash("sha256").update(s.id).digest("hex"));
     expect(JSON.stringify(rows)).not.toContain(s.id);
@@ -39,12 +40,12 @@ describe("SessionStore", () => {
     now.t += 5000;
     expect(await sessions.purgeExpired()).toBe(2); // the long-expired first session plus the one just made
   });
-});
+}));
 
-describe("OAuthStates", () => {
+eachEngine(() => describe("OAuthStates", () => {
   it("consumes a state once, only with the matching nonce, and not after expiry", async () => {
     const now = { t: 1000 };
-    const accounts = await AccountsDb.open(":memory:");
+    const accounts = await openDb();
     const states = new OAuthStates(accounts, { ttlSeconds: 600, now: () => now.t });
     const a = await states.create("verifier-a");
     expect(await states.consume(a.state, "wrong-nonce")).toBeNull(); // wrong nonce does not burn it...
@@ -55,7 +56,7 @@ describe("OAuthStates", () => {
     expect(await states.consume(b.state, b.nonce)).toBeNull();
     expect(await states.consume("unknown", "x")).toBeNull();
   });
-});
+}));
 
 describe("cookies", () => {
   it("parses a Cookie header and serialises safe attributes", () => {
@@ -69,11 +70,11 @@ describe("cookies", () => {
   });
 });
 
-describe("session lifetime and cookie names", () => {
+eachEngine(() => describe("session lifetime and cookie names", () => {
   it("ends a session at an absolute age even if it is used constantly", async () => {
     const now = { t: 1_000_000 };
-    const accounts = await AccountsDb.open(":memory:");
-    const adapter = new SqliteAuthAdapter(accounts);
+    const accounts = await openDb();
+    const adapter = new SqlAuthAdapter(accounts);
     const user = await adapter.createUserWithPasswordIdentity({ normalizedEmail: "a@example.com", passwordHash: "h", displayName: "a" });
     const sessions = new SessionStore(accounts, { ttlSeconds: 1000, slideAfterSeconds: 10, absoluteSeconds: 3000, now: () => now.t });
     const s = await sessions.create(user.id);
@@ -95,12 +96,12 @@ describe("session lifetime and cookie names", () => {
 
   it("purges expired OAuth states when a new one is created, so the table cannot grow forever", async () => {
     const now = { t: 1000 };
-    const accounts = await AccountsDb.open(":memory:");
+    const accounts = await openDb();
     const states = new OAuthStates(accounts, { ttlSeconds: 600, now: () => now.t });
     for (let i = 0; i < 20; i++) await states.create("v");
     now.t += 601;
     await states.create("v");
-    const { n } = (await accounts.gated(() => accounts.raw.prepare("select count(*) as n from oauth_states").get())) as { n: number };
+    const { n } = (await accounts.one<{ n: number }>("select count(*) as n from oauth_states"))!;
     expect(n).toBe(1);
   });
-});
+}));

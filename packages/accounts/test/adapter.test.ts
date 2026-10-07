@@ -1,16 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { AuthService, EmailTakenError, generateOpaqueToken, hashOpaqueToken } from "@mockdata/auth-kit";
-import { AccountsDb, SqliteAuthAdapter, type AccountUser } from "../src/index.js";
+import { AccountsDb, SqlAuthAdapter, type AccountUser } from "../src/index.js";
+import { eachEngine, openDb } from "./engines.js";
 
 async function setup() {
-  const accounts = await AccountsDb.open(":memory:");
-  const adapter = new SqliteAuthAdapter(accounts);
+  const accounts = await openDb();
+  const adapter = new SqlAuthAdapter(accounts);
   const service = new AuthService<AccountUser>({ adapter, enumerationTimingFloorMs: 0 });
   return { accounts, adapter, service };
 }
 const PASSWORD = "Sup3r$ecretPassw0rd";
 
-describe("SqliteAuthAdapter with AuthService", () => {
+eachEngine(() => describe("SqlAuthAdapter with AuthService", () => {
   it("registers a user with a random directory id, and refuses a duplicate email in any case", async () => {
     const { service } = await setup();
     const user = await service.register({ email: "Ann@Example.com", password: PASSWORD });
@@ -114,4 +115,4 @@ describe("SqliteAuthAdapter with AuthService", () => {
     await adapter.revokeUserSessions(user.id);
     expect(await sessions.lookup(a.id)).toBeNull();
   });
-});
+}));

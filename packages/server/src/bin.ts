@@ -29,7 +29,8 @@ Generation runs in worker threads so a big run does not freeze the page for ever
 MOCKDATA_JOB_TIMEOUT_SECS (120) and MOCKDATA_WORKER_HEAP_MB (2048) in the environment or .env.
 
 Accounts mode: set MOCKDATA_PUBLIC_URL (https://your-domain, or http://localhost:<port> to try it)
-in the environment or .env. Everyone then signs in, including localhost, each user gets a private
+in the environment or .env. The account database is SQLite under the data folder, or Postgres when
+MOCKDATA_ACCOUNTS_DB is a postgres:// URL. Everyone then signs in, including localhost, each user gets a private
 folder, and the operator's LLM keys are shared under per-user limits. Needs SMTP_* (email sign-up)
 and/or GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET. Put a reverse proxy that terminates https in front;
 the UI listens on 127.0.0.1. --allow and MOCKDATA_TOKEN are for private-network mode and cannot be
@@ -78,7 +79,7 @@ if (values.help) {
       process.stdout.write(workers.size > 0 ? `Generation: ${workers.size} worker thread${workers.size === 1 ? "" : "s"}, queue of ${workers.maxQueue}, ${workers.jobTimeoutSecs} s limit per job\n` : "Generation: on the main thread (MOCKDATA_WORKERS=0); a big run will block the page\n");
       if (accounts) {
         const { publicUrl, dataDir } = accounts.config;
-        process.stdout.write(`Accounts mode: sign-in required for everyone. Public address ${publicUrl.origin}, data in ${dataDir}\n`);
+        process.stdout.write(`Accounts mode: sign-in required for everyone. Public address ${publicUrl.origin}, data in ${dataDir}, account database: ${accounts.db.dialect === "postgres" ? "Postgres (MOCKDATA_ACCOUNTS_DB)" : "SQLite"}\n`);
         process.stdout.write(`MCP for signed-in users: ${publicUrl.origin}/mcp (API keys from the account menu)\n`);
         process.stdout.write(`Sign-up: ${[accounts.emailEnabled && "email", accounts.google && "Google"].filter(Boolean).join(" and ")}. Per-user limits: ${accounts.limits.llmDailyRows} LLM rows/day, ${accounts.limits.maxRows} rows/run, ${Math.round(accounts.limits.userQuotaBytes / 1024 / 1024)} MB storage, ${accounts.limits.maxRuns} runs at once overall.\n`);
         if (!publicUrl.secure) process.stdout.write("Plain http on localhost: for trying it out only. A public site needs an https reverse proxy in front.\n");

@@ -553,6 +553,7 @@ MOCKDATA_ROOT=<folder> node packages/mcp/dist/bin.js --http --allow 100.100.1.x`
         { table: { head: ["Variable", "Meaning"], rows: [
           ["`MOCKDATA_PUBLIC_URL`", "`https://your-domain` (plain http only for localhost)"],
           ["`MOCKDATA_DATA_DIR`", "Accounts database and every user's private folder (default `./mockdata-data`); back it up"],
+          ["`MOCKDATA_ACCOUNTS_DB`", "Optional `postgres://` URL: the account database in Postgres instead of SQLite, needed to run several servers"],
           ["`SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`", "Email for verification and password reset"],
           ["`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`", "Optional Google sign-in; redirect URI `<MOCKDATA_PUBLIC_URL>/api/auth/google/callback`"],
           ["`MOCKDATA_TRUST_PROXY`", "Read the visitor's address from `X-Forwarded-For` (default on for https)"],
