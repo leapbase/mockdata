@@ -4,6 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import Landing from "../src/landing/Landing";
 import Root from "../src/Root";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { LLM_SNIPPET, MCP_TOOLS } from "../src/landing/content";
 import { stubApi } from "./stub";
 
 const ME_OFF = { user: null, auth: { accountsEnabled: false, googleConfigured: false, emailEnabled: false } };
@@ -56,10 +59,31 @@ describe("Landing", () => {
     expect(screen.getByRole("tabpanel").textContent).toContain("primaryKey: true");
     await user.click(tabs.getByRole("tab", { name: "CLI" }));
     expect(screen.getByRole("tabpanel").textContent).toContain("npx mockdata generate");
-    await user.keyboard("{ArrowRight}");
-    expect(tabs.getByRole("tab", { name: "MCP" }).getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByRole("tabpanel").textContent).toContain("claude mcp add");
-    expect(screen.getByRole("tabpanel").textContent).toContain("--transport http mockdata https://mockdata.com/mcp");
+    await user.keyboard("{ArrowLeft}");
+    expect(tabs.getByRole("tab", { name: "AI" }).getAttribute("aria-selected")).toBe("true");
+    const panel = within(screen.getByRole("tabpanel"));
+    expect(panel.getByRole("heading", { name: "Columns a model writes" })).toBeTruthy();
+    expect(panel.getByText(/llm: \{ prompt: "A one or two sentence customer review/)).toBeTruthy();
+    expect(panel.getByRole("heading", { name: "Agents over MCP" })).toBeTruthy();
+    expect(screen.getByRole("tabpanel").textContent).toContain("claude mcp add --transport http mockdata https://mockdata.com/mcp");
+    for (const tool of MCP_TOOLS) expect(panel.getByText(tool)).toBeTruthy();
+    expect(panel.getByRole("link", { name: /LLM-written text/ }).getAttribute("href")).toBe("/docs/llm");
+    expect(panel.getByRole("link", { name: /MCP on the web/ }).getAttribute("href")).toBe("/docs/mcp");
+  });
+
+  it("opens the AI tab from the AI link in the header", async () => {
+    stubApi({ "GET /api/auth/me": () => ME_OFF });
+    render(<Landing />);
+    await userEvent.click(within(screen.getByRole("navigation", { name: "Page sections" })).getByRole("link", { name: "AI" }));
+    expect(screen.getByRole("tab", { name: "AI" }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("shows a real prompt and the MCP server's real tools", () => {
+    expect(readFileSync(resolve("examples/shop-llm.yaml"), "utf8")).toContain(LLM_SNIPPET);
+    const server = readFileSync(resolve("packages/mcp/src/server.ts"), "utf8");
+    const registered = [...server.matchAll(/registerTool\(\s*"([a-z_]+)"/g)].map((m) => m[1]);
+    expect(registered.length).toBeGreaterThan(0);
+    expect([...MCP_TOOLS].sort()).toEqual([...new Set(registered)].sort());
   });
 
   it("answers questions in expandable FAQ items", async () => {

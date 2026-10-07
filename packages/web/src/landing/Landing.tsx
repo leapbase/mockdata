@@ -3,7 +3,7 @@ import { getMe, type Me } from "../api";
 import Header from "../components/Header";
 import { navigateTabs } from "../tabs";
 import { useLocale } from "../i18n";
-import { CLI_SNIPPET, FEATURE_ICONS, MCP_SNIPPET, SAMPLE_COLUMNS, SAMPLE_ROWS, SCHEMA_SNIPPET, SOURCE_URL } from "./content";
+import { CLI_SNIPPET, FEATURE_ICONS, LLM_SNIPPET, MCP_COMMAND, MCP_TOOLS, SAMPLE_COLUMNS, SAMPLE_ROWS, SCHEMA_SNIPPET, SOURCE_URL } from "./content";
 import { LANDING_COPY, type LandingCopy } from "./copy";
 import { DIAGRAM } from "./diagram";
 
@@ -31,9 +31,34 @@ function Rich({ text }: { text: string }) {
 
 const SNIPPETS = [
   { id: "schema", text: SCHEMA_SNIPPET },
+  { id: "ai", text: null },
   { id: "cli", text: CLI_SNIPPET },
-  { id: "mcp", text: MCP_SNIPPET },
 ] as const;
+
+/** Where the model-written column starts in the snippet; from there on it is highlighted. */
+const LLM_AT = LLM_SNIPPET.indexOf("      body:");
+
+/** The AI tab: columns a model writes, and agents over MCP, side by side. */
+function AiPanel({ t }: { t: LandingCopy["ai"] }) {
+  return <div className="ai-panel">
+    <section aria-labelledby="ai-llm-title">
+      <h3 id="ai-llm-title"><Icon name="spark" />{t.llmTitle}</h3>
+      <p><Rich text={t.llmIntro} /></p>
+      <pre className="code"><code>{LLM_SNIPPET.slice(0, LLM_AT)}<mark>{LLM_SNIPPET.slice(LLM_AT)}</mark></code></pre>
+      <ul>{t.llmPoints.map((p) => <li key={p}><Rich text={p} /></li>)}</ul>
+      <a href="/docs/llm">{t.llmMore} →</a>
+    </section>
+    <section aria-labelledby="ai-mcp-title">
+      <h3 id="ai-mcp-title"><Icon name="agent" />{t.mcpTitle}</h3>
+      <p>{t.mcpIntro}</p>
+      <pre className="code"><code>{MCP_COMMAND}</code></pre>
+      <p className="ai-tools-label">{t.toolsLabel}</p>
+      <ul className="ai-tools">{MCP_TOOLS.map((tool) => <li key={tool}><code>{tool}</code></li>)}</ul>
+      <ul>{t.mcpPoints.map((p) => <li key={p}>{p}</li>)}</ul>
+      <a href="/docs/mcp">{t.mcpMore} →</a>
+    </section>
+  </div>;
+}
 
 /** Loads the diagram once the section is within a screen of view; without IntersectionObserver it stays a placeholder. */
 function DiagramPreview({ t }: { t: LandingCopy["diagram"] }) {
@@ -81,6 +106,7 @@ export default function Landing() {
         nav={
           <nav className="landing-nav" aria-label={t.nav.sections}>
             <a href="#how">{t.nav.how}</a>
+            <a href="#snippets" onClick={() => setTab("ai")}>{t.nav.ai}</a>
             <a href="#features">{t.nav.features}</a>
             <a href="#use-cases">{t.nav.useCases}</a>
             <a href="#faq">{t.nav.faq}</a>
@@ -178,11 +204,13 @@ export default function Landing() {
             <div className="snippet-tabs" role="tablist" aria-label={t.snippets.tabsLabel} onKeyDown={navigateTabs}>
               {SNIPPETS.map((s) => (
                 <button key={s.id} type="button" role="tab" id={`snippet-tab-${s.id}`} aria-selected={tab === s.id} aria-controls="snippet-panel" tabIndex={tab === s.id ? 0 : -1} onClick={() => setTab(s.id)}>
-                  {t.snippets[s.id]}
+                  {s.id === "ai" && <Icon name="spark" />}{t.snippets[s.id]}
                 </button>
               ))}
             </div>
-            <pre className="code" id="snippet-panel" role="tabpanel" aria-labelledby={`snippet-tab-${snippet.id}`} tabIndex={0}><code>{snippet.text}</code></pre>
+            {snippet.text === null
+              ? <div id="snippet-panel" role="tabpanel" aria-labelledby={`snippet-tab-${snippet.id}`} tabIndex={0}><AiPanel t={t.ai} /></div>
+              : <pre className="code" id="snippet-panel" role="tabpanel" aria-labelledby={`snippet-tab-${snippet.id}`} tabIndex={0}><code>{snippet.text}</code></pre>}
           </div>
         </section>
 

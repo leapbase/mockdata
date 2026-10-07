@@ -58,12 +58,32 @@ a.button.large { padding: 11px 20px; font-size: 15px; border-radius: var(--radiu
 .feature-grid li:hover { border-color: var(--tint-line); box-shadow: var(--shadow-md); transform: translateY(-2px); }
 .feature-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: var(--radius-lg); background: var(--tint); color: var(--accent-deep); border: 1px solid var(--tint-line); margin-bottom: 18px; }
 
-.snippet { max-width: 860px; margin: 0 auto; overflow: hidden; }
+.snippet { max-width: 1040px; margin: 0 auto; overflow: hidden; }
 .snippet-tabs { display: flex; gap: 4px; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--surface); overflow-x: auto; }
 .snippet-tabs button { border: 1px solid transparent; background: transparent; color: var(--muted); font-weight: 500; padding: 6px 14px; border-radius: var(--radius-md); white-space: nowrap; }
 .snippet-tabs button:hover { background: var(--panel); border-color: transparent; color: var(--fg); }
 .snippet-tabs button[aria-selected="true"] { background: var(--tint); border-color: var(--tint-line); color: var(--accent-deep); }
 .snippet pre.code { min-height: 300px; font-size: 13px; padding: 20px 24px; }
+.snippet-tabs button { display: inline-flex; align-items: center; gap: 6px; }
+.snippet-tabs button svg { width: 16px; height: 16px; color: var(--accent); }
+.ai-panel { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); }
+.ai-panel > section { min-width: 0; padding: 22px 24px 24px; display: flex; flex-direction: column; gap: 12px; }
+.ai-panel > section + section { border-left: 1px solid var(--line); }
+.ai-panel h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 17px; }
+.ai-panel h3 svg { color: var(--accent); }
+.ai-panel p { color: var(--muted); line-height: 1.55; }
+.ai-panel pre.code { min-height: 0 !important; padding: 14px 16px !important; font-size: 12px !important; border: 1px solid var(--line); border-radius: var(--radius-lg); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai-panel pre.code mark { display: block; margin: 2px -16px 0; padding: 2px 16px; background: var(--tint); color: var(--accent-deep); border-left: 3px solid var(--accent); }
+.ai-panel ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; line-height: 1.5; }
+.ai-panel a { margin-top: auto; color: var(--accent-deep); font-weight: 600; text-decoration: none; }
+.ai-panel a:hover { text-decoration: underline; }
+.ai-tools-label { margin-top: 2px !important; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.ai-panel ul.ai-tools { list-style: none; padding: 0; flex-direction: row; flex-wrap: wrap; gap: 6px; }
+.ai-tools code { font-size: 12px; }
+@media (max-width: 859px) {
+  .ai-panel { grid-template-columns: minmax(0, 1fr); }
+  .ai-panel > section + section { border-left: 0; border-top: 1px solid var(--line); }
+}
 
 .use-cases { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 20px; }
 .use-cases li { padding: 24px; grid-column: span 2; border-top: 3px solid var(--accent); }

@@ -5,13 +5,17 @@ import { MCP_URL, SOURCE_URL } from "./content";
 
 type Item = { title: string; body: string };
 export type LandingCopy = {
-  nav: { how: string; features: string; useCases: string; faq: string; docs: string; sections: string };
+  nav: { how: string; ai: string; features: string; useCases: string; faq: string; docs: string; sections: string };
   cta: { getStarted: string; signIn: string; openWorkspace: string };
   hero: { pill: string; title: string; titleAccent: string; lead: string; seeSchema: string; facts: string[]; factsLabel: string; demoLabel: string; demoCaption: string };
   how: { eyebrow: string; title: string; intro: string; steps: Item[] };
   features: { eyebrow: string; title: string; intro: string; items: Item[] };
   diagram: { eyebrow: string; title: string; intro: string; caption: string; loading: string };
-  snippets: { eyebrow: string; title: string; intro: string; tabsLabel: string; schema: string; cli: string; mcp: string };
+  snippets: { eyebrow: string; title: string; intro: string; tabsLabel: string; schema: string; cli: string; ai: string };
+  ai: {
+    llmTitle: string; llmIntro: string; llmPoints: string[]; llmMore: string;
+    mcpTitle: string; mcpIntro: string; mcpPoints: string[]; toolsLabel: string; mcpMore: string;
+  };
   useCases: { eyebrow: string; title: string; items: Item[] };
   faq: { eyebrow: string; title: string; items: { q: string; a: string }[] };
   closing: { title: string; body: string };
@@ -19,7 +23,7 @@ export type LandingCopy = {
 };
 
 const en: LandingCopy = {
-  nav: { how: "How it works", features: "Features", useCases: "Use cases", faq: "FAQ", docs: "Docs", sections: "Page sections" },
+  nav: { how: "How it works", ai: "AI", features: "Features", useCases: "Use cases", faq: "FAQ", docs: "Docs", sections: "Page sections" },
   cta: { getStarted: "Get started", signIn: "Sign in", openWorkspace: "Open workspace" },
   hero: {
     pill: "CLI · web UI · MCP server",
@@ -57,7 +61,25 @@ const en: LandingCopy = {
       { title: "Hosted MCP for AI agents", body: `Point Claude, Cursor or any MCP client at \`${MCP_URL}\` with an API key, and agents can validate, infer and generate data in your workspace.` },
     ],
   },
-  snippets: { eyebrow: "Use it your way", title: "One schema, three ways in", intro: "Edit and preview in the web UI, script it with the CLI, or connect an agent to the hosted MCP endpoint.", tabsLabel: "Examples", schema: "Schema (YAML)", cli: "CLI", mcp: "MCP" },
+  snippets: { eyebrow: "Use it your way", title: "One schema, three ways in", intro: "Edit and preview in the web UI, script it with the CLI, or connect an agent to the hosted MCP endpoint.", tabsLabel: "Examples", schema: "Schema (YAML)", cli: "CLI", ai: "AI" },
+  ai: {
+    llmTitle: "Columns a model writes",
+    llmIntro: "Mark a text column `llm` and give it a prompt. Everything else stays deterministic.",
+    llmPoints: [
+      "Each prompt sees its row and, through foreign keys, the parent rows: this review is written about the real product, in the tone its rating calls for.",
+      "Anthropic, OpenAI, Ollama or any OpenAI-compatible server. Rows go in batches; bad or cut-off replies are retried.",
+      "A reply must hold exactly one text per row, and a `unique` column is asked again for any duplicates.",
+    ],
+    llmMore: "LLM-written text",
+    mcpTitle: "Agents over MCP",
+    mcpIntro: "Give Claude, Cursor or any MCP client an API key, and it can write schemas, infer them and generate data for you.",
+    mcpPoints: [
+      "Agents work in your own folder, with the same limits as the web workspace.",
+      "Ask in plain words (\"make me 500 orders with realistic reviews\") and the agent writes and validates the schema.",
+    ],
+    toolsLabel: "Tools the agent gets",
+    mcpMore: "MCP on the web",
+  },
   useCases: {
     eyebrow: "Use cases", title: "Where it fits",
     items: [
@@ -86,7 +108,7 @@ const en: LandingCopy = {
 };
 
 const es: LandingCopy = {
-  nav: { how: "Cómo funciona", features: "Funciones", useCases: "Casos de uso", faq: "Preguntas", docs: "Documentación", sections: "Secciones de la página" },
+  nav: { how: "Cómo funciona", ai: "IA", features: "Funciones", useCases: "Casos de uso", faq: "Preguntas", docs: "Documentación", sections: "Secciones de la página" },
   cta: { getStarted: "Empezar", signIn: "Iniciar sesión", openWorkspace: "Abrir la app" },
   hero: {
     pill: "CLI · interfaz web · servidor MCP",
@@ -124,7 +146,25 @@ const es: LandingCopy = {
       { title: "MCP alojado para agentes de IA", body: `Conecta Claude, Cursor o cualquier cliente MCP a \`${MCP_URL}\` con una clave de API, y los agentes podrán validar, inferir y generar datos en tu espacio de trabajo.` },
     ],
   },
-  snippets: { eyebrow: "Úsalo a tu manera", title: "Un esquema, tres formas de usarlo", intro: "Edita y previsualiza en la interfaz web, automatiza con la CLI o conecta un agente al endpoint MCP alojado.", tabsLabel: "Ejemplos", schema: "Esquema (YAML)", cli: "CLI", mcp: "MCP" },
+  snippets: { eyebrow: "Úsalo a tu manera", title: "Un esquema, tres formas de usarlo", intro: "Edita y previsualiza en la interfaz web, automatiza con la CLI o conecta un agente al endpoint MCP alojado.", tabsLabel: "Ejemplos", schema: "Esquema (YAML)", cli: "CLI", ai: "IA" },
+  ai: {
+    llmTitle: "Columnas que escribe un modelo",
+    llmIntro: "Marca una columna de texto con `llm` y dale un prompt. Todo lo demás sigue siendo determinista.",
+    llmPoints: [
+      "Cada prompt ve su fila y, a través de las claves foráneas, las filas padre: esta reseña se escribe sobre el producto real, con el tono que pide su puntuación.",
+      "Anthropic, OpenAI, Ollama o cualquier servidor compatible con OpenAI. Las filas van en lotes; las respuestas incorrectas o cortadas se reintentan.",
+      "Cada respuesta debe traer exactamente un texto por fila, y a una columna `unique` se le vuelve a preguntar por cualquier duplicado.",
+    ],
+    llmMore: "Texto escrito por un LLM",
+    mcpTitle: "Agentes por MCP",
+    mcpIntro: "Dale una clave de API a Claude, Cursor o cualquier cliente MCP, y podrá escribir esquemas, inferirlos y generar datos por ti.",
+    mcpPoints: [
+      "Los agentes trabajan en tu propia carpeta, con los mismos límites que el espacio de trabajo web.",
+      "Pídelo con tus palabras (\"hazme 500 pedidos con reseñas realistas\") y el agente escribe y valida el esquema.",
+    ],
+    toolsLabel: "Herramientas que recibe el agente",
+    mcpMore: "MCP en la web",
+  },
   useCases: {
     eyebrow: "Casos de uso", title: "Dónde encaja",
     items: [
@@ -153,7 +193,7 @@ const es: LandingCopy = {
 };
 
 const zh: LandingCopy = {
-  nav: { how: "工作原理", features: "功能", useCases: "使用场景", faq: "常见问题", docs: "文档", sections: "页面导航" },
+  nav: { how: "工作原理", ai: "AI", features: "功能", useCases: "使用场景", faq: "常见问题", docs: "文档", sections: "页面导航" },
   cta: { getStarted: "开始使用", signIn: "登录", openWorkspace: "打开工作区" },
   hero: {
     pill: "命令行 · 网页界面 · MCP 服务器",
@@ -191,7 +231,25 @@ const zh: LandingCopy = {
       { title: "为 AI 智能体托管的 MCP", body: `用 API 密钥把 Claude、Cursor 或任何 MCP 客户端连接到 \`${MCP_URL}\`，智能体就能在你的工作区里校验、推断和生成数据。` },
     ],
   },
-  snippets: { eyebrow: "按你的方式使用", title: "一份 Schema，三种用法", intro: "在网页界面中编辑和预览，用命令行写脚本，或把智能体连接到托管的 MCP 端点。", tabsLabel: "示例", schema: "Schema（YAML）", cli: "命令行", mcp: "MCP" },
+  snippets: { eyebrow: "按你的方式使用", title: "一份 Schema，三种用法", intro: "在网页界面中编辑和预览，用命令行写脚本，或把智能体连接到托管的 MCP 端点。", tabsLabel: "示例", schema: "Schema（YAML）", cli: "命令行", ai: "AI" },
+  ai: {
+    llmTitle: "由模型撰写的列",
+    llmIntro: "把文本列标记为 `llm` 并写上提示词，其余内容仍保持确定性。",
+    llmPoints: [
+      "每条提示词都能看到所在的行，并通过外键看到父行：这条评论围绕真实的产品撰写，语气与评分相符。",
+      "支持 Anthropic、OpenAI、Ollama 或任何兼容 OpenAI 的服务。数据行分批发送，错误或被截断的回复会重试。",
+      "每次回复必须为每一行恰好给出一段文本；`unique` 列出现重复时会重新请求。",
+    ],
+    llmMore: "LLM 撰写的文本",
+    mcpTitle: "通过 MCP 使用智能体",
+    mcpIntro: "给 Claude、Cursor 或任何 MCP 客户端一个 API 密钥，它就能替你编写 Schema、推断 Schema 并生成数据。",
+    mcpPoints: [
+      "智能体在你自己的文件夹中工作，限额与网页工作区相同。",
+      "用自然语言提出需求（“给我 500 个带真实评论的订单”），智能体会编写并校验 Schema。",
+    ],
+    toolsLabel: "智能体可用的工具",
+    mcpMore: "网页版 MCP",
+  },
   useCases: {
     eyebrow: "使用场景", title: "适用场景",
     items: [

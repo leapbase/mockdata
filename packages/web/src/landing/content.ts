@@ -41,15 +41,29 @@ export const SOURCE_URL = "https://github.com/leapbase/mockdata";
 /** The hosted MCP endpoint (Streamable HTTP; API key from the account menu). */
 export const MCP_URL = "https://mockdata.com/mcp";
 
-export const MCP_SNIPPET = `# 1. Sign in, then create a key under API keys in the account menu
-# 2. Add the hosted MCP server to Claude Code
-claude mcp add --transport http mockdata ${MCP_URL} \\
-  --header "Authorization: Bearer <your API key>"
+/** The AI tab's schema: the tables of examples/shop-llm.yaml, verbatim (a test checks), so the prompt shown is a real one. */
+export const LLM_SNIPPET = `tables:
+  products:
+    rows: 5
+    columns:
+      id: { type: integer, primaryKey: true }
+      name: { type: string, faker: commerce.productName }
+  reviews:
+    rows: 12
+    columns:
+      id: { type: integer, primaryKey: true }
+      product_id: { type: integer, ref: products.id }
+      rating: { type: integer, min: 1, max: 5 }
+      body:
+        type: string
+        llm: { prompt: "A one or two sentence customer review whose tone matches the rating (1 = angry, 5 = delighted)" }`;
 
-# Any MCP client that speaks Streamable HTTP can use the same URL and header.
-# Tools the agent gets
-describe_schema_format  validate_schema  infer_schema
-generate_data           get_run_report`;
+/** Connecting Claude Code to the hosted MCP endpoint (API key from the account menu). */
+export const MCP_COMMAND = `claude mcp add --transport http mockdata ${MCP_URL} \\
+  --header "Authorization: Bearer <your API key>"`;
+
+/** The tools an agent gets, as registered in packages/mcp/src/server.ts. */
+export const MCP_TOOLS = ["describe_schema_format", "validate_schema", "infer_schema", "generate_data", "get_run_report"] as const;
 
 /** Icons for the feature cards, in the order of `features.items` in copy.ts. */
 export const FEATURE_ICONS = ["link", "rule", "spark", "db", "seed", "agent"] as const;
