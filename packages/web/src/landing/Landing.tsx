@@ -57,6 +57,7 @@ export default function Landing() {
             <a href="#features">Features</a>
             <a href="#use-cases">Use cases</a>
             <a href="#faq">FAQ</a>
+            <a href="/docs">Docs</a>
           </nav>
         }
       >
@@ -194,6 +195,7 @@ export default function Landing() {
         <span>mockdata · schema to synthetic data</span>
         <span className="landing-footer-links">
           <a href="/app">Workspace</a>
+          <a href="/docs">Docs</a>
           <a href={SOURCE_URL}>Source on GitHub</a>
           <a href={`${SOURCE_URL}/blob/develop/LICENSE`}>AGPL-3.0</a>
         </span>

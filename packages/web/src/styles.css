@@ -71,6 +71,8 @@ a.button:hover { background: var(--tint); border-color: var(--tint-line); }
 .brand > span { color: var(--fg); }
 .brand-caption { display: block; font-size: 10px; color: var(--muted); font-weight: 400; margin-top: 3px; letter-spacing: 0; }
 .header-account { min-width: 0; display: flex; align-items: center; gap: 10px; }
+.header-link { padding: 6px 10px; border-radius: var(--radius-md); color: var(--muted); text-decoration: none; font-weight: 500; }
+.header-link:hover { color: var(--fg); background: var(--panel); }
 .theme-toggle { border-color: transparent; background: transparent; color: var(--muted); }
 .theme-toggle:hover { color: var(--fg); }
 .workspace-label { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 7px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--subtle); }

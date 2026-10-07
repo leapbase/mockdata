@@ -20,6 +20,9 @@ const TYPES: Record<string, string> = {
 /** Scripts and connections only from this origin: text from an LLM or a schema can never run code in the page. */
 const CSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'";
 
+/** Documentation pages; a bare slug only, so this never becomes a catch-all for files under /docs. */
+export const isDocsPath = (pathname: string) => /^\/docs(\/[a-z0-9-]+)?\/?$/.test(pathname);
+
 export function serveStatic(dir: string, pathname: string, res: ServerResponse): void {
   if (!existsSync(dir)) throw new HttpError(404, "The web UI has not been built yet (run npm run build)");
   let rel: string;
@@ -29,8 +32,8 @@ export function serveStatic(dir: string, pathname: string, res: ServerResponse):
     throw new HttpError(400, "Bad path");
   }
   if (rel.includes("\0")) throw new HttpError(400, "Bad path");
-  // The workspace lives at /app; the page decides between it and the landing page, so serve the same index.html.
-  if (rel === "/app" || rel === "/app/") rel = "/";
+  // The workspace (/app) and the documentation (/docs, /docs/<page>) are routes of the same page, so serve index.html.
+  if (rel === "/app" || rel === "/app/" || isDocsPath(rel)) rel = "/";
   if (rel.endsWith("/")) rel += "index.html";
   const base = path.resolve(dir);
   const file = path.join(base, rel);

@@ -20,7 +20,7 @@ describe.skipIf(!built)("production bundle boundaries", () => {
     const chunks = manifest();
     const entry = Object.keys(chunks).find((key) => chunks[key]!.isEntry)!;
     const initial = staticImports(chunks, entry);
-    for (const key of ["src/App.tsx", "src/landing/Landing.tsx", "src/components/Editor.tsx", "src/components/SchemaDiagram.tsx"]) {
+    for (const key of ["src/App.tsx", "src/landing/Landing.tsx", "src/docs/Docs.tsx", "src/components/Editor.tsx", "src/components/SchemaDiagram.tsx"]) {
       expect(chunks[key]?.isDynamicEntry).toBe(true);
       expect(initial.has(key)).toBe(false);
     }
@@ -32,6 +32,7 @@ describe.skipIf(!built)("production bundle boundaries", () => {
     // The landing page and the workspace are loaded independently.
     expect(staticImports(chunks, "src/landing/Landing.tsx").has("src/App.tsx")).toBe(false);
     expect(workspace.has("src/landing/Landing.tsx")).toBe(false);
+    expect(workspace.has("src/docs/Docs.tsx")).toBe(false);
   });
   it("serves fonts as files, since the CSP blocks data: fonts", () => {
     const css = readdirSync(new URL("assets/", dist)).filter((f) => f.endsWith(".css"));

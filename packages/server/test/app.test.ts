@@ -89,7 +89,7 @@ describe("static files", () => {
     expect((await get("/missing.js")).status).toBe(404);
   });
 
-  it("serves the same page at /app for the workspace, without becoming a catch-all", async () => {
+  it("serves the same page at /app and /docs, without becoming a catch-all", async () => {
     const staticDir = mkdtempSync(join(tmpdir(), "mockdata-static-"));
     writeFileSync(join(staticDir, "index.html"), "<h1>page</h1>");
     writeFileSync(join(staticDir, "f.woff2"), "w");
@@ -101,6 +101,12 @@ describe("static files", () => {
       expect(r.headers.get("content-security-policy")).toContain("default-src 'self'");
     }
     expect((await get("/app/x.js")).status).toBe(404);
+    for (const p of ["/docs", "/docs/", "/docs/schema", "/docs/quick-start/"]) {
+      const r = await get(p);
+      expect(r.status, p).toBe(200);
+      expect(r.raw).toContain("page");
+    }
+    for (const p of ["/docs/x.js", "/docs/a/b", "/docs/Schema"]) expect((await get(p)).status, p).toBe(404);
     expect((await get("/elsewhere")).status).toBe(404);
     expect((await get("/f.woff2")).headers.get("content-type")).toBe("font/woff2");
   });
