@@ -19,7 +19,7 @@ export interface McpHttpOptions extends ServerOptions, ListenOptions {
  * 127.0.0.1 only (or, with `allow`, also serves those private ranges) and refuses
  * foreign Host/Origin headers: the tools read and
  * write files and can spend LLM credits, so it is not for exposing to a network
- * (the hosted, signed-in endpoint is the web server's /mcp in accounts mode).
+ * (a hosted layer serves its own signed-in endpoint at the web server's /mcp, through HostedPlugin).
  * Each client session gets its own server, so `get_run_report` is per client.
  */
 export async function startMcpHttp(opts: McpHttpOptions = {}): Promise<{ server: http.Server; url: string; token?: string; tokenGenerated: boolean }> {

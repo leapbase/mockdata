@@ -11,7 +11,7 @@ import es from "../src/docs/i18n/es";
 import zh from "../src/docs/i18n/zh";
 import Landing from "../src/landing/Landing";
 import { LANDING_COPY, type LandingCopy } from "../src/landing/copy";
-import AuthGate from "../src/hosted/AuthGate";
+import LocalGate from "../src/components/LocalGate";
 import { stubApi } from "./stub";
 
 const ME_OFF = { user: null, auth: { accountsEnabled: false, googleConfigured: false, emailEnabled: false } };
@@ -146,7 +146,7 @@ describe("language menu", () => {
   it("is not offered in the workspace, which stays English", async () => {
     setLocale("es");
     stubApi({ "GET /api/auth/me": () => ME_OFF });
-    render(<AuthGate><p>workspace</p></AuthGate>);
+    render(<LocalGate><p>workspace</p></LocalGate>);
     expect(await screen.findByText("workspace")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /idioma|language/i })).toBeNull();
     expect(screen.getByRole("link", { name: "Docs" })).toBeTruthy();

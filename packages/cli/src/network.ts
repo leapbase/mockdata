@@ -21,7 +21,7 @@ export interface NetworkAccess {
   /** Localhost peers skip the token (default true). Tests turn this off to exercise it over loopback. */
   trustLoopback: boolean;
   /**
-   * Accounts mode: the public host name (from MOCKDATA_PUBLIC_URL). The server is open to any peer, because
+   * Hosted layer: the public host name (from MOCKDATA_PUBLIC_URL). The server is open to any peer, because
    * a login session is the gate; there is no allow list or token, and loopback is never trusted (a
    * TLS-terminating reverse proxy connects from loopback on behalf of the whole internet).
    */
@@ -108,7 +108,7 @@ export function isLoopback(addr: string): boolean {
   return a === "::1" || a.startsWith("127.");
 }
 
-/** Is this peer served at all? Accounts mode serves everyone (sessions gate it); otherwise see remoteAllowed. No access object means local mode, which only listens on loopback. */
+/** Is this peer served at all? A hosted layer serves everyone (its sessions gate it); otherwise see remoteAllowed. No access object means local mode, which only listens on loopback. */
 export function peerAllowed(access: NetworkAccess | undefined, addr: string | undefined): boolean {
   if (!access || access.publicHost !== undefined) return true;
   return remoteAllowed(addr, access.allow);
@@ -207,7 +207,7 @@ export interface ListenOptions {
   token?: string;
   /** Tests only: also demand the token from localhost peers. */
   trustLoopback?: boolean;
-  /** Accounts mode (MOCKDATA_PUBLIC_URL): sessions are the gate instead of an allow list and token. */
+  /** Hosted layer (MOCKDATA_PUBLIC_URL): its sessions are the gate instead of an allow list and token. */
   publicUrl?: PublicUrl;
 }
 
@@ -220,7 +220,7 @@ export interface ListenOptions {
  */
 export function listenPlan(opts: ListenOptions): { host: string; access?: NetworkAccess; tokenGenerated: boolean } {
   if (opts.publicUrl) {
-    if ((opts.allow ?? []).length > 0) throw new NetworkConfigError("--allow cannot be combined with MOCKDATA_PUBLIC_URL: accounts mode is open to any visitor and gates them by login");
+    if ((opts.allow ?? []).length > 0) throw new NetworkConfigError("--allow cannot be combined with MOCKDATA_PUBLIC_URL: a public site is open to any visitor and gates them by login");
     const access: NetworkAccess = { allow: [], hosts: new Set(), trustLoopback: false, publicHost: opts.publicUrl.host };
     return { host: opts.host ?? "127.0.0.1", access, tokenGenerated: false };
   }

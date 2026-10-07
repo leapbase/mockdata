@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import Landing from "../src/landing/Landing";
-import AuthGate, { useAccountCta } from "../src/hosted/AuthGate";
 import Root from "../src/Root";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -11,7 +11,6 @@ import { LLM_SNIPPET, MCP_TOOLS } from "../src/landing/content";
 import { stubApi } from "./stub";
 
 const ME_OFF = { user: null, auth: { accountsEnabled: false, googleConfigured: false, emailEnabled: false } };
-const ME_SIGNED_OUT = { user: null, auth: { accountsEnabled: true, googleConfigured: false, emailEnabled: true } };
 
 afterEach(() => {
   cleanup();
@@ -47,17 +46,11 @@ describe("Landing", () => {
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 
-  it("asks a signed-out visitor to sign in when accounts are on", async () => {
-    stubApi({ "GET /api/auth/me": () => ME_SIGNED_OUT });
-    render(<Landing useCta={useAccountCta} />);
-    expect((await screen.findByRole("link", { name: "Sign in" })).getAttribute("href")).toBe("/app");
-    expect(screen.getAllByRole("link", { name: "Get started" }).length).toBeGreaterThan(0);
-  });
-
-  it("still links to the workspace when the server cannot say who is signed in", async () => {
+  it("lets a hosted shell relabel the calls to action through the useLandingCta slot", () => {
     stubApi({});
-    render(<Landing useCta={useAccountCta} />);
-    expect(screen.getAllByRole("link", { name: "Open workspace" })[0]!.getAttribute("href")).toBe("/app");
+    render(<Landing useCta={(t, locale) => ({ primary: `${t.cta.openWorkspace} (${locale})`, nav: "Sign in" })} />);
+    expect(screen.getByRole("link", { name: "Sign in" }).getAttribute("href")).toBe("/app");
+    expect(screen.getAllByRole("link", { name: "Open workspace (en)" }).length).toBeGreaterThan(0);
   });
 
   it("switches the example snippets with tabs and arrow keys", async () => {
@@ -113,9 +106,10 @@ describe("Root", () => {
     expect(await screen.findByRole("heading", { level: 1, name: /realistic, related test data/i })).toBeTruthy();
   });
 
-  it("renders the workspace behind the sign-in gate at /app", async () => {
-    stubApi({ "GET /api/auth/me": () => ME_SIGNED_OUT });
-    render(<Root gate={AuthGate} location={at("/app")} />);
+  it("renders the workspace behind the gate a hosted shell supplies at /app", async () => {
+    stubApi({});
+    const Gate = ({ children }: { children: ReactNode }) => <div><button>Sign in</button>{children}</div>;
+    render(<Root gate={Gate} location={at("/app")} />);
     expect(await screen.findByRole("button", { name: "Sign in" })).toBeTruthy();
     expect(screen.queryByRole("heading", { level: 1, name: /realistic/i })).toBeNull();
   });

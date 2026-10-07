@@ -37,7 +37,7 @@ export function assertLocal(req: IncomingMessage, access?: NetworkAccess): void 
 }
 
 const bodyLimits = new WeakMap<IncomingMessage, number>();
-/** Lower the body limit for one request (accounts mode), however the body is framed. */
+/** Lower the body limit for one request (hosted layers), however the body is framed. */
 export function setBodyLimit(req: IncomingMessage, bytes: number): void {
   bodyLimits.set(req, bytes);
 }

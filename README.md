@@ -259,7 +259,7 @@ Traffic is plain http, so the token can be read by anyone who can see the networ
 
 ## Generation runs in worker threads
 
-The web UI generates data (previews, runs with model-written columns, exports) in worker threads, so a big run no longer freezes the page, sign-ins or anyone else's requests. With 20,000 rows x 6 columns, a trivial request that waited up to 3.2 s behind ten concurrent generations on the main thread waits 2-5 ms with the pool, and preview throughput went from 4 to 11 requests a second (`npm run loadtest` measures this on your machine).
+The web UI generates data (previews, runs with model-written columns, exports) in worker threads, so a big run no longer freezes the page or anyone else's requests. With 20,000 rows x 6 columns, a trivial request that waited up to 3.2 s behind ten concurrent generations on the main thread waits 2-5 ms with the pool, and preview throughput went from 4 to 11 requests a second.
 
 | Variable | Meaning |
 |---|---|
@@ -269,6 +269,12 @@ The web UI generates data (previews, runs with model-written columns, exports) i
 | `MOCKDATA_WORKER_HEAP_MB` | each thread's memory limit (2048), so one pathological schema cannot take the server down |
 
 Threads start when first needed and are reused. A worker that crashes or overruns costs only that job and one replacement thread. Closing the browser tab cancels a queued job and stops a model run before its next request. The same seed gives byte-identical output with or without the pool. Worker threads run the compiled code, so `npm run build` is needed (as it already is for `npm run ui`). The CLI and the MCP server still generate on their own thread.
+
+## Building a hosted layer
+
+The server has one seam for a multi-user site. Implement `HostedPlugin` (`packages/server/src/hosted.ts`) and pass it as `hosted` to `createApp` or `startServer`: the plugin names the caller of each request, gives that caller their own folder and a `Policy` (rate limits, schema and write limits, model and database access, run slots), may serve its own `/api/` routes and `/mcp`, and adds response headers. Without a plugin the server is the local workspace described above. `@mockdata/server` exports the helpers a plugin's routes need (`HttpError`, `readJson`, `sendJson`, `Ctx`, `publicMessage`, ...).
+
+On the web side, `mountApp(slots)` from `@mockdata/web` takes a `gate` (sign-in around the workspace), call-to-action labels for the landing page, landing copy and extra documentation pages. `vitest.aliases.ts` exports `mockdataAliases(repoRoot)` for a repository that embeds this one as a git submodule. The hosted site at https://mockdata.com is built this way, from a separate private repository.
 
 ## Use it as a library
 
@@ -287,8 +293,6 @@ const data = generate(schemaObjectOrYamlParsed, { seed: 1 });   // { customers: 
 | Package | Role |
 |---|---|
 | `packages/core` | Schema validation, table ordering, generation, constraint checks |
-| `packages/auth-kit` | Vendored account logic from itravelmap: password hashing, validation, verification and reset tokens, mailer |
-| `packages/accounts` | SQLite account store, sessions, OAuth state, rate limits, quotas, emails |
 | `packages/llm` | Providers (Anthropic, OpenAI, Ollama/OpenAI-compatible), prompts with parent context, retries |
 | `packages/inputs` | Schema inference from databases, OpenAPI/JSON Schema, sample data |
 | `packages/cli` | The `mockdata` command |
@@ -301,7 +305,6 @@ const data = generate(schemaObjectOrYamlParsed, { seed: 1 });   // { customers: 
 ```
 npm test              # everything (vitest); no network, no API keys, no database servers needed
 npm run build         # tsc for each package, in dependency order
-npm run loadtest      # dev-only: ramps sign-ins, page loads and generation against a real accounts-mode server (apps/loadtest)
 ```
 
 A live MySQL test runs when `MOCKDATA_TEST_MYSQL_URL` is set. See `CLAUDE.md` for the architecture notes.
