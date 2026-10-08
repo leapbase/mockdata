@@ -29,6 +29,8 @@ export interface DocsExtension {
  * Functions and objects must be stable (module-level), not rebuilt on every render.
  */
 export interface Slots {
+  /** Serve the landing page at "/". The open build leaves this off and opens the workspace there; a hosted shell sets it. */
+  landing?: boolean;
   gate?: ComponentType<{ children: ReactNode }>;
   useLandingCta?: (copy: LandingCopy, locale: Locale) => Cta;
   /** Loads a function returning the landing copy to show for a locale, typically the base with hosted wording swapped in. */

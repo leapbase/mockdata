@@ -100,9 +100,17 @@ describe("Landing", () => {
 describe("Root", () => {
   const at = (pathname: string, hash = "") => ({ pathname, hash, replace: vi.fn() });
 
-  it("renders the landing page at /", async () => {
-    stubApi({ "GET /api/auth/me": () => ME_OFF });
+  it("opens the workspace at / in the open build, with a link to the source", async () => {
+    stubApi({});
     render(<Root location={at("/")} />);
+    expect(await screen.findByText("Local workspace")).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 1, name: /realistic/i })).toBeNull();
+    expect(screen.getByRole("link", { name: /Source/ }).getAttribute("href")).toBe("https://github.com/leapbase/mockdata");
+  });
+
+  it("renders the landing page at / when a hosted shell asks for it", async () => {
+    stubApi({ "GET /api/auth/me": () => ME_OFF });
+    render(<Root landing location={at("/")} />);
     expect(await screen.findByRole("heading", { level: 1, name: /realistic, related test data/i })).toBeTruthy();
   });
 
@@ -118,7 +126,7 @@ describe("Root", () => {
     stubApi({});
     for (const hash of ["#reset_token=abc", "#verify_token=xyz"]) {
       const loc = at("/", hash);
-      const { container } = render(<Root location={loc} />);
+      const { container } = render(<Root landing location={loc} />);
       expect(loc.replace).toHaveBeenCalledWith(`/app${hash}`);
       expect(container.textContent).toBe("");
       cleanup();

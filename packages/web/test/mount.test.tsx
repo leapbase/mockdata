@@ -24,7 +24,7 @@ describe("the web package as a library", () => {
     await act(async () => {
       unmount = mountApp({}, box);
     });
-    await vi.waitFor(() => expect(box.querySelector("h1")).toBeTruthy()); // the landing page at "/"
+    await vi.waitFor(() => expect(box.textContent).toContain("Local workspace")); // the workspace at "/"
     await act(async () => unmount());
     expect(box.innerHTML).toBe("");
   });

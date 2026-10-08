@@ -35,8 +35,7 @@ npx mockdata generate examples/shop.yaml -s 123          # same seed = same data
 npx mockdata infer examples/samples -o my-schema.yaml    # CSVs -> schema
 npx mockdata infer env:DATABASE_URL                      # Postgres / MySQL catalog -> schema`;
 
-/** Public source repository. AGPL-3.0 section 13 asks a copy served over a network to offer its users the source; this link does that. */
-export const SOURCE_URL = "https://github.com/leapbase/mockdata";
+export { SOURCE_URL } from "../source";
 
 /** The AI tab's schema: the tables of examples/shop-llm.yaml, verbatim (a test checks), so the prompt shown is a real one. */
 export const LLM_SNIPPET = `tables:

@@ -225,7 +225,7 @@ npm run build
 npm run ui -- examples          # or: node packages/server/dist/bin.js <folder> [--port 8000]
 ```
 
-Open http://127.0.0.1:8000 for the landing page (what mockdata does, examples, FAQ), http://127.0.0.1:8000/docs for the documentation (the landing page and docs are available in English, Español and 中文 from the language menu), or go straight to the workspace at http://127.0.0.1:8000/app. The folder you pass is the root: schema files are listed in the sidebar, `.env` is read from there, and nothing outside it is ever read or written.
+Open http://127.0.0.1:8000 for the workspace (also at `/app`), or http://127.0.0.1:8000/docs for the documentation (available in English, Español and 中文 from the language menu). The folder you pass is the root: schema files are listed in the sidebar, `.env` is read from there, and nothing outside it is ever read or written.
 
 - **Schemas**: select, create, and save schemas in the left sidebar. The top bar holds the theme switch (System, Light, Dark; remembered in this browser) and the Local workspace label.
 - **Editor / Diagram**: edit YAML or JSON with live validation, or switch to a read-only table and relationship diagram with pan, zoom, and fit controls. Errors appear inline and in the status strip, which also shows the generation order. Switching views preserves edits.
@@ -274,7 +274,7 @@ Threads start when first needed and are reused. A worker that crashes or overrun
 
 The server has one seam for a multi-user site. Implement `HostedPlugin` (`packages/server/src/hosted.ts`) and pass it as `hosted` to `createApp` or `startServer`: the plugin names the caller of each request, gives that caller their own folder and a `Policy` (rate limits, schema and write limits, model and database access, run slots), may serve its own `/api/` routes and `/mcp`, and adds response headers. Without a plugin the server is the local workspace described above. `@mockdata/server` exports the helpers a plugin's routes need (`HttpError`, `readJson`, `sendJson`, `Ctx`, `publicMessage`, ...).
 
-On the web side, `mountApp(slots)` from `@mockdata/web` takes a `gate` (sign-in around the workspace), call-to-action labels for the landing page, landing copy and extra documentation pages. `vitest.aliases.ts` exports `mockdataAliases(repoRoot)` for a repository that embeds this one as a git submodule. The hosted site at https://mockdata.com is built this way, from a separate private repository.
+On the web side, `mountApp(slots)` from `@mockdata/web` takes a `gate` (sign-in around the workspace), `landing: true` (serve the landing page at `/`; the open build opens the workspace there), call-to-action labels for the landing page, landing copy and extra documentation pages. `vitest.aliases.ts` exports `mockdataAliases(repoRoot)` for a repository that embeds this one as a git submodule. The hosted site at https://mockdata.com is built this way, from a separate private repository.
 
 ## Use it as a library
 

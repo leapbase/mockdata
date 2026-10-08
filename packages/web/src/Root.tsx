@@ -12,8 +12,8 @@ export const isDocsPath = (pathname: string) => /^\/docs(\/[a-z0-9-]+)?\/?$/.tes
 /** Account links sent before the workspace moved to /app pointed at "/#…"; they belong to the workspace. */
 export const legacyAuthHash = (hash: string) => /^#(verify_token|reset_token)=/.test(hash);
 
-/** "/" is the landing page, "/app" the workspace and "/docs" the documentation. The server serves this same page for all three. */
-function Pages({ location = window.location, gate: Gate = LocalGate, useLandingCta, landingCopy, docs }: Slots & { location?: Pick<Location, "pathname" | "hash" | "replace"> }) {
+/** "/app" is the workspace and "/docs" the documentation; "/" is the workspace too unless a hosted shell asks for the landing page. The server serves this same page for all of them. */
+function Pages({ location = window.location, gate: Gate = LocalGate, landing = false, useLandingCta, landingCopy, docs }: Slots & { location?: Pick<Location, "pathname" | "hash" | "replace"> }) {
   // A hosted shell's copy and docs load beside the page that uses them, so they stay off the startup path and the page never shows open wording first.
   const Landing = useMemo(
     () =>
@@ -31,7 +31,7 @@ function Pages({ location = window.location, gate: Gate = LocalGate, useLandingC
       }),
     [docs],
   );
-  if (isWorkspacePath(location.pathname)) {
+  if (isWorkspacePath(location.pathname) || (!landing && location.pathname === "/")) {
     return (
       <Gate>
         <Suspense fallback={<div className="workspace-empty" role="status">Loading workspace…</div>}>
@@ -47,7 +47,7 @@ function Pages({ location = window.location, gate: Gate = LocalGate, useLandingC
       </Suspense>
     );
   }
-  if (legacyAuthHash(location.hash)) {
+  if (landing && legacyAuthHash(location.hash)) {
     location.replace(`/app${location.hash}`);
     return null;
   }
