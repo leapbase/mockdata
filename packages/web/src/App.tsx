@@ -5,9 +5,11 @@ import GenerateBar from "./components/GenerateBar";
 import InferDialog from "./components/InferDialog";
 import Preview from "./components/Preview";
 import Sidebar, { withExtension } from "./components/Sidebar";
+import TemplatePicker from "./components/TemplatePicker";
 import { useDrawer, useNarrow } from "./drawers";
 import { navigateTabs } from "./tabs";
 import { messageOf, useDebounced } from "./hooks";
+import type { Template } from "./templates";
 
 const Editor = lazy(() => import("./components/Editor"));
 const SchemaDiagram = lazy(() => import("./components/SchemaDiagram"));
@@ -119,6 +121,26 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
     setError(null);
     setSchemaView("editor");
     closeSidebar();
+  }
+
+  /** A template becomes an unsaved draft named after it (shop.yaml, or shop-2.yaml if that is taken), shown as a diagram. */
+  async function fromTemplate(t: Template) {
+    if (!okToDiscard()) return;
+    try {
+      const body = await t.load();
+      let file = `${t.id}.yaml`;
+      for (let n = 2; files.includes(file); n++) file = `${t.id}-${n}.yaml`;
+      setPath(null);
+      setName(file);
+      setText(body);
+      setSavedText("");
+      setPreview(null);
+      setWarnings([]);
+      setError(null);
+      setSchemaView("diagram");
+    } catch (e) {
+      fail(e);
+    }
   }
 
   async function rename(from: string, to: string) {
@@ -239,7 +261,7 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
           <button role="tab" tabIndex={schemaView === "diagram" ? 0 : -1} aria-selected={schemaView === "diagram"} aria-controls="schema-diagram" id="diagram-tab" onClick={() => setSchemaView("diagram")}>Diagram</button>
           <span className="view-hint">{schemaView === "editor" ? "Edit your schema in YAML or JSON" : "Explore tables and relationships"}</span>
         </div>
-        <div className="schema-surface" id="schema-editor" role="tabpanel" aria-labelledby="editor-tab" hidden={schemaView !== "editor"}><Suspense fallback={<div className="workspace-empty" role="status">Loading editor…</div>}><Editor value={text} onChange={setText} errors={errors} /></Suspense></div>
+        <div className="schema-surface" id="schema-editor" role="tabpanel" aria-labelledby="editor-tab" hidden={schemaView !== "editor"}>{path === null && text === "" && <TemplatePicker onPick={(t) => void fromTemplate(t)} />}<Suspense fallback={<div className="workspace-empty" role="status">Loading editor…</div>}><Editor value={text} onChange={setText} errors={errors} /></Suspense></div>
         {schemaView === "diagram" && <div className="schema-surface" id="schema-diagram" role="tabpanel" aria-labelledby="diagram-tab">
           {validationError ? <div className="workspace-empty"><h2>Validation unavailable</h2><p>{validationError}</p><button onClick={() => { setError(null); setValidationAttempt((n) => n + 1); }}>Retry validation</button></div> : validating || validatedText !== text ? <div className="workspace-empty"><p>Updating diagram…</p></div> : check?.ok && check.diagram ? <Suspense fallback={<div className="workspace-empty" role="status">Loading diagram…</div>}><SchemaDiagram data={check.diagram} dataTables={preview ? Object.keys(preview.tables) : []} onShowData={showData} /></Suspense> : <div className="workspace-empty"><h2>Diagram unavailable</h2><p>{check?.ok ? "Diagram metadata is unavailable. Rebuild and restart the server." : "Fix the schema in the editor to view its diagram."}</p><button onClick={() => setSchemaView("editor")}>Return to editor</button></div>}
         </div>}

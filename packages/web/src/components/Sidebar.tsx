@@ -62,7 +62,7 @@ export default function Sidebar({ files, active, dirty, onOpen, onNew, onInfer, 
         ))}
       </ul>
       {files.length > 0 && shown.length === 0 && <p className="empty-files muted">No schemas match “{query.trim()}”.</p>}
-      {files.length === 0 && <p className="empty-files muted">No saved schemas yet. Create one or import a source.</p>}
+      {files.length === 0 && <p className="empty-files muted">No saved schemas yet. Start from a template, write one, or import a source.</p>}
       {active === null && dirty && <p className="hint">Draft not saved yet: name it above the editor and press Save.</p>}
       <div className="sidebar-footer">{q ? `${shown.length} of ${files.length}` : files.length} saved schema{files.length === 1 ? "" : "s"}<span>YAML / JSON</span></div>
       </div>

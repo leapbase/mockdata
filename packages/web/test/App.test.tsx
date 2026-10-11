@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App";
+import shop from "../../../examples/shop.yaml?raw";
 import { errorResponse, sseResponse, stubApi } from "./stub";
 
 // CodeMirror needs real layout; the App only depends on value/onChange/errors.
@@ -176,6 +177,42 @@ describe("shell", () => {
     });
     await renderWorkspace();
     expect(await screen.findByRole("alert")).toBeTruthy();
+  });
+});
+
+describe("templates", () => {
+  it("offers templates on an empty draft; a pick becomes an unsaved draft named after it, and Save creates the file", async () => {
+    const calls = stubApi({
+      "GET /api/config": () => CONFIG_NO_LLM,
+      "GET /api/files": () => ({ files: [] }),
+      "POST /api/validate": () => OK,
+      "PUT /api/file": (b) => ({ path: b.path }),
+    });
+    await renderWorkspace();
+    const picker = await screen.findByRole("region", { name: "Start from a template" });
+    await userEvent.click(within(picker).getByRole("button", { name: /Online shop/ }));
+    await userEvent.click(screen.getByRole("tab", { name: "Editor" }));
+    await waitFor(() => expect((screen.getByLabelText("schema") as HTMLTextAreaElement).value).toBe(shop));
+    expect(screen.queryByRole("region", { name: "Start from a template" })).toBeNull();
+    expect((screen.getByLabelText("Schema name") as HTMLInputElement).value).toBe("shop.yaml");
+    expect(screen.getByTitle("Unsaved changes")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(calls.find((c) => c.key === "PUT /api/file")?.body).toMatchObject({ path: "shop.yaml", text: shop }));
+  });
+
+  it("suggests a free name when the template's file already exists, and hides the picker once a file is open", async () => {
+    stubApi({
+      "GET /api/config": () => CONFIG_NO_LLM,
+      "GET /api/files": () => ({ files: ["hr.yaml", "hr-2.yaml"] }),
+      "GET /api/file": () => ({ path: "hr.yaml", text: "" }),
+      "POST /api/validate": () => OK,
+    });
+    await renderWorkspace();
+    await userEvent.click(await screen.findByRole("button", { name: "hr.yaml" }));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Start from a template" })).toBeNull()); // an empty saved file is not a draft
+    await userEvent.click(screen.getByRole("button", { name: "New" }));
+    await userEvent.click(within(screen.getByRole("region", { name: "Start from a template" })).getByRole("button", { name: /^HR/ }));
+    await waitFor(() => expect((screen.getByLabelText("Schema name") as HTMLInputElement).value).toBe("hr-3.yaml"));
   });
 });
 
