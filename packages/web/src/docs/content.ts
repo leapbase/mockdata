@@ -302,7 +302,7 @@ shipped_at: { type: date, after: placed_at, within: 14 }     # same row, at most
   },
   {
     slug: "cli", title: "Command line", group: "Using mockdata", icon: "terminal",
-    summary: "The mockdata command: generate, validate and infer. Also usable as a library.",
+    summary: "The mockdata command: generate, validate, infer and seed. Also usable as a library.",
     sections: [
       { id: "generate", title: "generate", blocks: [
         { code: `mockdata generate <schema.(yaml|yml|json)> [options]
@@ -319,6 +319,14 @@ shipped_at: { type: date, after: placed_at, within: 14 }     # same row, at most
       { id: "infer", title: "infer", blocks: [
         { code: `mockdata infer <source> [-o schema.yaml] [--rows n] [--force] [--no-enums] [--from kind] [--pg-schema name]` },
         { p: "Builds a schema from a database, an OpenAPI or JSON Schema document, or sample files. The schema goes to stdout (or `-o`), warnings go to stderr. See [Infer a schema](/docs/infer)." },
+      ] },
+      { id: "seed", title: "seed", blocks: [
+        { code: `mockdata seed schema.yaml --target sqlite:./test.db
+mockdata seed schema.yaml --target sqlite:./test.db --seed 42 --apply
+mockdata seed schema.yaml --target env:TEST_DATABASE_URL --apply` },
+        { p: "Preview is the default: it checks exact tables, columns and constraints, requires empty target tables, generates the dataset and reports insertion order and row counts without writing. `--apply` checks again inside a transaction and commits only after every insert succeeds; failures roll back. It never truncates, updates or overwrites rows." },
+        { p: "SQLite files must already exist. PostgreSQL and MySQL/MariaDB URLs must come from `env:NAME` in the environment or `.env`, not a raw command argument. PostgreSQL accepts `--pg-schema name`; MySQL/MariaDB target tables must use InnoDB. Unsupported types, composite keys, external foreign keys and table cycles requiring deferred links are rejected." },
+        { p: "LLM columns can incur provider costs during preview. A later `--apply` generates model text again, so the preview reports a plan, not the exact text that will be inserted." },
       ] },
       { id: "library", title: "Use it as a library", blocks: [
         { p: "Inside the repository (npm workspaces):" },

@@ -31,6 +31,18 @@ npx mockdata generate examples/shop.yaml -s 123               # same seed = same
 npx mockdata validate examples/shop.yaml                      # check a schema without generating
 ```
 
+### Seed an existing database
+
+`seed` checks that the schema exactly matches existing tables and that every target table is empty. It previews the database kind, insertion order, row counts, seed, and LLM usage by default. `--apply` generates again, rechecks the target inside a transaction, inserts rows, and commits. An insert error rolls back all rows; the command never truncates, updates, or overwrites existing data.
+
+```
+npx mockdata seed schema.yaml --target sqlite:./test.db
+npx mockdata seed schema.yaml --target sqlite:./test.db --seed 42 --apply
+npx mockdata seed schema.yaml --target env:TEST_DATABASE_URL --apply
+```
+
+The SQLite file must already exist. For PostgreSQL or MySQL/MariaDB, put the connection URL in `TEST_DATABASE_URL` or `.env` and pass `env:TEST_DATABASE_URL`; raw network URLs are rejected on the command line. PostgreSQL defaults to the `public` schema; use `--pg-schema name` to select another. MySQL/MariaDB target tables must use InnoDB. Composite keys, unsupported column types, foreign keys outside the schema, and table cycles needing deferred links are rejected. A preview with LLM columns can incur provider costs, and a later `--apply` generates the model text again, so the preview does not promise identical text.
+
 ### Run the servers
 
 Run `npm run build` first (and again after code changes). Needs Node 22.13 or newer. Both servers listen on 127.0.0.1 only unless you pass `--allow` (see "Opening it to your network").

@@ -49,7 +49,7 @@ export function prepareSeedPlan(schema: DataSchemaT, catalog: RawTable[], _kind:
       const expectedType = column.type === "email" ? "string" : column.type;
       if (mapped.type !== expectedType) fail(`Type mismatch for ${name}.${rawColumn.name}: ${rawColumn.dataType} vs ${column.type}`);
       if (rawColumn.nullable !== !!column.nullable && !column.primaryKey) fail(`Nullability mismatch for ${name}.${rawColumn.name}`);
-      if (rawColumn.enumValues && column.enum?.some((value) => !rawColumn.enumValues!.includes(String(value)))) {
+      if (rawColumn.enumValues?.length && (!column.enum || column.enum.some((value) => !rawColumn.enumValues!.includes(String(value))))) {
         fail(`Enum mismatch for ${name}.${rawColumn.name}`);
       }
     }

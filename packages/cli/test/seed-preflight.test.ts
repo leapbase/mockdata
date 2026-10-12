@@ -42,6 +42,13 @@ describe("seed preflight", () => {
     expect(() => prepareSeedPlan(schema, changed, "postgres")).toThrow(/composite/i);
   });
 
+  it("rejects a database enum when the schema can generate arbitrary text", () => {
+    const changed = structuredClone(catalog);
+    changed[1]!.columns[1]!.dataType = "enum";
+    changed[1]!.columns[1]!.enumValues = ["active", "inactive"];
+    expect(() => prepareSeedPlan(schema, changed, "postgres")).toThrow(/enum/i);
+  });
+
   it("rejects a foreign key outside the schema", () => {
     const changed = structuredClone(catalog);
     changed[0]!.foreignKeys[0]!.refTable = "other";
