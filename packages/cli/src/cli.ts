@@ -6,6 +6,7 @@ import { parseSchema, type Dataset, type Row } from "@mockdata/core";
 import { generateWithLlm, type GenerateWithLlmOptions, type LlmReport } from "@mockdata/llm";
 import { loadEnv } from "./env.js";
 import { runInfer } from "./infer.js";
+import { runSeed } from "./seed/command.js";
 
 export { loadEnv };
 export { toYaml } from "./infer.js";
@@ -28,6 +29,8 @@ Usage:
   mockdata validate <schema.(yaml|yml|json)>
   mockdata infer <source> [options]        build a schema from a database, OpenAPI/JSON Schema, or sample data
                                            (run "mockdata infer --help")
+  mockdata seed <schema> --target <env:NAME|sqlite:path|file.db> [--apply]
+                                           (run "mockdata seed --help")
 
 generate options:
   -o, --out <dir>       write one file per table into <dir> (default: print JSON to stdout)
@@ -83,6 +86,7 @@ export async function run(argv: string[], io: IO): Promise<number> {
     return command ? 0 : 1;
   }
   if (command === "infer") return runInfer(rest, io);
+  if (command === "seed") return runSeed(rest, io);
   if (command !== "generate" && command !== "validate") {
     io.err(`Unknown command "${command}"\n\n${HELP}`);
     return 1;

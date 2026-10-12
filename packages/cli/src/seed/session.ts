@@ -21,7 +21,7 @@ export const quoteMysql = (name: string) => `\`${name.replace(/`/g, "``")}\``;
 
 export function safeSeedError(error: unknown, target: string): Error {
   let message = error instanceof Error ? error.message : String(error);
-  message = message.split(target).join("[REDACTED_CONNECTION]");
+  if (target) message = message.split(target).join("[REDACTED_CONNECTION]");
   try {
     const password = new URL(target).password;
     for (const secret of [password, decodeURIComponent(password)]) if (secret) message = message.split(secret).join("[REDACTED_SECRET]");
