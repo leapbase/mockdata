@@ -10,6 +10,11 @@
     "@mockdata/core": "*",
     "@mockdata/inputs": "*",
     "@mockdata/llm": "*",
+    "mysql2": "^3.11.0",
+    "pg": "^8.13.0",
     "yaml": "^2.5.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.0"
   }
 }
