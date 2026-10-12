@@ -55,6 +55,18 @@ describe("seed preflight", () => {
     expect(() => prepareSeedPlan(schema, changed, "postgres")).toThrow(/outside/i);
   });
 
+  it("rejects a foreign key into another database namespace with the same table name", () => {
+    const changed = structuredClone(catalog);
+    changed[0]!.foreignKeys[0]!.external = true;
+    expect(() => prepareSeedPlan(schema, changed, "postgres")).toThrow(/outside/i);
+  });
+
+  it("rejects unique indexes the generation schema cannot represent", () => {
+    const changed = structuredClone(catalog);
+    changed[1]!.unsupportedForSeed = ["partial unique index customers_extra"];
+    expect(() => prepareSeedPlan(schema, changed, "sqlite")).toThrow(/index/i);
+  });
+
   it("rejects a deferred table cycle", () => {
     const cyclic = parseSchema({ tables: {
       a: { rows: 2, columns: { id: { type: "integer", primaryKey: true }, b_id: { type: "integer", nullable: true, ref: "b.id" } } },

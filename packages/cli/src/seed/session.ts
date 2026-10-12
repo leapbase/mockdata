@@ -23,8 +23,16 @@ export function safeSeedError(error: unknown, target: string): Error {
   let message = error instanceof Error ? error.message : String(error);
   if (target) message = message.split(target).join("[REDACTED_CONNECTION]");
   try {
-    const password = new URL(target).password;
-    for (const secret of [password, decodeURIComponent(password)]) if (secret) message = message.split(secret).join("[REDACTED_SECRET]");
+    const url = new URL(target);
+    const secrets = [url.password, decodeURIComponent(url.password)];
+    for (const [key, value] of url.searchParams) {
+      if (/pass(word)?|pwd|secret|token|api.?key/i.test(key)) secrets.push(value, encodeURIComponent(value));
+    }
+    for (const part of (target.split("?")[1] ?? "").split("&")) {
+      const [key, value] = part.split("=");
+      if (value && /pass(word)?|pwd|secret|token|api.?key/i.test(key ?? "")) secrets.push(value);
+    }
+    for (const secret of secrets.filter(Boolean).sort((a, b) => b.length - a.length)) message = message.split(secret).join("[REDACTED_SECRET]");
   } catch { /* SQLite path */ }
   return new Error(message);
 }

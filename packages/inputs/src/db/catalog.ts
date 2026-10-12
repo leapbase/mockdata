@@ -26,7 +26,9 @@ export interface RawTable {
   primaryKey: string[];
   /** Each entry is the column list of one unique constraint or index. */
   uniques: string[][];
-  foreignKeys: { columns: string[]; refTable: string; refColumns: string[] }[];
+  foreignKeys: { columns: string[]; refTable: string; refColumns: string[]; external?: boolean }[];
+  /** Catalog features omitted by inference that make direct seeding unsafe. */
+  unsupportedForSeed?: string[];
 }
 
 type Mapped = { type: string; enum?: string[]; note?: string };

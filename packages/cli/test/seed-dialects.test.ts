@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { openPostgresSeedSession } from "../src/seed/postgres.js";
 import { openMysqlSeedSession } from "../src/seed/mysql.js";
+import { safeSeedError } from "../src/seed/session.js";
 
 const state = vi.hoisted(() => ({ pg: [] as { sql: string; params?: unknown[] }[], mysql: [] as { sql: string; params?: unknown[] }[], engine: "InnoDB" }));
 vi.mock("pg", () => ({ default: { Client: class {
@@ -11,7 +12,9 @@ vi.mock("pg", () => ({ default: { Client: class {
 vi.mock("mysql2/promise", () => ({ createConnection: async () => ({
   async query(sql: string, params?: unknown[]) {
     state.mysql.push({ sql, params });
-    if (sql.includes("information_schema.tables") && sql.includes("engine")) return [[{ table_name: "items", engine: state.engine }]];
+    if (sql.includes("information_schema.tables") && sql.includes("engine")) {
+      return [[sql.includes("as engine") ? { table_name: "items", engine: state.engine } : { TABLE_NAME: "items", ENGINE: state.engine }]];
+    }
     return [[]];
   },
   async end() {},
@@ -20,6 +23,11 @@ vi.mock("mysql2/promise", () => ({ createConnection: async () => ({
 beforeEach(() => { state.pg.length = 0; state.mysql.length = 0; state.engine = "InnoDB"; });
 
 describe("network seed adapters", () => {
+  it("redacts URL query-string passwords from driver errors", () => {
+    const target = "postgres://user@localhost/db?password=top%40secret";
+    expect(safeSeedError(new Error("driver rejected top@secret"), target).message).not.toContain("top@secret");
+    expect(safeSeedError(new Error("driver rejected top%40secret"), target).message).not.toContain("top%40secret");
+  });
   it("qualifies PostgreSQL identifiers and binds values in a transaction", async () => {
     const session = await openPostgresSeedSession("postgres://user:secret@localhost/test", "apply", 'custom"schema');
     try {

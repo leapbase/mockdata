@@ -28,6 +28,7 @@ export function prepareSeedPlan(schema: DataSchemaT, catalog: RawTable[], _kind:
 
   for (const [name, target] of Object.entries(schema.tables)) {
     const raw = tables.get(name) ?? fail(`Target table "${name}" was not found`);
+    if (raw.unsupportedForSeed?.length) fail(`Table "${name}" has unsupported index: ${raw.unsupportedForSeed[0]}`);
     const columns = Object.keys(target.columns);
     const rawNames = raw.columns.map((column) => column.name);
     if (new Set(columns).size !== rawNames.length || columns.some((column) => !rawNames.includes(column))) {
@@ -61,6 +62,7 @@ export function prepareSeedPlan(schema: DataSchemaT, catalog: RawTable[], _kind:
       return [{ columns: [column], refTable, refColumns: [refColumn] }];
     });
     for (const fk of raw.foreignKeys) {
+      if (fk.external) fail(`Foreign key from "${name}" points outside the selected database namespace`);
       if (!schema.tables[fk.refTable]) fail(`Foreign key from "${name}" points outside generated schema to "${fk.refTable}"`);
       if (!expectedFks.some((expected) => same(expected.columns, fk.columns) && expected.refTable === fk.refTable && same(expected.refColumns, fk.refColumns))) {
         fail(`Foreign key mismatch for table "${name}"`);

@@ -50,14 +50,23 @@ export function introspectSqlite(db: SqliteLike): RawTable[] {
     });
 
     const uniques: string[][] = [];
+    const unsupportedForSeed: string[] = [];
     for (const idx of db.prepare(`pragma index_list(${quote(name)})`).all()) {
-      if (Number(idx.unique) !== 1 || Number(idx.partial) === 1) continue;
+      if (Number(idx.unique) !== 1) continue;
       if (idx.origin === "pk") continue; // the primary key, reported separately
+      if (Number(idx.partial) === 1) {
+        unsupportedForSeed.push(`partial unique index ${idx.name}`);
+        continue;
+      }
       const cols = db
         .prepare(`pragma index_info(${quote(String(idx.name))})`)
         .all()
         .sort((a, b) => Number(a.seqno) - Number(b.seqno))
         .map((c) => String(c.name));
+      if (cols.includes("null")) {
+        unsupportedForSeed.push(`expression unique index ${idx.name}`);
+        continue;
+      }
       uniques.push(cols);
     }
 
@@ -72,6 +81,7 @@ export function introspectSqlite(db: SqliteLike): RawTable[] {
       primaryKey: pk,
       uniques,
       foreignKeys,
+      ...(unsupportedForSeed.length ? { unsupportedForSeed } : {}),
     };
   });
 }

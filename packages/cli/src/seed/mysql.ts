@@ -25,9 +25,9 @@ export async function openMysqlSeedSession(url: string, mode: SeedMode): Promise
     },
     async ensureTransactional(tables) {
       for (const table of tables) {
-        const [rows] = await conn.query("select table_name, engine from information_schema.tables where table_schema = ? and table_name = ?", [database, table]);
+        const [rows] = await conn.query("select table_name as table_name, engine as engine from information_schema.tables where table_schema = ? and table_name = ?", [database, table]);
         const found = (rows as { table_name: string; engine: string }[])[0];
-        if (!found || found.engine.toLowerCase() !== "innodb") throw new Error(`Table "${table}" must use InnoDB for atomic seed writes`);
+        if (!found || String(found.engine).toLowerCase() !== "innodb") throw new Error(`Table "${table}" must use InnoDB for atomic seed writes`);
       }
     },
     async begin() {

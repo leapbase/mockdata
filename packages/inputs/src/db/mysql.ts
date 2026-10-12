@@ -20,7 +20,8 @@ const INDEXES = `
 
 const FOREIGN_KEYS = `
   select k.table_name as table_name, k.constraint_name as constraint_name, k.column_name as column_name,
-         k.referenced_table_name as ref_table, k.referenced_column_name as ref_column, k.ordinal_position as pos
+         k.referenced_table_name as ref_table, k.referenced_table_schema as ref_schema,
+         k.referenced_column_name as ref_column, k.ordinal_position as pos
   from information_schema.key_column_usage k
   where k.table_schema = ? and k.referenced_table_name is not null
   order by k.table_name, k.constraint_name, k.ordinal_position`;
@@ -72,16 +73,16 @@ export async function introspectMysql(query: Query, database: string): Promise<R
     else if (idx.unique) t.uniques.push(idx.columns);
   }
 
-  const byFk = new Map<string, { table: string; refTable: string; columns: string[]; refColumns: string[] }>();
+  const byFk = new Map<string, { table: string; refTable: string; refSchema: string; columns: string[]; refColumns: string[] }>();
   for (const r of fks) {
     const key = `${r.table_name}\u0000${r.constraint_name}`;
-    const fk = byFk.get(key) ?? { table: String(r.table_name), refTable: String(r.ref_table), columns: [], refColumns: [] };
+    const fk = byFk.get(key) ?? { table: String(r.table_name), refTable: String(r.ref_table), refSchema: String(r.ref_schema ?? database), columns: [], refColumns: [] };
     fk.columns.push(String(r.column_name));
     fk.refColumns.push(String(r.ref_column));
     byFk.set(key, fk);
   }
   for (const fk of byFk.values()) {
-    tables.get(fk.table)?.foreignKeys.push({ columns: fk.columns, refTable: fk.refTable, refColumns: fk.refColumns });
+    tables.get(fk.table)?.foreignKeys.push({ columns: fk.columns, refTable: fk.refTable, refColumns: fk.refColumns, ...(fk.refSchema !== database ? { external: true } : {}) });
   }
   return [...tables.values()];
 }
