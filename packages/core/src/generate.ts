@@ -36,7 +36,18 @@ function resolveOwner(faker: Faker, path: string): unknown {
 }
 
 function generateValue(faker: Faker, col: Column, lowerBoundMs?: number): unknown {
-  if (col.enum) return faker.helpers.arrayElement(col.enum);
+  if (col.enum) {
+    if (!col.enumWeights) return faker.helpers.arrayElement(col.enum);
+    const total = col.enumWeights.reduce((sum, weight) => sum + weight, 0);
+    let pick = faker.number.float({ min: 0, max: 1 }) * total;
+    for (let i = 0; i < col.enumWeights.length; i++) {
+      pick -= col.enumWeights[i]!;
+      if (pick < 0) return col.enum[i];
+    }
+    for (let i = col.enumWeights.length - 1; i >= 0; i--) {
+      if (col.enumWeights[i]! > 0) return col.enum[i];
+    }
+  }
   switch (col.type) {
     case "integer":
       return faker.number.int({ min: Number(col.min ?? 0), max: Number(col.max ?? 1_000_000) });
@@ -177,6 +188,15 @@ export function generate(input: unknown, opts: GenerateOptions = {}): Dataset {
 
   const plan = planGeneration(schema);
   const deferred = new Set(plan.deferred);
+  for (const [tname, table] of Object.entries(schema.tables)) {
+    for (const [cname, col] of Object.entries(table.columns)) {
+      if (col.minPerParent === undefined) continue;
+      const parent = col.ref!.split(".")[0]!;
+      if (deferred.has(`${tname}.${cname}`)) throw new GenerationError(`${tname}.${cname}: "minPerParent" cannot be used on a deferred foreign key`);
+      const required = schema.tables[parent]!.rows * col.minPerParent;
+      if (table.rows < required) throw new GenerationError(`${tname}.${cname}: minPerParent needs at least ${required} child rows`);
+    }
+  }
   /** "table.column" -> parent row index -> number of children so far. */
   const usage = new Map<string, ParentUsage>();
 
@@ -195,6 +215,14 @@ function usageFor(usage: Map<string, ParentUsage>, key: string): ParentUsage {
   return m;
 }
 
+function requiredParent(pool: Row[], parentColumn: string, count: number, rowIndex: number, col: Column, used: ParentUsage): unknown {
+  const index = Math.floor(rowIndex / count);
+  if (used.pick(index, pool.length, parentCap(col)) !== index) {
+    throw new GenerationError(`Could not reserve the required child for parent ${index + 1}`);
+  }
+  return pool[index]![parentColumn];
+}
+
 function generateTable(
   schema: DataSchemaT,
   tname: string,
@@ -207,15 +235,24 @@ function generateTable(
   const order = columnOrder(schema, tname);
   const rows: Row[] = [];
   const seen = new Map<string, Set<unknown>>();
+  const minimums = new Map<string, { pool: Row[]; column: string; count: number }>();
+  for (const [cname, col] of Object.entries(table.columns)) {
+    if (col.minPerParent === undefined) continue;
+    const [pt, pc] = col.ref!.split(".") as [string, string];
+    minimums.set(cname, { pool: data[pt]!, column: pc, count: col.minPerParent });
+  }
 
   for (let i = 0; i < table.rows; i++) {
     const row: Row = {};
     for (const cname of order) {
       const col = table.columns[cname]!;
       const key = `${tname}.${cname}`;
+      const minimum = minimums.get(cname);
       // llm cells stay `undefined` (pending) for the async fill pass; null means intentionally null.
       row[cname] = deferred.has(key)
         ? null
+        : minimum && i < minimum.pool.length * minimum.count
+        ? requiredParent(minimum.pool, minimum.column, minimum.count, i, col, usageFor(usage, key))
         : col.llm
         ? col.nullable && faker.number.float({ min: 0, max: 1 }) < (col.nullRate ?? 0.1)
           ? null
@@ -401,6 +438,13 @@ export function validate(schema: DataSchemaT, data: Dataset, opts: { skipLlm?: b
           }
         }
       });
+      if (col.minPerParent !== undefined && parentKeys) {
+        for (const key of parentKeys) {
+          if ((children.get(key) ?? 0) < col.minPerParent) {
+            bad.push(`${tname}.${cname}: fewer than ${col.minPerParent} children for parent ${String(key)}`);
+          }
+        }
+      }
     }
   }
   if (bad.length) throw new ValidationError(bad);

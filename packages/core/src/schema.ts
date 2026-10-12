@@ -22,6 +22,8 @@ export const ColumnSchema = z
     /** Fraction of rows set to null when nullable (default 0.1). */
     nullRate: z.number().min(0).max(1).optional(),
     enum: z.array(scalar).min(1).optional(),
+    /** Relative probabilities for enum values, in the same order. */
+    enumWeights: z.array(z.number().finite().nonnegative()).min(1).optional(),
     min: z.union([z.number(), z.string()]).optional(),
     max: z.union([z.number(), z.string()]).optional(),
     /** Foreign key, "table.column". */
@@ -45,6 +47,8 @@ export const ColumnSchema = z
      * foreign key means one-to-one (cap of 1).
      */
     maxPerParent: z.number().int().positive().optional(),
+    /** Minimum children for every parent of a non-self foreign key. */
+    minPerParent: z.number().int().positive().optional(),
     /**
      * String columns only: fill with an LLM instead of a deterministic
      * generator. `true` uses the column name and row context; an object can
@@ -130,6 +134,14 @@ export function parseSchema(input: unknown): DataSchemaT {
   for (const [tname, table] of Object.entries(schema.tables)) {
     for (const [cname, col] of Object.entries(table.columns)) {
       const where = `${tname}.${cname}`;
+      if (col.enumWeights) {
+        if (!col.enum) throw new SchemaError(`${where}: "enumWeights" needs "enum"`);
+        if (col.enumWeights.length !== col.enum.length) throw new SchemaError(`${where}: "enumWeights" length must match "enum"`);
+        if (!col.enumWeights.some((weight) => weight > 0)) throw new SchemaError(`${where}: "enumWeights" needs a positive weight`);
+        if (!Number.isFinite(col.enumWeights.reduce((sum, weight) => sum + weight, 0))) {
+          throw new SchemaError(`${where}: "enumWeights" total must be finite`);
+        }
+      }
       if (col.llm) {
         if (col.type !== "string") throw new SchemaError(`${where}: "llm" only applies to string columns`);
         const clash = (["ref", "enum", "pattern", "faker", "after", "primaryKey"] as const).find((k) => col[k]);
@@ -150,6 +162,13 @@ export function parseSchema(input: unknown): DataSchemaT {
       }
       if (col.maxPerParent !== undefined && !col.ref) {
         throw new SchemaError(`${where}: "maxPerParent" only applies to foreign keys`);
+      }
+      if (col.minPerParent !== undefined) {
+        if (!col.ref) throw new SchemaError(`${where}: "minPerParent" only applies to foreign keys`);
+        if (col.ref.split(".")[0] === tname) throw new SchemaError(`${where}: "minPerParent" does not support self references`);
+        if (col.minPerParent > (col.unique ? 1 : col.maxPerParent ?? Infinity)) {
+          throw new SchemaError(`${where}: "minPerParent" exceeds "maxPerParent" or the unique limit`);
+        }
       }
       if (col.ref) {
         const [pt, pc] = col.ref.split(".") as [string, string];

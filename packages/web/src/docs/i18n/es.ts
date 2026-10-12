@@ -89,6 +89,8 @@ const dictionary: Dictionary = {
   "Foreign key, see [Relationships](/docs/relationships)": "Clave foránea, consulta [Relaciones](/docs/relationships)",
   "A few parents get most of the children (default uniform)": "Unos pocos padres reciben la mayoría de los hijos (por defecto, uniforme)",
   "At most 3 children per parent": "Como máximo 3 hijos por padre",
+  "Relative weights for enum values; zero excludes a value": "Pesos relativos para los valores enum; cero excluye un valor",
+  "At least 2 children per parent; combine with maxPerParent for a range or exact count": "Como mínimo 2 hijos por padre; combina con maxPerParent para un intervalo o una cantidad exacta",
   "Date on or after another column, see [date rules](/docs/rules#date-rules)": "Fecha igual o posterior a otra columna, consulta [reglas de fechas](/docs/rules#date-rules)",
   "With `after`: at most 14 days later": "Con `after`: como máximo 14 días después",
   "`llm: true` or `llm: {prompt: \"...\"}`": "`llm: true` o `llm: {prompt: \"...\"}`",

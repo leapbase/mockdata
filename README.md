@@ -110,18 +110,22 @@ A schema is YAML or JSON: an optional `seed`, an optional `llm` block, and `tabl
 | `unique: true` | Values never repeat. On a foreign key it means one-to-one |
 | `nullable: true`, `nullRate: 0.2` | Some values are null (default rate 0.1) |
 | `enum: [a, b]` | One of these values |
+| `enumWeights: [7, 2]` | Relative weights for the matching `enum` values; zero excludes a value |
 | `min`, `max` | Numbers, or ISO dates for `date`/`datetime` |
 | `pattern: "[A-Z]{3}-[0-9]{4}"` | String matching this regex |
 | `faker: person.fullName` | String from a faker `module.method` (no arguments) |
 | `ref: table.column` | Foreign key. The target must be a primary key or unique column of the same type |
 | `distribution: zipf` | A few parents get most of the children (default is uniform) |
 | `maxPerParent: 3` | At most 3 children per parent |
+| `minPerParent: 2` | At least 2 children per parent; use with `maxPerParent` for a range or an exact count |
 | `after: other_col` | Date is on or after another column in the same row |
 | `after: fk_col.parent_col` | Date is on or after a column of the parent row reached through `fk_col` |
 | `within: 14` | With `after`: at most 14 days after that date (a bounded gap such as a hospital stay); an explicit `max` still applies |
 | `llm: true` or `llm: {prompt: "..."}` | Text written by an LLM (string columns) |
 
 **Relationships.** A self reference (`ref` to its own table) only points at earlier rows, so make it `nullable`. Tables that reference each other are only allowed when a nullable foreign key on the cycle can be filled afterwards (see `hr.yaml`); otherwise you get a clear error instead of a guessed order.
+
+`minPerParent` reserves the required links before distributing remaining child rows. The child table's `rows` must be at least the parent row count times the minimum; reserved links count toward `maxPerParent` and stay non-null even on a nullable column. The minimum does not support self references or a foreign key deferred to break a table cycle. Set `minPerParent` and `maxPerParent` to the same number for an exact count per parent.
 
 ## Infer a schema from what you already have
 

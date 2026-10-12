@@ -125,6 +125,51 @@ describe("cardinality", () => {
     const bad = { tables: { t: { rows: 1, columns: { n: { type: "integer", maxPerParent: 2 } } } } };
     expect(() => parseSchema(bad)).toThrow(/only applies to foreign keys/);
   });
+
+  it("gives every parent its minimum even when later children are nullable", () => {
+    const rows = generate(rel({ minPerParent: 2, maxPerParent: 3, nullable: true, nullRate: 1, distribution: "zipf" }, 4, 10)).profiles!;
+    const counts = new Map<number, number>();
+    for (const row of rows) if (row.user_id !== null) counts.set(row.user_id as number, (counts.get(row.user_id as number) ?? 0) + 1);
+    expect([...counts.values()].sort()).toEqual([2, 2, 2, 2]);
+    expect(rows.filter((row) => row.user_id === null)).toHaveLength(2);
+  });
+
+  it("rejects an impossible minimum before generating rows", () => {
+    expect(() => generate(rel({ minPerParent: 2 }, 4, 7))).toThrow(/at least 8 child rows/);
+  });
+
+  it("counts required children toward each parent's maximum", () => {
+    const rows = generate(rel({ minPerParent: 2, maxPerParent: 2 }, 4, 8)).profiles!;
+    expect([...new Set(rows.map((row) => row.user_id))]).toHaveLength(4);
+    const extra = generate(rel({ minPerParent: 2, maxPerParent: 2, nullable: true, nullRate: 0 }, 4, 9)).profiles!;
+    expect(extra.filter((row) => row.user_id === null)).toHaveLength(1);
+  });
+
+  it("rejects minimums above the maximum and on non-foreign keys", () => {
+    expect(() => parseSchema(rel({ minPerParent: 3, maxPerParent: 2 }))).toThrow(/minPerParent.*maxPerParent/);
+    expect(() => parseSchema({ tables: { t: { rows: 1, columns: { n: { type: "integer", minPerParent: 1 } } } } })).toThrow(/only applies to foreign keys/);
+  });
+});
+
+describe("weighted enums", () => {
+  const weighted = (enumWeights: number[]) => ({ tables: { orders: { rows: 40, columns: { status: { type: "string", enum: ["new", "paid"], enumWeights } } } } });
+
+  it("never selects an enum value with zero weight", () => {
+    expect(new Set(generate(weighted([1, 0])).orders!.map((row) => row.status))).toEqual(new Set(["new"]));
+  });
+
+  it("uses relative weights rather than choosing enum values uniformly", () => {
+    const input = { tables: { orders: { rows: 1000, columns: { status: { type: "string", enum: ["new", "paid"], enumWeights: [9, 1] } } } } };
+    const paid = generate(input).orders!.filter((row) => row.status === "paid").length;
+    expect(paid).toBeGreaterThan(50);
+    expect(paid).toBeLessThan(150);
+  });
+
+  it("rejects missing, mismatched, and all-zero weights", () => {
+    expect(() => parseSchema({ tables: { t: { rows: 1, columns: { status: { type: "string", enumWeights: [1] } } } } })).toThrow(/enumWeights.*enum/);
+    expect(() => parseSchema(weighted([1]))).toThrow(/enumWeights.*length/);
+    expect(() => parseSchema(weighted([0, 0]))).toThrow(/enumWeights.*positive/);
+  });
 });
 
 describe("cycles", () => {

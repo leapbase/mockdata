@@ -15,6 +15,7 @@ Column
   unique: true             values never repeat (on a foreign key: one-to-one)
   nullable: true           some values are null; nullRate: 0..1 (default 0.1)
   enum: [a, b, c]          value is one of these
+  enumWeights: [7, 2, 1]  relative weights for enum values, in order; zero excludes a value
   min / max                numbers, or ISO dates for date/datetime
   pattern: "[A-Z]{3}-[0-9]{4}"   string matches this regex
   faker: person.fullName   string from a faker "module.method" (no arguments)
@@ -24,6 +25,8 @@ Relationships
                                 Parents are always generated first; every value exists in the parent.
   distribution: uniform | zipf  how children pick parents (zipf = a few parents get most children)
   maxPerParent: n               cap on children per parent (unique: true means 1)
+  minPerParent: n               at least n children per parent (non-self foreign keys only);
+                                child table needs at least n * parent rows; combine with maxPerParent for a range
   Self references (ref to own table) only point at earlier rows; make them nullable.
   Table cycles are only allowed when a nullable foreign key on the cycle can be filled afterwards.
 

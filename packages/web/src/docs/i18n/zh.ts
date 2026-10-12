@@ -89,6 +89,8 @@ const dictionary: Dictionary = {
   "Foreign key, see [Relationships](/docs/relationships)": "外键，参见[关系](/docs/relationships)",
   "A few parents get most of the children (default uniform)": "少数父行拥有大部分子行（默认均匀分布）",
   "At most 3 children per parent": "每个父行最多 3 个子行",
+  "Relative weights for enum values; zero excludes a value": "枚举值的相对权重；零表示排除该值",
+  "At least 2 children per parent; combine with maxPerParent for a range or exact count": "每个父行至少 2 个子行；可与 maxPerParent 组合指定范围或精确数量",
   "Date on or after another column, see [date rules](/docs/rules#date-rules)": "日期不早于另一列，参见[日期规则](/docs/rules#date-rules)",
   "With `after`: at most 14 days later": "配合 `after`：最多晚 14 天",
   "`llm: true` or `llm: {prompt: \"...\"}`": "`llm: true` 或 `llm: {prompt: \"...\"}`",
