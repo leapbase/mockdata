@@ -42,8 +42,9 @@ export interface Policy {
   /**
    * Before writing files into the caller's folder. `netBytes` is what the write adds after replaced files free
    * their size, `newFiles` how many files it creates, `fileBytes` the size of the single file when there is one.
+   * May be async (a quota kept in a database); callers always await it, and a rejection stops the write.
    */
-  checkWrite(root: string, write: { netBytes: number; newFiles: number; fileBytes?: number }): void;
+  checkWrite(root: string, write: { netBytes: number; newFiles: number; fileBytes?: number }): void | Promise<void>;
 }
 
 export interface HostedPlugin {

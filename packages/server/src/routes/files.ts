@@ -60,11 +60,11 @@ export const readFile: Handler = async (ctx, _req, res, url) => {
 };
 
 /** Hosted: the policy refuses a write that would pass the file size, disk quota or file count limits. */
-function checkWriteAllowed(ctx: Ctx, file: string, text: string, freedBytes = 0): void {
+async function checkWriteAllowed(ctx: Ctx, file: string, text: string, freedBytes = 0): Promise<void> {
   if (!ctx.policy) return;
   const bytes = Buffer.byteLength(text);
   const exists = existsSync(file);
-  ctx.policy.checkWrite(ctx.root, {
+  await ctx.policy.checkWrite(ctx.root, {
     netBytes: Math.max(0, bytes - (exists ? lstatSync(file).size : freedBytes)),
     newFiles: exists || freedBytes > 0 ? 0 : 1,
     fileBytes: bytes,
@@ -80,7 +80,7 @@ export const writeFile: Handler = async (ctx, req, res) => {
   assertNotSymlink(file);
   const create = optBool(body, "create") ?? false;
   if (create && existsSync(file)) throw new UserError(`${rel} already exists`);
-  checkWriteAllowed(ctx, file, text);
+  await checkWriteAllowed(ctx, file, text);
   writeFileConfined(ctx.root, file, text, { overwrite: !create });
   sendJson(res, 200, { path: rel });
 };
@@ -112,7 +112,7 @@ export const renameFile: Handler = async (ctx, req, res) => {
   assertNotEnv(source);
   assertNotSymlink(target);
   if (existsSync(target)) throw new UserError(`${to} already exists`);
-  checkWriteAllowed(ctx, target, text, stat.size);
+  await checkWriteAllowed(ctx, target, text, stat.size);
   writeFileConfined(ctx.root, target, text);
   unlinkSync(source);
   sendJson(res, 200, { path: to });

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parsePublicUrl } from "@mockdata/cli";
@@ -121,6 +121,25 @@ describe("HostedPlugin: the seam between the open server and a hosted layer", ()
     const infer = await app.call("POST", "/api/infer", { connectionEnv: "DATABASE_URL" }, as("ann"));
     expect(infer.status).toBe(400);
     expect((await app.call("GET", "/api/config", undefined, as("ann"))).json.dbEnv).toEqual([]);
+  });
+
+  it("waits for an async write check, and writes nothing when it refuses", async () => {
+    const root = tmpRoot();
+    const plugin = fakePlugin(root, {
+      policy: {
+        checkWrite: async () => {
+          await new Promise((r) => setTimeout(r, 5));
+          throw new HttpError(413, "over quota");
+        },
+      },
+    }).plugin;
+    const app = await boot({ hosted: plugin });
+    const put = await app.call("PUT", "/api/file", { path: "a.yaml", text: SHOP_YAML, create: true }, as("ann"));
+    expect(put.status).toBe(413);
+    const exported = await app.call("POST", "/api/export", { text: SHOP_YAML, format: "csv", outputDir: "out" }, as("ann"));
+    expect(exported.status).toBe(413);
+    const written = readdirSync(root, { recursive: true }).map(String);
+    expect(written.filter((f) => f.endsWith(".yaml") || f.endsWith(".csv"))).toEqual([]);
   });
 
   it("holds a run's ticket for the whole run and releases it", async () => {
