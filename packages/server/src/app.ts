@@ -105,7 +105,7 @@ export function createApp(opts: AppOptions = {}): (req: IncomingMessage, res: Se
       return route(hosted ? await hosted.contextFor(ctx, req) : ctx, req, res, url);
     }
     if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405, "Method not allowed");
-    serveStatic(staticDir, url.pathname, res);
+    await serveStatic(staticDir, url.pathname, req, res);
   }
 
   return (req, res) => {

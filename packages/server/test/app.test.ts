@@ -1,6 +1,8 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { boot, rawRequest } from "./helpers.js";
 
@@ -69,7 +71,69 @@ describe("GET /api/config", () => {
   });
 });
 
+/** A GET that returns the raw bytes and headers (fetch would decompress and hide the encoding). */
+function fetchRaw(url: string, path: string, headers: Record<string, string> = {}): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }> {
+  const u = new URL(url);
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: u.hostname, port: u.port, path, headers }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (c: Buffer) => chunks.push(c));
+      res.on("end", () => resolve({ status: res.statusCode!, headers: res.headers, body: Buffer.concat(chunks) }));
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 describe("static files", () => {
+  it("caches hashed assets for good and revalidates everything else", async () => {
+    const staticDir = mkdtempSync(join(tmpdir(), "mockdata-static-"));
+    writeFileSync(join(staticDir, "index.html"), "<h1>hi</h1>");
+    mkdirSync(join(staticDir, "assets"));
+    writeFileSync(join(staticDir, "assets", "a-Bx12.js"), "1");
+    const { url } = await boot({ staticDir });
+    const asset = await fetchRaw(url, "/assets/a-Bx12.js");
+    expect(asset.headers["cache-control"]).toBe("public, max-age=31536000, immutable");
+    const home = await fetchRaw(url, "/");
+    expect(home.headers["cache-control"]).toBe("no-cache");
+    const etag = home.headers.etag!;
+    expect(etag).toBeTruthy();
+    const again = await fetchRaw(url, "/", { "if-none-match": etag });
+    expect(again.status).toBe(304);
+    expect(again.body.length).toBe(0);
+    expect(again.headers["content-security-policy"]).toContain("default-src 'self'");
+    writeFileSync(join(staticDir, "index.html"), "<h1>a new build</h1>");
+    const changed = await fetchRaw(url, "/", { "if-none-match": etag });
+    expect(changed.status).toBe(200);
+    expect(changed.body.toString()).toContain("a new build");
+  });
+
+  it("compresses text the browser accepts, and leaves small files and other types alone", async () => {
+    const staticDir = mkdtempSync(join(tmpdir(), "mockdata-static-"));
+    const js = "export const words = [" + Array.from({ length: 400 }, (_, i) => `"word${i}"`).join(",") + "];";
+    mkdirSync(join(staticDir, "assets"));
+    writeFileSync(join(staticDir, "assets", "big.js"), js);
+    writeFileSync(join(staticDir, "assets", "tiny.js"), "1");
+    writeFileSync(join(staticDir, "assets", "f.woff2"), Buffer.alloc(4096, 7));
+    const { url } = await boot({ staticDir });
+    const br = await fetchRaw(url, "/assets/big.js", { "accept-encoding": "gzip, deflate, br" });
+    expect(br.headers["content-encoding"]).toBe("br");
+    expect(br.headers.vary).toMatch(/accept-encoding/i);
+    expect(brotliDecompressSync(br.body).toString()).toBe(js);
+    expect(br.body.length).toBeLessThan(js.length / 2);
+    const gz = await fetchRaw(url, "/assets/big.js", { "accept-encoding": "gzip" });
+    expect(gz.headers["content-encoding"]).toBe("gzip");
+    expect(gunzipSync(gz.body).toString()).toBe(js);
+    const refused = await fetchRaw(url, "/assets/big.js", { "accept-encoding": "br;q=0, gzip;q=0" });
+    expect(refused.headers["content-encoding"]).toBeUndefined();
+    expect(refused.body.toString()).toBe(js);
+    const plain = await fetchRaw(url, "/assets/big.js");
+    expect(plain.headers["content-encoding"]).toBeUndefined();
+    expect(plain.body.toString()).toBe(js);
+    expect((await fetchRaw(url, "/assets/tiny.js", { "accept-encoding": "br" })).headers["content-encoding"]).toBeUndefined();
+    expect((await fetchRaw(url, "/assets/f.woff2", { "accept-encoding": "br" })).headers["content-encoding"]).toBeUndefined();
+  });
+
   it("serves the built UI with a CSP and refuses to leave the directory", async () => {
     const staticDir = mkdtempSync(join(tmpdir(), "mockdata-static-"));
     writeFileSync(join(staticDir, "index.html"), "<h1>hi</h1>");
