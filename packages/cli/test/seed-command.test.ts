@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { run, type IO } from "../src/cli.js";
@@ -31,6 +31,7 @@ async function invoke(args: string[], cwd: string, llm?: IO["llm"]) {
 describe("seed CLI", () => {
   it("previews kind, order, counts, and seed without writing", async () => {
     const { root, path, schemaPath } = fixture();
+    const before = readFileSync(path);
     const result = await invoke(["seed", schemaPath, "--target", path, "--seed", "42"], root);
     expect(result).toMatchObject({ code: 0 });
     expect(result.out).toMatch(/preview.*sqlite/i);
@@ -38,6 +39,7 @@ describe("seed CLI", () => {
     expect(result.out).toMatch(/seed.*42/i);
     const db = new DatabaseSync(path);
     expect(db.prepare("select count(*) as n from customers").get()).toEqual({ n: 0 }); db.close();
+    expect(readFileSync(path)).toEqual(before);
   });
 
   it("applies all rows in dependency order", async () => {
@@ -58,6 +60,20 @@ describe("seed CLI", () => {
     expect(db2.prepare("select count(*) as n from customers").get()).toEqual({ n: 1 }); db2.close();
     writeFileSync(schemaPath, JSON.stringify({ tables: { customers: { rows: 1, columns: { id: { type: "integer", primaryKey: true }, renamed: { type: "string" } } } } }));
     expect((await invoke(["seed", schemaPath, "--target", path], root)).err).toMatch(/columns differ/i);
+  });
+
+  it("rolls back earlier table inserts when a later insert fails", async () => {
+    const { root, path, schemaPath } = fixture();
+    const db = new DatabaseSync(path);
+    db.exec("create trigger reject_order before insert on orders begin select raise(abort, 'blocked'); end");
+    db.close();
+    const result = await invoke(["seed", schemaPath, "--target", path, "--apply"], root);
+    expect(result.code).toBe(1);
+    expect(result.out).not.toMatch(/committed/i);
+    const check = new DatabaseSync(path);
+    expect(check.prepare("select count(*) as n from customers").get()).toEqual({ n: 0 });
+    expect(check.prepare("select count(*) as n from orders").get()).toEqual({ n: 0 });
+    check.close();
   });
 
   it("rejects raw database URLs and repeated or bad arguments before connecting", async () => {

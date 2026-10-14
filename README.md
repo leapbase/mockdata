@@ -323,7 +323,7 @@ npm test              # everything (vitest); no network, no API keys, no databas
 npm run build         # tsc for each package, in dependency order
 ```
 
-A live MySQL test runs when `MOCKDATA_TEST_MYSQL_URL` is set. See `CLAUDE.md` for the architecture notes.
+A live MySQL inference test runs when `MOCKDATA_TEST_MYSQL_URL` is set. The CLI seeding integration tests also run when `MOCKDATA_TEST_POSTGRES_URL` and/or `MOCKDATA_TEST_MYSQL_URL` are set. Use only disposable test databases: the tests create and remove their own schema or tables, then check preview, commit, and rollback. See `CLAUDE.md` for the architecture notes.
 
 Run `npm run build` before `npm test` to include the production bundle checks (they skip when no Vite manifest exists). These guard the 250 kB startup JavaScript budget, the 500 kB per-chunk limit, and lazy-loading boundaries for the workspace, editor, and diagram. The sign-in screen does not load workspace code; the diagram loads on first selection, while the editor stays mounted to preserve undo history.
 
