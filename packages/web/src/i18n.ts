@@ -46,14 +46,17 @@ export function setLocale(locale: Locale): void {
   window.dispatchEvent(new Event(EVENT));
 }
 
-/** The current language; every component using it re-renders when the language menu changes it. */
-export function useLocale(): Locale {
+/**
+ * The current language; every component using it re-renders when the language menu changes it. With `apply` (the
+ * default) it also marks the page as that language; English-only pages pass false and mark themselves English.
+ */
+export function useLocale(apply = true): Locale {
   const [locale, setCurrent] = useState<Locale>(storedLocale);
   useEffect(() => {
-    applyLocale(locale);
+    if (apply) applyLocale(locale);
     const update = () => setCurrent(storedLocale());
     window.addEventListener(EVENT, update);
     return () => window.removeEventListener(EVENT, update);
-  }, [locale]);
+  }, [locale, apply]);
   return locale;
 }
