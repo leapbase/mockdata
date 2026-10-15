@@ -514,4 +514,25 @@ describe("library slot", () => {
     expect(screen.queryByRole("dialog", { name: "fake library" })).toBeNull();
     expect((screen.getByLabelText("schema") as HTMLTextAreaElement).value).toBe("");
   });
+
+  it("asks before replacing unsaved changes: declining keeps the draft, accepting loads the shared schema", async () => {
+    stubApi(routes);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<App debounceMs={0} library={Library} />);
+    await userEvent.click(screen.getByRole("button", { name: "Generate data" }));
+    await userEvent.type(await screen.findByLabelText("schema"), "mine");
+    await userEvent.click(screen.getByRole("button", { name: "Library" }));
+    await userEvent.click(await screen.findByRole("button", { name: "use it" }));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect((screen.getByLabelText("schema") as HTMLTextAreaElement).value).toBe("mine");
+    expect(screen.queryByDisplayValue("shared-2.yaml")).toBeNull();
+
+    confirm.mockReturnValue(true);
+    await userEvent.click(screen.getByRole("button", { name: "use it" }));
+    expect(confirm).toHaveBeenCalledTimes(2);
+    expect((screen.getByLabelText("schema") as HTMLTextAreaElement).value).toBe("tables:\n  a: {}\n");
+    expect(screen.getByDisplayValue("shared-2.yaml")).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "fake library" })).toBeNull();
+    confirm.mockRestore();
+  });
 });
