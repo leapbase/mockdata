@@ -3,7 +3,7 @@
  * (see `mountApp` and `Slots`). Source files are consumed directly, so the shell's Vite and TypeScript compile them.
  */
 export { mountApp } from "./mount";
-export type { Cta, Slots } from "./slots";
+export type { Cta, LibraryProps, Slots } from "./slots";
 export { default as Root } from "./Root";
 export { default as LocalGate } from "./components/LocalGate";
 export { default as Header } from "./components/Header";

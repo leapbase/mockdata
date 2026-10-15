@@ -23,6 +23,16 @@ export interface DocsExtension {
   dictionaries?: Partial<Record<Exclude<Locale, "en">, () => Promise<Dictionary>>>;
 }
 
+/** What the workspace hands a hosted shell's library panel (a place to share and fetch schemas). */
+export interface LibraryProps {
+  /** The schema text in the editor, and its file name ("" for an untitled draft). */
+  text: string;
+  name: string;
+  /** Open `text` as a new unsaved draft called `file` (asks first when there are unsaved changes). */
+  onUse: (file: string, text: string) => void;
+  onClose: () => void;
+}
+
 /**
  * What a hosted shell may supply to `Root` (the open build supplies none): the component that wraps the workspace
  * (sign-in, account menu), the landing page's call-to-action labels and copy, and extra documentation.
@@ -37,4 +47,6 @@ export interface Slots {
   landingCopy?: () => Promise<LandingCopyFn>;
   /** Loads extra documentation. Both loaders run beside the page that uses them, off the startup path. */
   docs?: () => Promise<DocsExtension>;
+  /** A panel the workspace opens from a "Library" button (sidebar) and a "Browse the library" button (empty draft). Absent in the open build. Keep it stable (module-level). */
+  library?: ComponentType<LibraryProps>;
 }

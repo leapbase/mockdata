@@ -9,6 +9,8 @@ export interface SidebarProps {
   onOpen: (path: string) => void;
   /** Start a new untitled draft in the editor (named when first saved). */
   onNew: () => void;
+  /** Open the hosted library panel; the button shows only when given. */
+  onLibrary?: () => void;
   onInfer: () => void;
   onExport?: () => void;
   tab?: "schemas" | "import";
@@ -19,7 +21,7 @@ export interface SidebarProps {
 /** "orders" -> "orders.yaml"; names that already end in .yaml/.yml/.json are kept. */
 export const withExtension = (name: string) => (/\.(ya?ml|json)$/i.test(name) ? name : `${name}.yaml`);
 
-export default function Sidebar({ files, active, dirty, onOpen, onNew, onInfer, onExport, tab = "schemas", onTab, importContent }: SidebarProps) {
+export default function Sidebar({ files, active, dirty, onOpen, onNew, onLibrary, onInfer, onExport, tab = "schemas", onTab, importContent }: SidebarProps) {
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
   const shown = q ? files.filter((f) => f.toLowerCase().includes(q)) : files;
@@ -34,6 +36,7 @@ export default function Sidebar({ files, active, dirty, onOpen, onNew, onInfer, 
       <div id="schemas-content" role={onTab ? "tabpanel" : undefined} aria-labelledby={onTab ? "schemas-tab" : undefined} hidden={tab !== "schemas"} className="schema-list-panel">
       <div className="toolbar">
         <button onClick={onNew}>New</button>
+        {onLibrary && <button onClick={onLibrary}>Library</button>}
         {!onTab && <button onClick={onInfer}>Infer from source…</button>}
         {onExport && <button onClick={onExport}>Export…</button>}
       </div>

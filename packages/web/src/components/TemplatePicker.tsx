@@ -1,7 +1,7 @@
 import { TEMPLATES, type Template } from "../templates";
 
 /** Shown over an empty draft: pick a starter schema, or just type in the editor below. */
-export default function TemplatePicker({ onPick }: { onPick: (t: Template) => void }) {
+export default function TemplatePicker({ onPick, onLibrary }: { onPick: (t: Template) => void; onLibrary?: () => void }) {
   return (
     <section className="template-picker" aria-labelledby="template-picker-title">
       <h2 id="template-picker-title">Start from a template</h2>
@@ -16,6 +16,7 @@ export default function TemplatePicker({ onPick }: { onPick: (t: Template) => vo
           </li>
         ))}
       </ul>
+      {onLibrary && <p><button type="button" onClick={onLibrary}>Browse the library</button></p>}
     </section>
   );
 }

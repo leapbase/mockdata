@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App";
+import type { LibraryProps } from "../src/slots";
 import shop from "../../../examples/shop.yaml?raw";
 import { errorResponse, sseResponse, stubApi } from "./stub";
 
@@ -470,5 +471,47 @@ describe("review fixes", () => {
     await userEvent.click(screen.getByRole("button", { name: "b.yaml" }));
     expect(confirm).not.toHaveBeenCalled();
     confirm.mockRestore();
+  });
+});
+
+describe("library slot", () => {
+  const Library = ({ text, onUse, onClose }: LibraryProps) => (
+    <div role="dialog" aria-label="fake library">
+      <output aria-label="draft text">{text}</output>
+      <button onClick={() => onUse("shared.yaml", "tables:\n  a: {}\n")}>use it</button>
+      <button onClick={onClose}>close library</button>
+    </div>
+  );
+  const routes = { "GET /api/config": () => CONFIG_NO_LLM, "GET /api/files": () => ({ files: ["shared.yaml"] }), "POST /api/validate": () => OK };
+
+  it("shows no Library button without the slot", async () => {
+    stubApi(routes);
+    render(<App debounceMs={0} />);
+    await userEvent.click(screen.getByRole("button", { name: "Generate data" }));
+    await screen.findByRole("button", { name: "shared.yaml" });
+    expect(screen.queryByRole("button", { name: "Library" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Browse the library" })).toBeNull();
+  });
+
+  it("opens the panel from the sidebar, loads its schema as a new draft under a free name, and closes it", async () => {
+    stubApi(routes);
+    render(<App debounceMs={0} library={Library} />);
+    await userEvent.click(screen.getByRole("button", { name: "Generate data" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Library" }));
+    await userEvent.click(await screen.findByRole("button", { name: "use it" }));
+    expect((screen.getByLabelText("schema") as HTMLTextAreaElement).value).toBe("tables:\n  a: {}\n");
+    expect(screen.getByDisplayValue("shared-2.yaml")).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "fake library" })).toBeNull();
+  });
+
+  it("can also be opened from the empty-draft template picker and closed without loading anything", async () => {
+    stubApi(routes);
+    render(<App debounceMs={0} library={Library} />);
+    await userEvent.click(screen.getByRole("button", { name: "Generate data" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Browse the library" }));
+    expect(await screen.findByRole("dialog", { name: "fake library" })).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "close library" }));
+    expect(screen.queryByRole("dialog", { name: "fake library" })).toBeNull();
+    expect((screen.getByLabelText("schema") as HTMLTextAreaElement).value).toBe("");
   });
 });

@@ -10,12 +10,15 @@ import { useDrawer, useNarrow } from "./drawers";
 import { navigateTabs } from "./tabs";
 import { messageOf, useDebounced } from "./hooks";
 import type { Template } from "./templates";
+import type { ComponentType } from "react";
+import type { LibraryProps } from "./slots";
 
 const Editor = lazy(() => import("./components/Editor"));
 const SchemaDiagram = lazy(() => import("./components/SchemaDiagram"));
 
-export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
+export default function App({ debounceMs = 400, library: Library }: { debounceMs?: number; library?: ComponentType<LibraryProps> }) {
   const [files, setFiles] = useState<string[]>([]);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const [path, setPath] = useState<string | null>(null);
   /** The name in the header: the file's path, or what the user typed (a new name, or a first name for a draft). */
   const [name, setName] = useState("");
@@ -123,24 +126,40 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
     closeSidebar();
   }
 
-  /** A template becomes an unsaved draft named after it (shop.yaml, or shop-2.yaml if that is taken), shown as a diagram. */
+  /** An unsaved draft called `file` holding `body`, shown as a diagram: templates and the hosted library both land here. */
+  function startDraft(file: string, body: string) {
+    setPath(null);
+    setName(file);
+    setText(body);
+    setSavedText("");
+    setPreview(null);
+    setWarnings([]);
+    setError(null);
+    setSchemaView("diagram");
+  }
+
+  /** `<base>.yaml`, or `<base>-2.yaml` and so on if that file already exists. */
+  function freeName(base: string) {
+    let file = `${base}.yaml`;
+    for (let n = 2; files.includes(file); n++) file = `${base}-${n}.yaml`;
+    return file;
+  }
+
+  /** A template becomes an unsaved draft named after it (shop.yaml, or shop-2.yaml if that is taken). */
   async function fromTemplate(t: Template) {
     if (!okToDiscard()) return;
     try {
-      const body = await t.load();
-      let file = `${t.id}.yaml`;
-      for (let n = 2; files.includes(file); n++) file = `${t.id}-${n}.yaml`;
-      setPath(null);
-      setName(file);
-      setText(body);
-      setSavedText("");
-      setPreview(null);
-      setWarnings([]);
-      setError(null);
-      setSchemaView("diagram");
+      startDraft(freeName(t.id), await t.load());
     } catch (e) {
       fail(e);
     }
+  }
+
+  /** What the hosted library panel calls to load a shared schema. */
+  function fromLibrary(file: string, body: string) {
+    if (!okToDiscard()) return;
+    startDraft(freeName(file.replace(/\.(ya?ml|json)$/i, "")), body);
+    setLibraryOpen(false);
   }
 
   async function rename(from: string, to: string) {
@@ -232,6 +251,7 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
         </div>
       )}
       {((generationOpen && narrow) || (sidebarOpen && mobile)) && <button className="drawer-scrim" aria-label="Close panel" onClick={() => { closeGeneration(); closeSidebar(); }} />}
+      {Library && libraryOpen && <Suspense fallback={null}><Library text={text} name={name} onUse={fromLibrary} onClose={() => setLibraryOpen(false)} /></Suspense>}
       <aside className="sidebar" ref={sidebarPanel} aria-label="Schema navigation" role={mobile && sidebarOpen ? "dialog" : undefined} aria-modal={mobile && sidebarOpen ? true : undefined} tabIndex={-1}>
       <button className="sidebar-close icon-button" aria-label="Close schema navigation" onClick={closeSidebar}>×</button>
       <Sidebar
@@ -240,6 +260,7 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
         dirty={unsaved}
         onOpen={(p) => void open(p)}
         onNew={newSchema}
+        onLibrary={Library ? () => setLibraryOpen(true) : undefined}
         onInfer={() => setSidebarTab("import")}
         tab={sidebarTab}
         onTab={setSidebarTab}
@@ -261,7 +282,7 @@ export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
           <button role="tab" tabIndex={schemaView === "diagram" ? 0 : -1} aria-selected={schemaView === "diagram"} aria-controls="schema-diagram" id="diagram-tab" onClick={() => setSchemaView("diagram")}>Diagram</button>
           <span className="view-hint">{schemaView === "editor" ? "Edit your schema in YAML or JSON" : "Explore tables and relationships"}</span>
         </div>
-        <div className="schema-surface" id="schema-editor" role="tabpanel" aria-labelledby="editor-tab" hidden={schemaView !== "editor"}>{path === null && text === "" && <TemplatePicker onPick={(t) => void fromTemplate(t)} />}<Suspense fallback={<div className="workspace-empty" role="status">Loading editor…</div>}><Editor value={text} onChange={setText} errors={errors} /></Suspense></div>
+        <div className="schema-surface" id="schema-editor" role="tabpanel" aria-labelledby="editor-tab" hidden={schemaView !== "editor"}>{path === null && text === "" && <TemplatePicker onPick={(t) => void fromTemplate(t)} onLibrary={Library ? () => setLibraryOpen(true) : undefined} />}<Suspense fallback={<div className="workspace-empty" role="status">Loading editor…</div>}><Editor value={text} onChange={setText} errors={errors} /></Suspense></div>
         {schemaView === "diagram" && <div className="schema-surface" id="schema-diagram" role="tabpanel" aria-labelledby="diagram-tab">
           {validationError ? <div className="workspace-empty"><h2>Validation unavailable</h2><p>{validationError}</p><button onClick={() => { setError(null); setValidationAttempt((n) => n + 1); }}>Retry validation</button></div> : validating || validatedText !== text ? <div className="workspace-empty"><p>Updating diagram…</p></div> : check?.ok && check.diagram ? <Suspense fallback={<div className="workspace-empty" role="status">Loading diagram…</div>}><SchemaDiagram data={check.diagram} dataTables={preview ? Object.keys(preview.tables) : []} onShowData={showData} /></Suspense> : <div className="workspace-empty"><h2>Diagram unavailable</h2><p>{check?.ok ? "Diagram metadata is unavailable. Rebuild and restart the server." : "Fix the schema in the editor to view its diagram."}</p><button onClick={() => setSchemaView("editor")}>Return to editor</button></div>}
         </div>}
