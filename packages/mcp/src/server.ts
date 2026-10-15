@@ -44,8 +44,8 @@ export interface HostedHooks {
   allowConnectionEnv: boolean;
   /** Generate under the caller's quotas, somewhere other than this thread. */
   generate(schema: DataSchemaT, opts: { seed?: number; sampleRows: number; format?: Format; signal?: AbortSignal }): Promise<GenerateResult>;
-  /** Before files are written (`bytes` replaces whatever is at `file`): throw to refuse (storage quota). */
-  beforeWrite(files: { file: string; bytes: number }[]): void;
+  /** Before files are written (`bytes` replaces whatever is at `file`): throw or reject to refuse (storage quota). Awaited. */
+  beforeWrite(files: { file: string; bytes: number }[]): void | Promise<void>;
   /** What the caller is told about a failed tool call (a shared server hides internals such as file system paths). */
   describeError(e: unknown): string;
 }
@@ -222,7 +222,7 @@ export function createServer(opts: ServerOptions = {}): McpServer {
 
         const files: string[] = [];
         if (outDir) {
-          hosted?.beforeWrite(targets.map(({ table, file }) => ({ file, bytes: Buffer.byteLength(texts![table]!) })));
+          await hosted?.beforeWrite(targets.map(({ table, file }) => ({ file, bytes: Buffer.byteLength(texts![table]!) })));
           for (const { table, file } of targets) {
             writeFileConfined(root, file, texts![table]!, { overwrite: args.overwrite });
             files.push(path.relative(root, file).split(path.sep).join("/"));

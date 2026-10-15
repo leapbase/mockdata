@@ -13,7 +13,7 @@ export { messageOf } from "./hooks";
 export { ApiError, json, setOnUnauthorized } from "./api";
 export type { LandingCopy } from "./landing/copy";
 export { SOURCE_URL } from "./landing/content";
-export type { Locale } from "./i18n";
+export { useLocale, type Locale } from "./i18n";
 export type { DocPage, Block, Section } from "./docs/content";
 export type { DocsExtension, LandingCopyFn } from "./slots";
 export type { Dictionary } from "./docs/translate";

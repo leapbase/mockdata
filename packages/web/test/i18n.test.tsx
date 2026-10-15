@@ -12,6 +12,7 @@ import zh from "../src/docs/i18n/zh";
 import Landing from "../src/landing/Landing";
 import { LANDING_COPY, type LandingCopy } from "../src/landing/copy";
 import LocalGate from "../src/components/LocalGate";
+import Header from "../src/components/Header";
 import { stubApi } from "./stub";
 
 const ME_OFF = { user: null, auth: { accountsEnabled: false, googleConfigured: false, emailEnabled: false } };
@@ -47,6 +48,14 @@ describe("locale", () => {
     expect(storedLocale()).toBe("zh");
     expect(document.documentElement.lang).toBe("zh-CN");
     setLocale("es");
+    expect(document.documentElement.lang).toBe("es");
+  });
+  it("marks an English-only page English even when another language is chosen", () => {
+    setLocale("es");
+    const { unmount } = render(<Header><span /></Header>);
+    expect(document.documentElement.lang).toBe("en");
+    unmount();
+    render(<Header localized><span /></Header>);
     expect(document.documentElement.lang).toBe("es");
   });
   it("still works when storage is blocked", () => {

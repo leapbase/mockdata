@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import Elk from "elkjs/lib/elk.bundled.js";
@@ -93,7 +94,16 @@ function exampleDiagram(file: string): SchemaDiagram {
   const schema = parseSchema(parse(readFileSync(new URL(`../../../examples/${file}`, import.meta.url), "utf8")));
   return { tables: Object.entries(schema.tables).map(([name, t]) => ({ name, rows: t.rows, columns: Object.entries(t.columns).map(([name, c]) => ({ name, type: c.type, primaryKey: !!c.primaryKey, unique: !!c.unique, nullable: !!c.nullable, ...(c.ref ? { ref: c.ref } : {}) })) })) };
 }
-const examples = readdirSync(new URL("../../../examples/", import.meta.url)).filter((f) => f.endsWith(".yaml") && !f.includes("openapi"));
+// Match the CLI example tests: local, git-ignored scratch schemas are not fixtures.
+function exampleFiles(): string[] {
+  const dir = new URL("../../../examples/", import.meta.url);
+  try {
+    return execFileSync("git", ["ls-files", "."], { cwd: dir, encoding: "utf8" }).split("\n").filter((f) => f && !f.includes("/"));
+  } catch {
+    return readdirSync(dir);
+  }
+}
+const examples = exampleFiles().filter((f) => f.endsWith(".yaml") && !f.includes("openapi"));
 const run = (engine: LayoutEngine, data: SchemaDiagram, direction: "LR" | "TB" = "LR") => (engine === "dagre" ? Promise.resolve(dagreLayout(data, direction)) : elkLayout(elk, data, direction, engine));
 
 describe("every layout engine", () => {

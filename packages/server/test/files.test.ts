@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { boot, SHOP_YAML, tmpRoot } from "./helpers.js";
@@ -18,6 +18,18 @@ describe("GET /api/files", () => {
     writeFileSync(join(root, ".git", "x.yaml"), "tables:\n");
     const { get } = await boot({ root });
     expect((await get("/api/files")).json.files).toEqual(["shop.yaml", "sub/hr.json"]);
+  });
+
+  it("sees a file change between listings, even one that keeps its size", async () => {
+    const root = tmpRoot();
+    writeFileSync(join(root, "a.yaml"), "tables:\n");
+    writeFileSync(join(root, "b.yaml"), "hello: world\n");
+    const { get } = await boot({ root });
+    expect((await get("/api/files")).json.files).toEqual(["a.yaml"]);
+    writeFileSync(join(root, "a.yaml"), "notes:\n"); // same length, no longer a schema
+    utimesSync(join(root, "a.yaml"), new Date(), new Date(Date.now() + 5000));
+    writeFileSync(join(root, "b.yaml"), "seed: 1\ntables:\n");
+    expect((await get("/api/files")).json.files).toEqual(["b.yaml"]);
   });
 
   it("does not follow symlinked directories out of the root", async () => {

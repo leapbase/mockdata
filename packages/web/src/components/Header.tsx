@@ -1,5 +1,5 @@
-import { lazy, Suspense, type ReactNode } from "react";
-import { useLocale, type Locale } from "../i18n";
+import { lazy, Suspense, useEffect, type ReactNode } from "react";
+import { applyLocale, useLocale, type Locale } from "../i18n";
 import ThemeToggle from "./ThemeToggle";
 
 export function Logo({ size = 32 }: { size?: number }) {
@@ -18,7 +18,9 @@ const COPY: Record<Locale, { caption: string; home: string; docs: string }> = {
 /** Pages without their own `nav` (the workspace and sign-in) get a Docs link next to the theme switch.
  *  `localized` pages (landing, docs) follow the chosen language and show the language menu; the workspace stays English. */
 export default function Header({ children, nav, localized = false }: { children: ReactNode; nav?: ReactNode; localized?: boolean }) {
-  const locale = useLocale();
+  const locale = useLocale(localized);
+  // The workspace is English, so a screen reader must not read it in the visitor's chosen language.
+  useEffect(() => { if (!localized) applyLocale("en"); }, [localized]);
   const copy = COPY[localized ? locale : "en"];
   return <header className="site-header">
     <a className="brand" href="/" aria-label={copy.home}>
