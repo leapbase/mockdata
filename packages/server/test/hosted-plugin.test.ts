@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parsePublicUrl } from "@mockdata/cli";
@@ -60,6 +61,19 @@ function fakePlugin(users: string, over: { policy?: Partial<Policy>; bodyMax?: n
 const as = (name: string) => ({ "x-user": name });
 
 describe("HostedPlugin: the seam between the open server and a hosted layer", () => {
+  it("lets the plugin extend the Content-Security-Policy of served pages, and keeps the open one otherwise", async () => {
+    const staticDir = mkdtempSync(join(tmpdir(), "mockdata-static-"));
+    writeFileSync(join(staticDir, "index.html"), "<h1>hi</h1>");
+    const csp = async (plugin: HostedPlugin) => (await (await boot({ hosted: plugin, staticDir })).call("GET", "/")).headers.get("content-security-policy");
+    const plain = fakePlugin(tmpRoot()).plugin;
+    const open = await csp(plain);
+    expect(open).not.toContain("script-src");
+    expect(open).toContain("default-src 'self'");
+    const widened = await csp({ ...plain, contentSecurityPolicy: (base) => `${base}; script-src 'self' https://cdn.example` });
+    expect(widened).toContain("default-src 'self'");
+    expect(widened).toContain("script-src 'self' https://cdn.example");
+  });
+
   it("asks the plugin who the caller is, and refuses everyone it does not name", async () => {
     const users = tmpRoot();
     const app = await boot({ hosted: fakePlugin(users).plugin });

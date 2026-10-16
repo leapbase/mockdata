@@ -54,6 +54,8 @@ export interface HostedPlugin {
   readonly bodyMax: number;
   /** Headers added to every response. */
   responseHeaders(): Record<string, string>;
+  /** The `Content-Security-Policy` for the pages the server serves, given the open build's own; omit to keep it. */
+  contentSecurityPolicy?(base: string): string;
   /** MCP over HTTP at `/mcp`, authenticated by the plugin; `base` is the server's own context. */
   mcp(base: Ctx): { handle(req: IncomingMessage, res: ServerResponse): Promise<void> };
   /**

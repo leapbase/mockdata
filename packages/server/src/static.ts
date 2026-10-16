@@ -22,7 +22,7 @@ const TYPES: Record<string, string> = {
 };
 
 /** Scripts and connections only from this origin: text from an LLM or a schema can never run code in the page. */
-const CSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'";
+export const CSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'";
 
 /** Documentation pages; a bare slug only, so this never becomes a catch-all for files under /docs. */
 export const isDocsPath = (pathname: string) => /^\/docs(\/[a-z0-9-]+)?\/?$/.test(pathname);
@@ -61,7 +61,13 @@ function compressedBody(file: string, tag: string, encoding: Encoding): Promise<
   return body;
 }
 
-export async function serveStatic(dir: string, pathname: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+export async function serveStatic(
+  dir: string,
+  pathname: string,
+  req: IncomingMessage,
+  res: ServerResponse,
+  csp: string = CSP,
+): Promise<void> {
   if (!existsSync(dir)) throw new HttpError(404, "The web UI has not been built yet (run npm run build)");
   let rel: string;
   try {
@@ -87,7 +93,7 @@ export async function serveStatic(dir: string, pathname: string, req: IncomingMe
     etag: tag,
     "last-modified": info.mtime.toUTCString(),
     "x-content-type-options": "nosniff",
-    "content-security-policy": CSP,
+    "content-security-policy": csp,
     "x-frame-options": "DENY",
   };
   const canCompress = COMPRESSIBLE.has(ext) && info.size >= MIN_COMPRESS;

@@ -4,7 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { loadEnv, needsToken, peerAllowed, presentedToken, TOKEN_COOKIE, tokensEqual, type NetworkAccess } from "@mockdata/cli";
 import { assertLocal, HttpError, sendJson, setBodyLimit, type Ctx, type Handler } from "./http.js";
 import { publicMessage, statusFor } from "./errors.js";
-import { serveStatic } from "./static.js";
+import { CSP, serveStatic } from "./static.js";
 import type { HostedPlugin } from "./hosted.js";
 import { InlineRunner } from "./workers/inline.js";
 import type { Runner } from "./workers/runner.js";
@@ -105,7 +105,7 @@ export function createApp(opts: AppOptions = {}): (req: IncomingMessage, res: Se
       return route(hosted ? await hosted.contextFor(ctx, req) : ctx, req, res, url);
     }
     if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405, "Method not allowed");
-    await serveStatic(staticDir, url.pathname, req, res);
+    await serveStatic(staticDir, url.pathname, req, res, hosted?.contentSecurityPolicy?.(CSP));
   }
 
   return (req, res) => {
