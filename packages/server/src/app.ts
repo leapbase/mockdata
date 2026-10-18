@@ -28,7 +28,7 @@ export interface AppOptions {
   runner?: Runner;
   /** Hosted mode (see HostedPlugin): every API call is authenticated by the plugin and runs in the caller's own folder. */
   hosted?: HostedPlugin;
-  /** Built web app (default: packages/web/dist next to this package). */
+  /** Built web app (default: the web assets bundled in this package). */
   staticDir?: string;
 }
 
@@ -60,7 +60,7 @@ function sendError(res: ServerResponse, e: unknown, hideInternals: boolean): voi
 export function createApp(opts: AppOptions = {}): (req: IncomingMessage, res: ServerResponse) => void {
   const root = path.resolve(opts.root ?? process.cwd());
   const baseEnv = opts.env ?? process.env;
-  const staticDir = opts.staticDir ?? fileURLToPath(new URL("../../web/dist", import.meta.url));
+  const staticDir = opts.staticDir ?? fileURLToPath(new URL("../dist/web", import.meta.url));
   const ctx: Ctx = { root, env: () => loadEnv(root, baseEnv), llm: opts.llm ?? {}, runner: opts.runner ?? new InlineRunner(opts.llm) };
   // A hosted layer may also serve MCP at /mcp for its own callers.
   const hosted = opts.hosted;

@@ -3,18 +3,27 @@
   "version": "0.0.1",
   "license": "AGPL-3.0-or-later",
   "type": "module",
-  "bin": { "mockdata": "dist/bin.js" },
+  "bin": {
+    "mockdata": "dist/bin.js"
+  },
   "main": "dist/cli.js",
   "types": "dist/cli.d.ts",
   "dependencies": {
-    "@mockdata/core": "*",
-    "@mockdata/inputs": "*",
-    "@mockdata/llm": "*",
+    "@mockdata/core": "0.0.1",
+    "@mockdata/inputs": "0.0.1",
+    "@mockdata/llm": "0.0.1",
     "mysql2": "^3.11.0",
     "pg": "^8.13.0",
     "yaml": "^2.5.0"
   },
   "devDependencies": {
     "@types/pg": "^8.11.0"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "engines": {
+    "node": ">=22.13"
   }
 }

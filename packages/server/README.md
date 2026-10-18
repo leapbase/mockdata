@@ -21,7 +21,7 @@ After building the full repository, start the UI from the repository root:
 npm run ui -- examples
 ```
 
-The UI requires the built assets from `packages/web/dist`; this package alone does not bundle those assets. Applications can also use the `createApp` and `startServer` exports.
+The full repository build bundles the UI assets into this package, so the packaged server can serve the UI without a sibling web workspace. Applications can also use the `createApp` and `startServer` exports.
 
 ## Documentation and source
 

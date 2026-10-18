@@ -3,14 +3,23 @@
   "version": "0.0.1",
   "license": "AGPL-3.0-or-later",
   "type": "module",
-  "bin": { "mockdata-mcp": "dist/bin.js" },
+  "bin": {
+    "mockdata-mcp": "dist/bin.js"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "dependencies": {
-    "@mockdata/cli": "*",
-    "@mockdata/core": "*",
-    "@mockdata/inputs": "*",
-    "@mockdata/llm": "*",
+    "@mockdata/cli": "0.0.1",
+    "@mockdata/core": "0.0.1",
+    "@mockdata/inputs": "0.0.1",
+    "@mockdata/llm": "0.0.1",
     "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "engines": {
+    "node": ">=22.13"
   }
 }

@@ -10,3 +10,6 @@ mockdata-data/
 .DS_Store
 # Scratch schemas saved from the UI while trying it (its dev root is examples/)
 examples/test*
+
+# Local release tarballs
+artifacts/

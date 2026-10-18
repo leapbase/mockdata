@@ -11,7 +11,9 @@
     "ui": "node packages/server/dist/bin.js",
     "dev:tailscale": "node scripts/dev-tailscale.mjs",
     "typecheck": "npm run build",
-    "build": "tsc -p packages/core && tsc -p packages/llm && tsc -p packages/inputs && tsc -p packages/cli && tsc -p packages/mcp && tsc -p packages/server && npm run build -w packages/web"
+    "build": "tsc -p packages/core && tsc -p packages/llm && tsc -p packages/inputs && tsc -p packages/cli && tsc -p packages/mcp && tsc -p packages/server && npm run build -w packages/web && node scripts/bundle-web.mjs",
+    "pack:packages": "npm run build && node scripts/pack-packages.mjs",
+    "test:packages": "npm run build && node scripts/test-packages.mjs"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

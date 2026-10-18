@@ -327,6 +327,29 @@ A live MySQL inference test runs when `MOCKDATA_TEST_MYSQL_URL` is set. The CLI 
 
 Run `npm run build` before `npm test` to include the production bundle checks (they skip when no Vite manifest exists). These guard the 250 kB startup JavaScript budget, the 500 kB per-chunk limit, and lazy-loading boundaries for the workspace, editor, and diagram. The sign-in screen does not load workspace code; the diagram loads on first selection, while the editor stays mounted to preserve undo history.
 
+### CI and standalone packages
+
+GitHub Actions runs a clean `npm ci`, build, full test suite, standalone package installation check, and dependency audit on Node 22 and 24 for pull requests and pushes to `main` or `develop`. Live database tests still require the disposable database settings described above.
+
+```sh
+npm run test:packages    # build, pack, install in a temporary folder, and smoke-test
+npm run pack:packages   # build and write the six release tarballs to artifacts/
+```
+
+The standalone check installs all six local tarballs together because the packages are not published yet. It downloads their public npm dependencies, imports the installed libraries, exercises CLI generation and MCP startup, and checks the web page, its assets, and generation through a worker. Temporary installations are removed afterward. CI calls `node scripts/test-packages.mjs` after its build to avoid building twice.
+
+The full build copies the web bundle into `@mockdata/server` under `dist/web`, so an installed server no longer needs a sibling web workspace. Embedding applications can continue to supply their own `staticDir`. The six packages include compiled code, TypeScript source, README, and LICENSE; internal dependencies use the matching package version and must be updated together when releasing. Packaging does not publish anything to npm.
+
+To try the tarballs in an empty folder outside the checkout:
+
+```sh
+npm init -y
+npm install /absolute/path/to/mockdata/artifacts/*.tgz
+npx mockdata --help
+npx mockdata-mcp --help
+npx mockdata-ui .
+```
+
 ## Git setup
 
 ```
