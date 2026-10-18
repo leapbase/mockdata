@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -86,6 +86,28 @@ function fetchRaw(url: string, path: string, headers: Record<string, string> = {
 }
 
 describe("static files", () => {
+  it("refuses file and directory symlinks outside the static root", async () => {
+    const fixture = mkdtempSync(join(tmpdir(), "mockdata-static-links-"));
+    const staticDir = join(fixture, "public");
+    mkdirSync(staticDir);
+    writeFileSync(join(fixture, "secret.txt"), "private fixture data");
+    writeFileSync(join(staticDir, "safe.txt"), "public data");
+    symlinkSync(join(fixture, "secret.txt"), join(staticDir, "leak.txt"));
+    symlinkSync(fixture, join(staticDir, "outside"));
+    symlinkSync(join(staticDir, "safe.txt"), join(staticDir, "alias.txt"));
+    try {
+      const { get } = await boot({ staticDir });
+      for (const route of ["/leak.txt", "/outside/secret.txt"]) {
+        const response = await get(route);
+        expect(response.status).toBe(404);
+        expect(response.raw).not.toContain("private fixture data");
+      }
+      expect((await get("/alias.txt")).raw).toBe("public data");
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it("caches hashed assets for good and revalidates everything else", async () => {
     const staticDir = mkdtempSync(join(tmpdir(), "mockdata-static-"));
     writeFileSync(join(staticDir, "index.html"), "<h1>hi</h1>");

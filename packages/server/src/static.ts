@@ -1,5 +1,5 @@
 import { createReadStream, existsSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { promisify } from "node:util";
@@ -80,8 +80,12 @@ export async function serveStatic(
   if (rel === "/app" || rel === "/app/" || isDocsPath(rel)) rel = "/";
   if (rel.endsWith("/")) rel += "index.html";
   const base = path.resolve(dir);
-  const file = path.join(base, rel);
-  if (!file.startsWith(base + path.sep)) throw new HttpError(404, "Not found");
+  const requested = path.join(base, rel);
+  if (!requested.startsWith(base + path.sep)) throw new HttpError(404, "Not found");
+  // A path inside the build directory can still link to a private file outside it.
+  const realBase = await realpath(base);
+  const file = await realpath(requested).catch(() => undefined);
+  if (!file || !file.startsWith(realBase + path.sep)) throw new HttpError(404, "Not found");
   const info = await stat(file).catch(() => undefined);
   if (!info?.isFile()) throw new HttpError(404, "Not found");
   const ext = path.extname(file).toLowerCase();
