@@ -7,6 +7,7 @@ import Preview from "./components/Preview";
 import Sidebar, { withExtension } from "./components/Sidebar";
 import TemplatePicker from "./components/TemplatePicker";
 import { useDrawer, useNarrow } from "./drawers";
+import { EDITOR_MIN, PANEL_MIN, usePanelWidth } from "./panelWidth";
 import { navigateTabs } from "./tabs";
 import { messageOf, useDebounced } from "./hooks";
 import type { Template } from "./templates";
@@ -55,6 +56,14 @@ export default function App({ debounceMs = 400, library: Library, initialDraft }
   const closeGeneration = useCallback(() => { setGenerationOpen(false); generateButton.current?.focus(); }, []);
   const closeSidebar = useCallback(() => { setSidebarOpen(false); schemaButton.current?.focus(); }, []);
   useDrawer(generationPanel, generationOpen && narrow, closeGeneration);
+  const editorArea = useRef<HTMLElement | null>(null);
+  // Room for the panel: from the editor's left edge to the panel's right edge, less what the editor keeps.
+  const panelMax = useCallback(() => {
+    const panel = generationPanel.current?.getBoundingClientRect();
+    const editor = editorArea.current?.getBoundingClientRect();
+    return panel && editor && panel.right > 0 ? panel.right - editor.left - EDITOR_MIN : Number.POSITIVE_INFINITY;
+  }, []);
+  const panelWidth = usePanelWidth(panelMax);
   useDrawer(sidebarPanel, sidebarOpen && mobile, closeSidebar);
 
   const fail = useCallback((e: unknown) => setError(messageOf(e)), []);
@@ -285,11 +294,11 @@ export default function App({ debounceMs = 400, library: Library, initialDraft }
         }} />}
       />
       </aside>
-      <main className="editor">
+      <main className="editor" ref={editorArea}>
         <header className="workspace-toolbar">
           <button className="mobile-navigation icon-button" aria-label="Open schema navigation" ref={schemaButton} onClick={() => { setSidebarOpen(true); setGenerationOpen(false); }}>☰</button>
-          <div className="schema-title"><span className="eyebrow">SCHEMA WORKSPACE</span><form className="schema-name" onSubmit={(e) => { e.preventDefault(); save(); }}><input ref={nameInput} aria-label="Schema name" placeholder="Untitled schema" value={name} title={path ?? "Name this schema; press Enter to save"} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") { setName(path ?? ""); e.currentTarget.blur(); } }} spellCheck={false} />{unsaved && <span className="unsaved-mark" title="Unsaved changes">•</span>}<button type="submit" className="save-schema" disabled={!unsaved}>Save</button></form></div>
-          <button className="primary open-generation" ref={generateButton} aria-label={running ? "Generate data (running)" : "Generate data"} title="Generate data" aria-expanded={generationOpen} aria-controls="generation-panel" onClick={() => { setGenerationOpen(true); setSidebarOpen(false); }}>{running && <i className="running-dot" />}<span aria-hidden="true">→</span></button>
+          <div className="schema-title"><span className="eyebrow">SCHEMA WORKSPACE</span><form className="schema-name" onSubmit={(e) => { e.preventDefault(); save(); }}><input ref={nameInput} aria-label="Schema name" placeholder="Untitled schema" value={name} size={Math.max((name || "Untitled schema").length, 8)} title={path ?? "Name this schema; press Enter to save"} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") { setName(path ?? ""); e.currentTarget.blur(); } }} spellCheck={false} />{unsaved && <span className="unsaved-mark" title="Unsaved changes">•</span>}<button type="submit" className="save-schema" disabled={!unsaved}>Save</button></form></div>
+          <button className="primary open-generation" ref={generateButton} aria-label={running ? "Generate data (running)" : "Generate data"} title="Generate data" aria-expanded={generationOpen} aria-controls="generation-panel" onClick={() => { setGenerationOpen(true); setSidebarOpen(false); }}>{running && <i className="running-dot" />}<span aria-hidden="true" className="open-generation-label">Generate data</span><span aria-hidden="true" className="open-generation-arrow">→</span></button>
         </header>
         <div className="view-tabs" role="tablist" aria-label="Schema view" onKeyDown={navigateTabs}>
           <button role="tab" tabIndex={schemaView === "editor" ? 0 : -1} aria-selected={schemaView === "editor"} aria-controls="schema-editor" id="editor-tab" onClick={() => setSchemaView("editor")}>Editor</button>
@@ -325,7 +334,20 @@ export default function App({ debounceMs = 400, library: Library, initialDraft }
           </ul>
         )}
       </main>
-      <section className="preview generation-panel" id="generation-panel" ref={generationPanel} hidden={!generationOpen} aria-label="Data generation" role={narrow && generationOpen ? "dialog" : undefined} aria-modal={narrow && generationOpen ? true : undefined} tabIndex={-1}>
+      <section className={`preview generation-panel${panelWidth.dragging ? " resizing" : ""}`} id="generation-panel" ref={generationPanel} hidden={!generationOpen} style={narrow ? undefined : { flexBasis: panelWidth.width, width: panelWidth.width }} aria-label="Data generation" role={narrow && generationOpen ? "dialog" : undefined} aria-modal={narrow && generationOpen ? true : undefined} tabIndex={-1}>
+        {!narrow && (
+          <div
+            className="panel-resizer"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize generation panel"
+            aria-valuenow={panelWidth.width}
+            aria-valuemin={PANEL_MIN}
+            tabIndex={0}
+            title="Drag to resize (double-click to reset)"
+            {...panelWidth.handle}
+          />
+        )}
         <header className="panel-header"><div><span className="eyebrow">SYNTHETIC DATA</span><h2>Generate data</h2></div><button className="icon-button" aria-label="Collapse generation panel" onClick={closeGeneration}>→</button></header>
         <GenerateBar
           seed={seed}
