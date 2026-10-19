@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parsePublicUrl } from "@mockdata/cli";
+import { parsePublicUrl, parseSchemaText } from "@mockdata/cli";
 import { QuotaError } from "@mockdata/core";
 import { HttpError } from "../src/http.js";
 import type { HostedPlugin, Policy } from "../src/hosted.js";
@@ -108,6 +108,22 @@ describe("HostedPlugin: the seam between the open server and a hosted layer", ()
     expect((await app.call("GET", "/api/auth/ping")).json).toEqual({ pong: true });
     expect((await app.call("GET", "/api/nope", undefined, as("ann"))).status).toBe(404);
     expect(calls.handleApi).toEqual(["/api/auth/ping", "/api/nope"]);
+  });
+
+  it("gives the plugin's /api/ routes the server's own context, so a route can generate on its runner", async () => {
+    const { plugin } = fakePlugin(tmpRoot());
+    const generating: HostedPlugin = {
+      ...plugin,
+      async handleApi(req, res, url, base) {
+        if (url.pathname !== "/api/rows") return plugin.handleApi(req, res, url, base);
+        const out = await base.runner.run({ kind: "sample", schema: parseSchemaText(SHOP_YAML), sampleRows: 2, env: {} });
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(out.counts));
+        return true;
+      },
+    };
+    const res = await (await boot({ hosted: generating })).call("GET", "/api/rows");
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.json as object).length).toBeGreaterThan(0);
   });
 
   it("adds the plugin's response headers and hands /mcp to the plugin", async () => {
