@@ -96,7 +96,7 @@ export function createApp(opts: AppOptions = {}): (req: IncomingMessage, res: Se
     if (hosted && url.pathname.startsWith("/api/")) {
       if (Number(req.headers["content-length"]) > hosted.bodyMax) throw new HttpError(413, "Request body is too large"); // refused before it is read
       setBodyLimit(req, hosted.bodyMax); // and capped while it is read, for a body with no Content-Length
-      if (await hosted.handleApi(req, res, url)) return;
+      if (await hosted.handleApi(req, res, url, ctx)) return;
     }
     if (url.pathname.startsWith("/api/")) {
       const route = ROUTES[`${req.method} ${url.pathname}`];
@@ -105,7 +105,7 @@ export function createApp(opts: AppOptions = {}): (req: IncomingMessage, res: Se
       return route(hosted ? await hosted.contextFor(ctx, req) : ctx, req, res, url);
     }
     if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405, "Method not allowed");
-    await serveStatic(staticDir, url.pathname, req, res, hosted?.contentSecurityPolicy?.(CSP));
+    await serveStatic(staticDir, url.pathname, req, res, hosted?.contentSecurityPolicy?.(CSP), hosted?.pagePaths);
   }
 
   return (req, res) => {

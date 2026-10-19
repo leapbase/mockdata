@@ -56,13 +56,16 @@ export interface HostedPlugin {
   responseHeaders(): Record<string, string>;
   /** The `Content-Security-Policy` for the pages the server serves, given the open build's own; omit to keep it. */
   contentSecurityPolicy?(base: string): string;
+  /** Extra page routes (`/schemas`) the server answers with the web app's `index.html`, like `/app` and `/docs`; exact paths only. */
+  readonly pagePaths?: readonly string[];
   /** MCP over HTTP at `/mcp`, authenticated by the plugin; `base` is the server's own context. */
   mcp(base: Ctx): { handle(req: IncomingMessage, res: ServerResponse): Promise<void> };
   /**
    * Plugin-owned `/api/` routes (sign-in and the like). Return true when the request was answered; false to let the
-   * server route it. Runs for every `/api/` path.
+   * server route it. Runs for every `/api/` path. `base` is the server's own context (its `runner`, for routes that
+   * generate); the plugin decides who the caller is and what they may do.
    */
-  handleApi(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean>;
+  handleApi(req: IncomingMessage, res: ServerResponse, url: URL, base: Ctx): Promise<boolean>;
   /**
    * Identify the caller and return the context their request runs in (their own `root` and a `policy`).
    * Throws `HttpError(401)` when nobody is signed in.

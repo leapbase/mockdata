@@ -33,6 +33,12 @@ export interface LibraryProps {
   onClose: () => void;
 }
 
+/** A schema the workspace opens as an unsaved draft when it starts: `file` is its name, `text` its content. */
+export interface InitialDraft {
+  file: string;
+  text: string;
+}
+
 /**
  * What a hosted shell may supply to `Root` (the open build supplies none): the component that wraps the workspace
  * (sign-in, account menu), the landing page's call-to-action labels and copy, and extra documentation.
@@ -49,4 +55,6 @@ export interface Slots {
   docs?: () => Promise<DocsExtension>;
   /** A panel the workspace opens from a "Library" button (sidebar) and a "Browse the library" button (empty draft). Absent in the open build. Keep it stable (module-level). */
   library?: ComponentType<LibraryProps>;
+  /** Called once when the workspace starts; a draft it resolves to opens like a library schema (for links such as "open this schema in the workspace"). Keep it stable (module-level). */
+  initialDraft?: () => Promise<InitialDraft | null>;
 }
