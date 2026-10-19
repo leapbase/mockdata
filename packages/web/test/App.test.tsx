@@ -474,6 +474,31 @@ describe("review fixes", () => {
   });
 });
 
+describe("initialDraft slot", () => {
+  const routes = { "GET /api/config": () => CONFIG_NO_LLM, "GET /api/files": () => ({ files: ["shared.yaml"] }), "POST /api/validate": () => OK };
+
+  it("opens the draft it resolves to once, as an unsaved schema under a free name", async () => {
+    stubApi(routes);
+    const initialDraft = vi.fn(async () => ({ file: "shared.yaml", text: "tables:\n  a: {}\n" }));
+    render(<App debounceMs={0} initialDraft={initialDraft} />);
+    await waitFor(() => expect((screen.getByLabelText("schema") as HTMLTextAreaElement).value).toBe("tables:\n  a: {}\n"));
+    expect(screen.getByDisplayValue("shared-2.yaml")).toBeTruthy();
+    expect(initialDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves the empty workspace alone when it resolves to null, and shows its error when it fails", async () => {
+    stubApi(routes);
+    const { unmount } = render(<App debounceMs={0} initialDraft={async () => null} />);
+    await userEvent.click(screen.getByRole("button", { name: "Generate data" }));
+    await screen.findByRole("button", { name: "shared.yaml" });
+    expect((screen.getByLabelText("schema") as HTMLTextAreaElement).value).toBe("");
+    unmount();
+
+    render(<App debounceMs={0} initialDraft={async () => { throw new Error("That schema is gone."); }} />);
+    expect(await screen.findByText(/That schema is gone\./)).toBeTruthy();
+  });
+});
+
 describe("library slot", () => {
   const Library = ({ text, onUse, onClose }: LibraryProps) => (
     <div role="dialog" aria-label="fake library">

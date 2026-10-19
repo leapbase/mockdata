@@ -11,12 +11,12 @@ import { navigateTabs } from "./tabs";
 import { messageOf, useDebounced } from "./hooks";
 import type { Template } from "./templates";
 import type { ComponentType } from "react";
-import type { LibraryProps } from "./slots";
+import type { InitialDraft, LibraryProps } from "./slots";
 
 const Editor = lazy(() => import("./components/Editor"));
 const SchemaDiagram = lazy(() => import("./components/SchemaDiagram"));
 
-export default function App({ debounceMs = 400, library: Library }: { debounceMs?: number; library?: ComponentType<LibraryProps> }) {
+export default function App({ debounceMs = 400, library: Library, initialDraft }: { debounceMs?: number; library?: ComponentType<LibraryProps>; initialDraft?: () => Promise<InitialDraft | null> }) {
   const [files, setFiles] = useState<string[]>([]);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [path, setPath] = useState<string | null>(null);
@@ -63,6 +63,20 @@ export default function App({ debounceMs = 400, library: Library }: { debounceMs
     api.getFiles().then(setFiles).catch(fail);
     api.getConfig().then(setConfig).catch(fail);
   }, [fail]);
+
+  // A draft the shell hands over at startup opens like a library schema, under a name no file has yet.
+  useEffect(() => {
+    if (!initialDraft) return;
+    let live = true;
+    Promise.all([api.getFiles(), initialDraft()])
+      .then(([taken, draft]) => {
+        if (live && draft) startDraft(freeName(draft.file.replace(/\.(ya?ml|json)$/i, ""), taken), draft.text);
+      })
+      .catch((e) => live && fail(e));
+    return () => {
+      live = false;
+    };
+  }, [initialDraft, fail]);
 
   const debounced = useDebounced(text, debounceMs);
   useEffect(() => {
@@ -139,9 +153,9 @@ export default function App({ debounceMs = 400, library: Library }: { debounceMs
   }
 
   /** `<base>.yaml`, or `<base>-2.yaml` and so on if that file already exists. */
-  function freeName(base: string) {
+  function freeName(base: string, taken = files) {
     let file = `${base}.yaml`;
-    for (let n = 2; files.includes(file); n++) file = `${base}-${n}.yaml`;
+    for (let n = 2; taken.includes(file); n++) file = `${base}-${n}.yaml`;
     return file;
   }
 
