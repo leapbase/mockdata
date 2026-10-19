@@ -74,6 +74,16 @@ describe("HostedPlugin: the seam between the open server and a hosted layer", ()
     expect(widened).toContain("script-src 'self' https://cdn.example");
   });
 
+  it("serves the web app's page at the extra paths a plugin names, and nowhere else", async () => {
+    const staticDir = mkdtempSync(join(tmpdir(), "mockdata-static-"));
+    writeFileSync(join(staticDir, "index.html"), "<h1>hi</h1>");
+    const plain = fakePlugin(tmpRoot()).plugin;
+    const withPages = await boot({ hosted: { ...plain, pagePaths: ["/schemas"] }, staticDir });
+    for (const path of ["/schemas", "/schemas/"]) expect((await withPages.call("GET", path)).status, path).toBe(200);
+    expect((await withPages.call("GET", "/schemas/other")).status).toBe(404);
+    expect((await (await boot({ hosted: plain, staticDir })).call("GET", "/schemas")).status).toBe(404);
+  });
+
   it("asks the plugin who the caller is, and refuses everyone it does not name", async () => {
     const users = tmpRoot();
     const app = await boot({ hosted: fakePlugin(users).plugin });

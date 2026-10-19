@@ -56,6 +56,8 @@ export interface HostedPlugin {
   responseHeaders(): Record<string, string>;
   /** The `Content-Security-Policy` for the pages the server serves, given the open build's own; omit to keep it. */
   contentSecurityPolicy?(base: string): string;
+  /** Extra page routes (`/schemas`) the server answers with the web app's `index.html`, like `/app` and `/docs`; exact paths only. */
+  readonly pagePaths?: readonly string[];
   /** MCP over HTTP at `/mcp`, authenticated by the plugin; `base` is the server's own context. */
   mcp(base: Ctx): { handle(req: IncomingMessage, res: ServerResponse): Promise<void> };
   /**

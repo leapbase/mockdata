@@ -105,7 +105,7 @@ export function createApp(opts: AppOptions = {}): (req: IncomingMessage, res: Se
       return route(hosted ? await hosted.contextFor(ctx, req) : ctx, req, res, url);
     }
     if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405, "Method not allowed");
-    await serveStatic(staticDir, url.pathname, req, res, hosted?.contentSecurityPolicy?.(CSP));
+    await serveStatic(staticDir, url.pathname, req, res, hosted?.contentSecurityPolicy?.(CSP), hosted?.pagePaths);
   }
 
   return (req, res) => {

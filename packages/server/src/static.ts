@@ -67,6 +67,7 @@ export async function serveStatic(
   req: IncomingMessage,
   res: ServerResponse,
   csp: string = CSP,
+  pages: readonly string[] = [],
 ): Promise<void> {
   if (!existsSync(dir)) throw new HttpError(404, "The web UI has not been built yet (run npm run build)");
   let rel: string;
@@ -77,7 +78,8 @@ export async function serveStatic(
   }
   if (rel.includes("\0")) throw new HttpError(400, "Bad path");
   // The workspace (/app) and the documentation (/docs, /docs/<page>) are routes of the same page, so serve index.html.
-  if (rel === "/app" || rel === "/app/" || isDocsPath(rel)) rel = "/";
+  // A hosted layer may add pages of its own (`HostedPlugin.pagePaths`), with or without a trailing slash.
+  if (rel === "/app" || rel === "/app/" || isDocsPath(rel) || (rel.length > 1 && pages.includes(rel.replace(/\/$/, "")))) rel = "/";
   if (rel.endsWith("/")) rel += "index.html";
   const base = path.resolve(dir);
   const requested = path.join(base, rel);
