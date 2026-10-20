@@ -19,6 +19,13 @@ describe("resolveInside", () => {
     expect(() => resolveInside(root, "../x")).toThrow(/outside/);
     expect(() => resolveInside(root, "link/x.yaml")).toThrow(/outside/);
   });
+  it("refuses an over-long path quickly instead of walking it", () => {
+    const root = tmp();
+    expect(resolveInside(root, "a/".repeat(500) + "x.yaml")).toBe(join(root, "a/".repeat(500) + "x.yaml"));
+    const started = Date.now();
+    expect(() => resolveInside(root, "a/".repeat(500_000) + "x.yaml")).toThrow(/longer than 1024/);
+    expect(Date.now() - started).toBeLessThan(100);
+  });
 });
 
 describe("checkSchemaPath / isEnvFile", () => {
