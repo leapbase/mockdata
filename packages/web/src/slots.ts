@@ -57,4 +57,6 @@ export interface Slots {
   library?: ComponentType<LibraryProps>;
   /** Called once when the workspace starts; a draft it resolves to opens like a library schema (for links such as "open this schema in the workspace"). Keep it stable (module-level). */
   initialDraft?: () => Promise<InitialDraft | null>;
+  /** Export only downloads a zip: no "Write files" into a folder under the server root (the server refuses it too). */
+  downloadOnly?: boolean;
 }

@@ -182,6 +182,18 @@ describe("HostedPlugin: the seam between the open server and a hosted layer", ()
     expect(written.filter((f) => f.endsWith(".yaml") || f.endsWith(".csv"))).toEqual([]);
   });
 
+  it("refuses a folder export when the policy only allows downloads, before spending a run", async () => {
+    const root = tmpRoot();
+    const { plugin, calls } = fakePlugin(root, { policy: { folderExport: false } });
+    const app = await boot({ hosted: plugin });
+    const toFolder = await app.call("POST", "/api/export", { text: SHOP_YAML, format: "csv", outputDir: "out" }, as("ann"));
+    expect(toFolder.status).toBe(400);
+    expect(toFolder.json.error.message).toMatch(/zip download/);
+    expect(calls.done).toBe(0);
+    expect(readdirSync(root, { recursive: true }).map(String).filter((f) => f.endsWith(".csv"))).toEqual([]);
+    expect((await app.call("POST", "/api/export", { text: SHOP_YAML, format: "csv", zip: true }, as("ann"))).status).toBe(200);
+  });
+
   it("holds a run's ticket for the whole run and releases it", async () => {
     const { plugin, calls } = fakePlugin(tmpRoot());
     const app = await boot({ hosted: plugin });

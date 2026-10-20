@@ -45,6 +45,8 @@ export interface Policy {
    * May be async (a quota kept in a database); callers always await it, and a rejection stops the write.
    */
   checkWrite(root: string, write: { netBytes: number; newFiles: number; fileBytes?: number }): void | Promise<void>;
+  /** `false`: exports are only downloaded as a zip, never written into the caller's folder. Absent means allowed. */
+  readonly folderExport?: boolean;
 }
 
 export interface HostedPlugin {

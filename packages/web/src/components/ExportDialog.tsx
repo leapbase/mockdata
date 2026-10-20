@@ -7,10 +7,12 @@ export interface ExportDialogProps {
   text: string;
   seed: number | undefined;
   hasLlm: boolean;
+  /** Only "Download zip": the server does not write exports into a folder. */
+  downloadOnly?: boolean;
   onClose: () => void;
 }
 
-export default function ExportDialog({ text, seed, hasLlm, onClose }: ExportDialogProps) {
+export default function ExportDialog({ text, seed, hasLlm, downloadOnly = false, onClose }: ExportDialogProps) {
   const [format, setFormat] = useState<api.ExportBody["format"]>("json");
   const [outputDir, setOutputDir] = useState("out");
   const [overwrite, setOverwrite] = useState(false);
@@ -58,13 +60,17 @@ export default function ExportDialog({ text, seed, hasLlm, onClose }: ExportDial
           <option value="csv">csv</option>
         </select>
       </label>
-      <label className="field">
-        Folder under the server root
-        <input value={outputDir} onChange={(e) => setOutputDir(e.target.value)} />
-      </label>
-      <label>
-        <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} /> <span>Overwrite existing files</span>
-      </label>
+      {!downloadOnly && (
+        <>
+          <label className="field">
+            Folder under the server root
+            <input value={outputDir} onChange={(e) => setOutputDir(e.target.value)} />
+          </label>
+          <label>
+            <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} /> <span>Overwrite existing files</span>
+          </label>
+        </>
+      )}
       {error && (
         <p className="error" role="alert">
           {error}
@@ -78,12 +84,14 @@ export default function ExportDialog({ text, seed, hasLlm, onClose }: ExportDial
         </ul>
       )}
       <footer>
-        <button disabled={busy} onClick={() => void download()}>
+        <button className={downloadOnly ? "primary" : undefined} disabled={busy} onClick={() => void download()}>
           Download zip
         </button>
-        <button className="primary" disabled={busy || !outputDir.trim()} onClick={() => void writeFiles()}>
-          Write files
-        </button>
+        {!downloadOnly && (
+          <button className="primary" disabled={busy || !outputDir.trim()} onClick={() => void writeFiles()}>
+            Write files
+          </button>
+        )}
       </footer>
     </Modal>
   );

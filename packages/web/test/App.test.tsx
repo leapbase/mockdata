@@ -430,6 +430,17 @@ describe("export", () => {
     click.mockRestore();
   });
 
+  it("offers only the zip download when the shell says the server does not write exports", async () => {
+    stubApi(base);
+    render(<App debounceMs={0} downloadOnly />);
+    await userEvent.click(screen.getByRole("button", { name: "Generate data" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Export…" }));
+    expect(screen.getByRole("button", { name: "Download zip" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Write files" })).toBeNull();
+    expect(screen.queryByLabelText("Folder under the server root")).toBeNull();
+    expect(screen.queryByLabelText("Overwrite existing files")).toBeNull();
+  });
+
   it("warns that a schema with LLM columns spends model calls", async () => {
     stubApi({ ...base, "POST /api/validate": () => ({ ...OK, llmColumns: ["a.b"] }) });
     await renderWorkspace();

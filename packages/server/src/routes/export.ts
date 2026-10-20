@@ -19,6 +19,7 @@ export const exportRoute: Handler = async (ctx, req, res) => {
   const overwrite = optBool(body, "overwrite") ?? false;
   const seed = optInt(body, "seed", -2_147_483_648, 2_147_483_647);
   if ((outputDir !== undefined) === wantZip) throw new HttpError(400, 'Provide exactly one of "outputDir" or "zip": true');
+  if (outputDir !== undefined && ctx.policy?.folderExport === false) throw new HttpError(400, "This server only exports as a zip download");
 
   // Decide where files go (and fail on conflicts) before spending any LLM calls.
   let targets: { table: string; file: string }[] = [];

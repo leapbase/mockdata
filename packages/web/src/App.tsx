@@ -17,7 +17,7 @@ import type { InitialDraft, LibraryProps } from "./slots";
 const Editor = lazy(() => import("./components/Editor"));
 const SchemaDiagram = lazy(() => import("./components/SchemaDiagram"));
 
-export default function App({ debounceMs = 400, library: Library, initialDraft }: { debounceMs?: number; library?: ComponentType<LibraryProps>; initialDraft?: () => Promise<InitialDraft | null> }) {
+export default function App({ debounceMs = 400, library: Library, initialDraft, downloadOnly = false }: { debounceMs?: number; library?: ComponentType<LibraryProps>; initialDraft?: () => Promise<InitialDraft | null>; downloadOnly?: boolean }) {
   const [files, setFiles] = useState<string[]>([]);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [path, setPath] = useState<string | null>(null);
@@ -374,6 +374,7 @@ export default function App({ debounceMs = 400, library: Library, initialDraft }
           text={text}
           seed={seed === "" ? undefined : Number(seed)}
           hasLlm={(check?.llmColumns ?? []).length > 0}
+          downloadOnly={downloadOnly}
           onClose={() => setDialog(null)}
         />
       )}

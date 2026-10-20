@@ -13,7 +13,7 @@ export const isDocsPath = (pathname: string) => /^\/docs(\/[a-z0-9-]+)?\/?$/.tes
 export const legacyAuthHash = (hash: string) => /^#(verify_token|reset_token)=/.test(hash);
 
 /** "/app" is the workspace and "/docs" the documentation; "/" is the workspace too unless a hosted shell asks for the landing page. The server serves this same page for all of them. */
-function Pages({ location = window.location, gate: Gate = LocalGate, landing = false, useLandingCta, landingCopy, docs, library, initialDraft }: Slots & { location?: Pick<Location, "pathname" | "hash" | "replace"> }) {
+function Pages({ location = window.location, gate: Gate = LocalGate, landing = false, useLandingCta, landingCopy, docs, library, initialDraft, downloadOnly }: Slots & { location?: Pick<Location, "pathname" | "hash" | "replace"> }) {
   // A hosted shell's copy and docs load beside the page that uses them, so they stay off the startup path and the page never shows open wording first.
   const Landing = useMemo(
     () =>
@@ -35,7 +35,7 @@ function Pages({ location = window.location, gate: Gate = LocalGate, landing = f
     return (
       <Gate>
         <Suspense fallback={<div className="workspace-empty" role="status">Loading workspace…</div>}>
-          <App library={library} initialDraft={initialDraft} />
+          <App library={library} initialDraft={initialDraft} downloadOnly={downloadOnly} />
         </Suspense>
       </Gate>
     );
