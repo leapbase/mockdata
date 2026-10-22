@@ -13,3 +13,4 @@ examples/test*
 
 # Local release tarballs
 artifacts/
+ruvector.db
