@@ -252,7 +252,7 @@ Open http://127.0.0.1:8000 for the workspace (also at `/app`), or http://127.0.0
 
 On smaller screens the generation panel opens over the schema; on phones the schema sidebar also becomes a drawer. Escape closes a drawer and returns focus to its opening button.
 
-The server listens on 127.0.0.1 only (unless you use `--allow`, below) and rejects requests from other hosts or origins. Connection strings are never typed into the browser: keep them in `.env` and pick the variable name. For development run `npm run dev -w packages/web` (Vite on its own port, proxying `/api` to a running `mockdata-ui`).
+The server listens on 127.0.0.1 only (unless you use `--allow`, below) and rejects requests from other hosts or origins. Connection strings are never typed into the browser: keep them in `.env` and pick the variable name. For development run `npm run dev` (after `npm run build`): it starts `mockdata-ui` on port 3005 and Vite on http://localhost:3000, which proxies `/api` to it. To run only Vite, use `npm run dev -w packages/web`.
 
 ## Opening it to your network
 
