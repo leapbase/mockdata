@@ -21,7 +21,7 @@ export interface NetworkAccess {
   /** Localhost peers skip the token (default true). Tests turn this off to exercise it over loopback. */
   trustLoopback: boolean;
   /**
-   * Hosted layer: the public host name (from MOCKDATA_PUBLIC_URL). The server is open to any peer, because
+   * Hosted layer: the public host name (from APP_PUBLIC_URL). The server is open to any peer, because
    * a login session is the gate; there is no allow list or token, and loopback is never trusted (a
    * TLS-terminating reverse proxy connects from loopback on behalf of the whole internet).
    */
@@ -38,12 +38,12 @@ export interface PublicUrl {
 }
 
 /**
- * MOCKDATA_PUBLIC_URL: the address people type. https, or plain http only on localhost (development and
+ * APP_PUBLIC_URL: the address people type. https, or plain http only on localhost (development and
  * tests); an origin, nothing more. Errors name the variable, never its value.
  */
 export function parsePublicUrl(text: string | undefined): PublicUrl {
   const fail = () =>
-    new NetworkConfigError("MOCKDATA_PUBLIC_URL must be an https origin such as https://your-domain.example (plain http is only accepted for localhost), with no path, query or credentials");
+    new NetworkConfigError("APP_PUBLIC_URL must be an https origin such as https://your-domain.example (plain http is only accepted for localhost), with no path, query or credentials");
   let url: URL;
   try {
     url = new URL(text ?? "");
@@ -91,7 +91,7 @@ export function parseAllow(spec: string): Cidr[] {
     const shorthand = /^(\d{1,3}\.\d{1,3}\.\d{1,3})\.x$/.exec(item);
     const c = cidr(shorthand ? `${shorthand[1]}.0/24` : item);
     if (!PRIVATE.some((p) => within(c, p))) {
-      throw new NetworkConfigError(`"${item}" is not a private address range (10/8, 172.16/12, 192.168/16, 100.64/10): private-network mode has no per-user login (only a shared token), so it must not be opened to the internet; for a public site use accounts mode (MOCKDATA_PUBLIC_URL)`);
+      throw new NetworkConfigError(`"${item}" is not a private address range (10/8, 172.16/12, 192.168/16, 100.64/10): private-network mode has no per-user login (only a shared token), so it must not be opened to the internet; for a public site use accounts mode (APP_PUBLIC_URL)`);
     }
     if (Number(c.text.split("/")[1]) < MIN_PREFIX) throw new NetworkConfigError(`"${item}" is wider than a /${MIN_PREFIX}; list a narrower range`);
     return c;
@@ -207,7 +207,7 @@ export interface ListenOptions {
   token?: string;
   /** Tests only: also demand the token from localhost peers. */
   trustLoopback?: boolean;
-  /** Hosted layer (MOCKDATA_PUBLIC_URL): its sessions are the gate instead of an allow list and token. */
+  /** Hosted layer (APP_PUBLIC_URL): its sessions are the gate instead of an allow list and token. */
   publicUrl?: PublicUrl;
 }
 
@@ -220,7 +220,7 @@ export interface ListenOptions {
  */
 export function listenPlan(opts: ListenOptions): { host: string; access?: NetworkAccess; tokenGenerated: boolean } {
   if (opts.publicUrl) {
-    if ((opts.allow ?? []).length > 0) throw new NetworkConfigError("--allow cannot be combined with MOCKDATA_PUBLIC_URL: a public site is open to any visitor and gates them by login");
+    if ((opts.allow ?? []).length > 0) throw new NetworkConfigError("--allow cannot be combined with APP_PUBLIC_URL: a public site is open to any visitor and gates them by login");
     const access: NetworkAccess = { allow: [], hosts: new Set(), trustLoopback: false, publicHost: opts.publicUrl.host };
     return { host: opts.host ?? "127.0.0.1", access, tokenGenerated: false };
   }

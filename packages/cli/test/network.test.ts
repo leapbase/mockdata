@@ -63,7 +63,7 @@ describe("public (accounts) mode", () => {
         expect.unreachable(String(bad));
       } catch (e) {
         expect(e).toBeInstanceOf(NetworkConfigError);
-        expect((e as Error).message).toMatch(/MOCKDATA_PUBLIC_URL/);
+        expect((e as Error).message).toMatch(/APP_PUBLIC_URL/);
         if (bad) expect((e as Error).message).not.toContain(bad);
       }
     }
