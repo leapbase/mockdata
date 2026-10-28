@@ -1,0 +1,18 @@
+seed: 42
+tables:
+  customers:
+    rows: 20
+    columns:
+      id: { type: integer, primaryKey: true }
+      name: { type: string, faker: person.fullName }
+      email: { type: email, unique: true }
+      signup_date: { type: date, min: "2023-01-01", max: "2024-06-30" }
+  orders:
+    rows: 100
+    columns:
+      id: { type: integer, primaryKey: true }
+      customer_id: { type: integer, ref: customers.id, distribution: zipf }
+      placed_at: { type: date, after: customer_id.signup_date }
+      shipped_at: { type: date, after: placed_at, nullable: true }
+      status: { type: string, enum: [new, paid, shipped] }
+      total: { type: float, min: 5, max: 500 }
