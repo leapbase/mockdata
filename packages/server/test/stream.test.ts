@@ -90,17 +90,25 @@ describe("POST /api/generate/stream", () => {
   it("stops calling the model once the client disconnects", async () => {
     const { provider, calls, firstCall } = fake(150);
     const { url } = await boot({ llm: { provider } });
+    // 20 rows at batchSize 2 is 10 batches. Batches run concurrently (first wave of 4), so by the time the
+    // disconnect lands the first wave is already in flight: the count then is the bound, and what this proves
+    // is that no further batch starts afterwards. (With only 3 batches the count could not grow either way,
+    // so the test would pass even if the disconnect were ignored entirely.)
+    const text = NOTES.replace("rows: 5", "rows: 20");
     const ac = new AbortController();
     const pending = fetch(`${url}/api/generate/stream`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: NOTES }),
+      body: JSON.stringify({ text }),
       signal: ac.signal,
     }).then(async (res) => res.text());
     await firstCall;
     ac.abort();
+    const atAbort = calls();
     await pending.catch(() => {});
     await new Promise((r) => setTimeout(r, 500));
-    expect(calls()).toBe(1);
+    expect(atAbort).toBeGreaterThanOrEqual(1);
+    expect(atAbort).toBeLessThanOrEqual(4);
+    expect(calls()).toBe(atAbort);
   });
 });

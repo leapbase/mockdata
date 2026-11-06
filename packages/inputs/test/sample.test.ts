@@ -10,6 +10,19 @@ describe("parseCsv", () => {
   it("rejects an unterminated quote", () => {
     expect(() => parseCsv('a\n"oops')).toThrow(/unterminated/);
   });
+  it("keeps trailing commas, empty lines and quoted trailing text as the old parser did", () => {
+    expect(parseCsv('a,b\n1,\n\n"","x"y\n')).toEqual([["a", "b"], ["1", ""], ["", "xy"]]);
+    expect(parseCsv("")).toEqual([]);
+    expect(parseCsv("\n\n")).toEqual([]);
+    expect(parseCsv(",")).toEqual([["", ""]]);
+  });
+  it("parses a large quoted CSV without changing values", () => {
+    const body = Array.from({ length: 20000 }, (_, i) => `${i},"v, ${i}"`).join("\n");
+    const rows = parseCsv(`id,note\n${body}\n`);
+    expect(rows).toHaveLength(20001);
+    expect(rows[10000]).toEqual(["9999", "v, 9999"]);
+    expect(rows[20000]).toEqual(["19999", "v, 19999"]);
+  });
 });
 
 describe("parseSample", () => {
@@ -68,6 +81,13 @@ describe("inferFromSamples: single table", () => {
 
   it("respects a rows override", () => {
     expect(inferFromSamples({ t: [{ a: 1 }] }, { rows: 500 }).schema.tables.t!.rows).toBe(500);
+  });
+
+  it("infers min/max for a numeric column larger than the spread argument limit", () => {
+    // Math.min(...nums) throws RangeError past ~10^5 elements; the loop must not.
+    const rows = Array.from({ length: 200_000 }, (_, i) => ({ n: i }));
+    const { schema } = inferFromSamples({ t: rows });
+    expect(schema.tables.t!.columns.n).toMatchObject({ type: "integer", min: 0, max: 199_999 });
   });
 });
 

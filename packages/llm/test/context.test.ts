@@ -75,6 +75,41 @@ describe("createContextBuilder", () => {
     expect(JSON.parse(builder.describe("reviews", live.reviews![0]!, "body")).product.category).toBe("Updated");
   });
 
+  it("serialises a shared parent once per column, not once per child row", () => {
+    let reads = 0;
+    const product = { id: 1, brand_id: 1, category: "Gadgets" };
+    // A getter counts how often the parent's values are actually read.
+    Object.defineProperty(product, "name", { enumerable: true, get: () => ++reads && "Widget" });
+    const d: Dataset = {
+      brands: [{ id: 1, name: "Acme" }],
+      products: [product],
+      reviews: [
+        { id: 1, product_id: 1, rating: 2, body: undefined },
+        { id: 2, product_id: 1, rating: 3, body: undefined },
+        { id: 3, product_id: 1, rating: 4, body: undefined },
+      ],
+    };
+    const builder = createContextBuilder(schema, d, 1);
+    const texts = d.reviews!.map((r) => JSON.parse(builder.describe("reviews", r, "body")));
+    for (const t of texts) expect(t.product).toEqual({ name: "Widget", category: "Gadgets" });
+    expect(reads).toBe(1); // built once for the shared parent, reused for the other two rows
+  });
+
+  it("keeps a cached parent until invalidate / beginColumn, then refreshes it", () => {
+    const live: Dataset = { ...data, products: data.products!.map((p) => ({ ...p })) };
+    const builder = createContextBuilder(schema, live, 1);
+    const category = () => JSON.parse(builder.describe("reviews", live.reviews![0]!, "body")).product.category;
+    expect(category()).toBe("Gadgets");
+    live.products![0]!.category = "Updated";
+    // Within one column's fill parent values are stable, so the cache holds.
+    expect(category()).toBe("Gadgets");
+    builder.invalidate("products");
+    expect(category()).toBe("Updated");
+    live.products![0]!.category = "Again";
+    builder.beginColumn();
+    expect(category()).toBe("Again");
+  });
+
   it("names two foreign keys to the same table separately, and never overwrites an own column", () => {
     const s = parseSchema({
       tables: {

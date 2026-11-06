@@ -93,6 +93,33 @@ describe("POST /api/generate", () => {
     expect(r.json.pending).toEqual([]);
   });
 
+  it("generates only the preview rows of a large schema, but reports the full counts", async () => {
+    const { post } = await boot();
+    const text = `seed: 7
+tables:
+  customers:
+    rows: 50000
+    columns:
+      id: { type: integer, primaryKey: true }
+      name: { type: string, faker: person.fullName }
+  orders:
+    rows: 50000
+    columns:
+      id: { type: integer, primaryKey: true }
+      customer_id: { type: integer, ref: customers.id }
+      total: { type: float, min: 1, max: 9 }
+`;
+    const started = Date.now();
+    const r = await post("/api/generate", { text, previewRows: 5 });
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(r.status).toBe(200);
+    expect(r.json.counts).toEqual({ customers: 50000, orders: 50000 });
+    expect(r.json.tables.customers.rows).toHaveLength(5);
+    expect(r.json.tables.orders.rows).toHaveLength(5);
+    const ids = new Set(r.json.tables.customers.rows.map((row: any) => row.id));
+    for (const row of r.json.tables.orders.rows) expect(ids.has(row.customer_id)).toBe(true);
+  });
+
   it("is deterministic per seed and the seed can be overridden", async () => {
     const { post } = await boot();
     const a = await post("/api/generate", { text: SHOP_YAML, seed: 1 });

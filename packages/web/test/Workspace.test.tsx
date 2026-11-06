@@ -25,6 +25,35 @@ describe("workspace navigation", () => {
     expect(await screen.findByText("Fix the schema in the editor to view its diagram.")).toBeTruthy();
     expect(attempts).toBe(2);
   });
+  it("aborts the previous validation request when the text changes", async () => {
+    const signals: AbortSignal[] = [];
+    setup({
+      "POST /api/validate": (_b: any, _u: any, init: RequestInit) => {
+        signals.push(init.signal as AbortSignal);
+        return new Promise((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+        });
+      },
+    });
+    render(<App debounceMs={0} />);
+    await userEvent.type(await screen.findByLabelText("schema"), "ab");
+    await waitFor(() => expect(signals.length).toBeGreaterThanOrEqual(3));
+    expect(signals[0]!.aborted).toBe(true);
+    expect(signals[1]!.aborted).toBe(true);
+    // The latest request is still in flight, not aborted.
+    expect(signals[signals.length - 1]!.aborted).toBe(false);
+  });
+  it("does not re-validate text that is unchanged since the last validation", async () => {
+    const calls = setup();
+    render(<App debounceMs={0} />);
+    await screen.findByText("1 table");
+    await userEvent.type(await screen.findByLabelText("schema"), "x");
+    const validateCalls = () => calls.filter((c) => c.key === "POST /api/validate");
+    await waitFor(() => expect(validateCalls()).toHaveLength(2));
+    // Let the effect re-run after the validation result lands; no third call.
+    await new Promise((r) => setTimeout(r, 150));
+    expect(validateCalls()).toHaveLength(2);
+  });
   it("asks before applying an import when edits were made during inference", async () => {
     let finish: (r: unknown) => void = () => {};
     setup({ "POST /api/infer": () => new Promise((resolve) => { finish = resolve; }) });

@@ -1,7 +1,7 @@
 import { UserError } from "@mockdata/cli";
 import { llmColumns, type DataSchemaT, type Dataset } from "@mockdata/core";
 
-/** The preview generates the full tables in memory, so its size is bounded. */
+/** The preview only generates the rows it shows, so its size is bounded. */
 export const PREVIEW_MAX_TOTAL_ROWS = 200_000;
 
 export interface PreviewTable {
@@ -19,6 +19,13 @@ export interface Preview {
   pending: string[];
 }
 
+/** Clone a schema with every table capped at `rows` rows (tables smaller than that keep their own count). */
+export function capRowsForPreview(schema: DataSchemaT, rows: number): DataSchemaT {
+  const out = structuredClone(schema);
+  for (const t of Object.values(out.tables)) t.rows = Math.min(t.rows, rows);
+  return out;
+}
+
 /** Optionally set every table to `rows`, then refuse schemas too large to preview. */
 export function applyRowOverride(schema: DataSchemaT, rows: number | undefined): DataSchemaT {
   const out = structuredClone(schema);
@@ -30,7 +37,11 @@ export function applyRowOverride(schema: DataSchemaT, rows: number | undefined):
   return out;
 }
 
-export function buildPreview(schema: DataSchemaT, data: Dataset, opts: { seed?: number; rows: number; tables?: string[] }): Preview {
+export function buildPreview(
+  schema: DataSchemaT,
+  data: Dataset,
+  opts: { seed?: number; rows: number; tables?: string[]; counts?: Record<string, number> },
+): Preview {
   const names = Object.keys(schema.tables).filter((n) => !opts.tables || opts.tables.includes(n));
   const tables: Record<string, PreviewTable> = {};
   for (const name of names) {
@@ -47,7 +58,8 @@ export function buildPreview(schema: DataSchemaT, data: Dataset, opts: { seed?: 
   }
   return {
     seed: opts.seed ?? schema.seed ?? 1,
-    counts: Object.fromEntries(Object.entries(data).map(([t, r]) => [t, r.length])),
+    // Normally the generated row counts; a caller that generated only a preview subset passes the full counts here.
+    counts: opts.counts ?? Object.fromEntries(Object.entries(data).map(([t, r]) => [t, r.length])),
     tables,
     // A cell is pending while it is undefined (null means intentionally null).
     pending: llmColumns(schema)

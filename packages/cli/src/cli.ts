@@ -1,12 +1,12 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, writeSync } from "node:fs";
 import { extname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { parse as parseYaml } from "yaml";
-import { parseSchema, type Dataset, type Row } from "@mockdata/core";
+import { parseSchema, planGeneration, type Dataset, type Row } from "@mockdata/core";
 import { generateWithLlm, type GenerateWithLlmOptions, type LlmReport } from "@mockdata/llm";
+import { assertRowBudget } from "./confined.js";
 import { loadEnv } from "./env.js";
 import { runInfer } from "./infer.js";
-import { runSeed } from "./seed/command.js";
 
 export { loadEnv };
 export { toYaml } from "./infer.js";
@@ -29,14 +29,15 @@ Usage:
   mockdata validate <schema.(yaml|yml|json)>
   mockdata infer <source> [options]        build a schema from a database, OpenAPI/JSON Schema, or sample data
                                            (run "mockdata infer --help")
-  mockdata seed <schema> --target <env:NAME|sqlite:path|file.db> [--apply]
-                                           (run "mockdata seed --help")
 
 generate options:
   -o, --out <dir>       write one file per table into <dir> (default: print JSON to stdout)
   -f, --format <fmt>    json | ndjson | csv (default: json)
   -s, --seed <n>        override the schema seed
   -h, --help            show this help
+
+generate is capped at 1,000,000 rows in total across all tables; lower the
+row counts in the schema to stay under it.
 `;
 
 const FORMATS = ["json", "ndjson", "csv"] as const;
@@ -73,6 +74,41 @@ export function serialize(rows: Row[], columns: string[], format: Format): strin
   }
 }
 
+const CHUNK_ROWS = 1000;
+
+/** Write one table's rows to `dest` in row-chunks, never building the whole file string in memory. */
+function writeTableFile(dest: string, rows: Row[], columns: string[], format: Format): void {
+  const fd = openSync(dest, "w");
+  try {
+    const write = (s: string) => {
+      const buf = Buffer.from(s);
+      for (let off = 0; off < buf.length; ) off += writeSync(fd, buf, off);
+    };
+    if (format === "json") {
+      // Byte-identical to serialize(rows, columns, "json"): JSON.stringify(rows, null, 2) + "\n".
+      if (rows.length === 0) {
+        write("[]\n");
+        return;
+      }
+      write("[\n");
+      rows.forEach((row, i) => {
+        write(`  ${JSON.stringify(row, null, 2).split("\n").join("\n  ")}${i === rows.length - 1 ? "" : ","}\n`);
+      });
+      write("]\n");
+      return;
+    }
+    for (let start = 0; start < rows.length || start === 0; start += CHUNK_ROWS) {
+      const chunk = rows.slice(start, start + CHUNK_ROWS);
+      let text = serialize(chunk, columns, format);
+      if (format === "csv" && start > 0) text = text.slice(text.indexOf("\n") + 1);
+      write(text);
+      if (chunk.length < CHUNK_ROWS) break;
+    }
+  } finally {
+    closeSync(fd);
+  }
+}
+
 function describeUsage(r: LlmReport): string {
   const cols = Object.entries(r.columns).map(([c, n]) => `${c} (${n} rows)`).join(", ");
   return `llm: ${r.calls} call${r.calls === 1 ? "" : "s"}, ${r.inputTokens} input / ${r.outputTokens} output tokens; filled ${cols}\n`;
@@ -86,7 +122,6 @@ export async function run(argv: string[], io: IO): Promise<number> {
     return command ? 0 : 1;
   }
   if (command === "infer") return runInfer(rest, io);
-  if (command === "seed") return runSeed(rest, io);
   if (command !== "generate" && command !== "validate") {
     io.err(`Unknown command "${command}"\n\n${HELP}`);
     return 1;
@@ -143,10 +178,13 @@ export async function run(argv: string[], io: IO): Promise<number> {
     }
 
     const schema = parseSchema(raw);
+    assertRowBudget(schema);
     const { data, report } = await generateWithLlm(schema, {
       seed,
       ...io.llm,
       env: loadEnv(io.cwd ?? process.cwd(), io.llm?.env ?? process.env),
+      parsed: schema,
+      plan: planGeneration(schema),
     });
     if (report.calls > 0) io.err(describeUsage(report));
     if (!values.out) {
@@ -161,7 +199,7 @@ export async function run(argv: string[], io: IO): Promise<number> {
     mkdirSync(values.out, { recursive: true });
     for (const [table, rows] of Object.entries(data)) {
       const columns = Object.keys(schema.tables[table]!.columns);
-      writeFileSync(join(values.out, `${table}.${format}`), serialize(rows, columns, format));
+      writeTableFile(join(values.out, `${table}.${format}`), rows, columns, format);
       io.err(`wrote ${table}.${format} (${rows.length} rows)\n`);
     }
     return 0;

@@ -1,4 +1,4 @@
-import { BusyError } from "@mockdata/core";
+import { BusyError } from "@mockdata/accounts";
 import { LlmCancelledError, type LlmProgress } from "@mockdata/llm";
 import { decodeError, JobTimeoutError } from "./errors.js";
 import type { Job, JobHooks, ResultOf } from "./job.js";
@@ -12,6 +12,8 @@ export interface PoolOptions {
   maxQueue: number;
   /** A job running longer than this is stopped and its worker replaced. */
   jobTimeoutMs: number;
+  /** Per-job timeout override (e.g. LLM-aware); falls back to `jobTimeoutMs` when absent. */
+  jobTimeoutMsFor?: (job: Job) => number;
   /** After a cancel, how long a worker gets to stop by itself before it is terminated. */
   abortGraceMs: number;
   createWorker: () => WorkerLike;
@@ -22,6 +24,8 @@ interface Active {
   resolve: (result: never) => void;
   reject: (error: Error) => void;
   onProgress?: (p: LlmProgress) => void;
+  /** Timeout armed for this job (per-job override when provided, else the pool default). */
+  timeoutMs: number;
   /** Armed once the worker is ready, so loading the code does not count against the job. */
   timeout?: NodeJS.Timeout;
   grace?: NodeJS.Timeout;
@@ -120,6 +124,7 @@ export class WorkerPool implements Runner {
       resolve: waiting.resolve,
       reject: waiting.reject,
       onProgress: hooks.onProgress,
+      timeoutMs: this.opts.jobTimeoutMsFor?.(job) ?? this.opts.jobTimeoutMs,
       detach: () => hooks.signal?.removeEventListener("abort", onAbort),
     };
     if (slot.ready) this.armTimeout(slot);
@@ -129,7 +134,7 @@ export class WorkerPool implements Runner {
   private armTimeout(slot: Slot): void {
     const active = slot.active;
     if (!active || active.timeout) return;
-    active.timeout = setTimeout(() => this.lose(slot, new JobTimeoutError(Math.round(this.opts.jobTimeoutMs / 1000)), true), this.opts.jobTimeoutMs);
+    active.timeout = setTimeout(() => this.lose(slot, new JobTimeoutError(Math.round(active.timeoutMs / 1000)), true), active.timeoutMs);
   }
 
   private onMessage(slot: Slot, msg: FromWorker): void {

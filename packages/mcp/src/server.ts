@@ -1,9 +1,9 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { assertNotEnv, assertNotSymlink, assertRowBudget, checkSchemaPath, inferConfined, loadEnv, parseSchemaText, resolveInside, serialize, UserError, writeFileConfined } from "@mockdata/cli";
-import { llmColumns, parseSchema, type Dataset, type DataSchemaT } from "@mockdata/core";
+import { assertNotEnv, assertNotSymlink, assertRowBudget, checkSchemaPath, inferConfined, loadEnv, parseSchemaText, readFileConfined, resolveInside, serialize, UserError, writeFileConfined } from "@mockdata/cli";
+import { llmColumns, parseSchema, planGeneration, type Dataset, type DataSchemaT } from "@mockdata/core";
 import { generateWithLlm, type GenerateWithLlmOptions, type LlmReport } from "@mockdata/llm";
 import { SCHEMA_REFERENCE } from "./reference.js";
 
@@ -37,15 +37,15 @@ export interface HostedHooks {
   /** Model settings (the operator's), instead of .env under root, which belongs to the caller. */
   env: () => Record<string, string | undefined>;
   /** Before a schema is checked: throw to refuse (rate limits, size caps). */
-  beforeValidate(schema: DataSchemaT): void | Promise<void>;
+  beforeValidate(schema: DataSchemaT): void;
   /** Before inference: throw to refuse (rate limits). */
-  beforeInfer(): void | Promise<void>;
+  beforeInfer(): void;
   /** Whether infer_schema may read a database named by an environment variable. */
   allowConnectionEnv: boolean;
   /** Generate under the caller's quotas, somewhere other than this thread. */
   generate(schema: DataSchemaT, opts: { seed?: number; sampleRows: number; format?: Format; signal?: AbortSignal }): Promise<GenerateResult>;
-  /** Before files are written (`bytes` replaces whatever is at `file`): throw or reject to refuse (storage quota). Awaited. */
-  beforeWrite(files: { file: string; bytes: number }[]): void | Promise<void>;
+  /** Before files are written (`bytes` replaces whatever is at `file`): throw to refuse (storage quota). */
+  beforeWrite(files: { file: string; bytes: number }[]): void;
   /** What the caller is told about a failed tool call (a shared server hides internals such as file system paths). */
   describeError(e: unknown): string;
 }
@@ -111,7 +111,7 @@ export function createServer(opts: ServerOptions = {}): McpServer {
     const file = resolveInside(root, args.schemaPath!);
     if (!existsSync(file)) throw new UserError(`No such file: ${args.schemaPath}`);
     assertNotEnv(file);
-    const content = readFileSync(file, "utf8");
+    const content = readFileConfined(root, file);
     return ext === ".json" ? JSON.parse(content) : parseSchemaText(content);
   }
 
@@ -134,9 +134,9 @@ export function createServer(opts: ServerOptions = {}): McpServer {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     (args) =>
-      guarded(async () => {
+      guarded(() => {
         const schema = parseSchema(loadRaw(args));
-        await hosted?.beforeValidate(schema);
+        hosted?.beforeValidate(schema);
         return {
           ok: true,
           tables: Object.fromEntries(Object.entries(schema.tables).map(([n, t]) => [n, { rows: t.rows, columns: Object.keys(t.columns) }])),
@@ -171,7 +171,7 @@ export function createServer(opts: ServerOptions = {}): McpServer {
     (args) =>
       guarded(async () => {
         if (hosted) {
-          await hosted.beforeInfer();
+          hosted.beforeInfer();
           if (!hosted.allowConnectionEnv && args.connectionEnv !== undefined) throw new UserError("Inferring from a database is not available on this server");
         }
         const result = await inferConfined(root, hosted ? hosted.env() : baseEnv, args);
@@ -222,7 +222,7 @@ export function createServer(opts: ServerOptions = {}): McpServer {
 
         const files: string[] = [];
         if (outDir) {
-          await hosted?.beforeWrite(targets.map(({ table, file }) => ({ file, bytes: Buffer.byteLength(texts![table]!) })));
+          hosted?.beforeWrite(targets.map(({ table, file }) => ({ file, bytes: Buffer.byteLength(texts![table]!) })));
           for (const { table, file } of targets) {
             writeFileConfined(root, file, texts![table]!, { overwrite: args.overwrite });
             files.push(path.relative(root, file).split(path.sep).join("/"));
@@ -266,7 +266,7 @@ async function generateHere(
   llm: ServerOptions["llm"],
 ): Promise<GenerateResult> {
   assertRowBudget(schema);
-  const { data, report } = await generateWithLlm(schema, { seed: want.seed, ...llm, env, signal: want.signal });
+  const { data, report } = await generateWithLlm(schema, { seed: want.seed, ...llm, env, signal: want.signal, parsed: schema, plan: planGeneration(schema) });
   const format = want.format;
   return {
     counts: Object.fromEntries(Object.entries(data).map(([t, r]) => [t, r.length])),

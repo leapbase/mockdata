@@ -144,14 +144,21 @@ describe("export symlink escapes", () => {
     };
     const root = tmpRoot();
     const { url } = await boot({ root, llm: { provider } });
-    const text = "llm: { provider: openai, model: m, batchSize: 2 }\ntables:\n  notes:\n    rows: 6\n    columns:\n      id: { type: integer, primaryKey: true }\n      b: { type: string, llm: true }\n";
+    // 20 rows at batchSize 2 is 10 batches. Batches run concurrently (first wave of 4), so by the time the
+    // disconnect lands the first wave is already in flight: the count then is the bound, and what this proves
+    // is that no further batch starts afterwards. (With only 3 batches the count could not grow either way,
+    // so the test would pass even if the disconnect were ignored entirely.)
+    const text = "llm: { provider: openai, model: m, batchSize: 2 }\ntables:\n  notes:\n    rows: 20\n    columns:\n      id: { type: integer, primaryKey: true }\n      b: { type: string, llm: true }\n";
     const ac = new AbortController();
     const pending = fetch(`${url}/api/export`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text, outputDir: "out" }), signal: ac.signal }).catch(() => {});
     await first;
     ac.abort();
+    const atAbort = calls;
     await pending;
     await new Promise((r) => setTimeout(r, 500));
-    expect(calls).toBe(1);
+    expect(atAbort).toBeGreaterThanOrEqual(1);
+    expect(atAbort).toBeLessThanOrEqual(4);
+    expect(calls).toBe(atAbort);
     expect(existsSync(join(root, "out"))).toBe(false);
   });
 });

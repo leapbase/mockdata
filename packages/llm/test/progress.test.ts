@@ -37,7 +37,10 @@ describe("progress and cancellation", () => {
   it("stops before the next request once the signal is aborted", async () => {
     const ac = new AbortController();
     const { provider, calls } = fake();
-    await expect(generateWithLlm(schema, { provider, signal: ac.signal, onProgress: () => ac.abort() })).rejects.toBeInstanceOf(LlmCancelledError);
+    // concurrency 1 pins the sequential case: exactly one request was made
+    // before the abort. With concurrency > 1 the first wave of batches is
+    // already in flight when the signal fires (see fill.test.ts).
+    await expect(generateWithLlm(schema, { provider, signal: ac.signal, concurrency: 1, onProgress: () => ac.abort() })).rejects.toBeInstanceOf(LlmCancelledError);
     expect(calls()).toBe(1);
   });
 

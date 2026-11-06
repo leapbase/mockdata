@@ -29,7 +29,6 @@ const CONSTRAINTS = `
       order by k.ord
     )::text[] as columns,
     fcl.relname as ref_table,
-    fn.nspname as ref_schema,
     array(
       select a.attname::text
       from unnest(c.confkey) with ordinality k(attnum, ord)
@@ -40,27 +39,21 @@ const CONSTRAINTS = `
   join pg_class cl on cl.oid = c.conrelid
   join pg_namespace n on n.oid = cl.relnamespace
   left join pg_class fcl on fcl.oid = c.confrelid
-  left join pg_namespace fn on fn.oid = fcl.relnamespace
   where n.nspname = $1 and c.contype in ('p', 'u', 'f')
   order by cl.relname, c.conname`;
-
-const STANDALONE_UNIQUE_INDEXES = `
-  select cl.relname as table_name, ixcl.relname as index_name
-  from pg_index i
-  join pg_class cl on cl.oid = i.indrelid
-  join pg_namespace n on n.oid = cl.relnamespace
-  join pg_class ixcl on ixcl.oid = i.indexrelid
-  where n.nspname = $1 and i.indisunique
-    and not exists (select 1 from pg_constraint c where c.conindid = i.indexrelid and c.contype in ('p', 'u'))
-  order by cl.relname, ixcl.relname`;
 
 /** Reflect one Postgres schema (default "public") using catalog SELECTs only. */
 export async function introspectPostgres(query: Query, schemaName = "public"): Promise<RawTable[]> {
   // Sequential on purpose: one connection runs one query at a time (pg deprecates overlapping calls).
+  // Verified against pg 8.23.0 (node_modules/pg/lib/client.js): query() pushes onto
+  // _queryQueue and _pulseQueryQueue() submits only when readyForQuery, one at a
+  // time; calling query() while one is executing is deprecated and will be
+  // removed in pg 9. Promise.all over these three would only queue them
+  // serially inside the driver, so only a second connection could parallelise
+  // them — and that is out of scope for this introspection.
   const columns = await query(COLUMNS, [schemaName]);
   const enums = await query(ENUMS, [schemaName]);
   const constraints = await query(CONSTRAINTS, [schemaName]);
-  const standaloneIndexes = await query(STANDALONE_UNIQUE_INDEXES, [schemaName]);
   const enumValues = new Map(enums.map((e) => [String(e.name), e.labels as string[]]));
 
   const tables = new Map<string, RawTable>();
@@ -84,11 +77,7 @@ export async function introspectPostgres(query: Query, schemaName = "public"): P
     const cols = k.columns as string[];
     if (k.kind === "p") t.primaryKey = cols;
     else if (k.kind === "u") t.uniques.push(cols);
-    else if (k.kind === "f") t.foreignKeys.push({ columns: cols, refTable: String(k.ref_table), refColumns: k.ref_columns as string[], ...(k.ref_schema && k.ref_schema !== schemaName ? { external: true } : {}) });
-  }
-  for (const index of standaloneIndexes) {
-    const table = tables.get(String(index.table_name));
-    if (table) (table.unsupportedForSeed ??= []).push(`standalone unique index ${index.index_name}`);
+    else if (k.kind === "f") t.foreignKeys.push({ columns: cols, refTable: String(k.ref_table), refColumns: k.ref_columns as string[] });
   }
   return [...tables.values()];
 }

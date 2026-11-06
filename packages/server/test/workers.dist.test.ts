@@ -20,7 +20,7 @@ const built = existsSync(workerFile);
 if (!built) console.warn("workers.dist.test.ts: skipped because packages/server/dist is missing (run `npm run build`)");
 const d = built ? (name: string, fn: () => void) => describe(name, { timeout: 60_000 }, fn) : describe.skip;
 
-const settings = { size: 2, maxQueue: 4, jobTimeoutSecs: 60, heapMb: 1024 };
+const settings = { size: 2, maxQueue: 4, jobTimeoutSecs: 60, llmBatchSecs: 5, heapMb: 1024 };
 const schema = parseSchema({
   seed: 7,
   tables: {
@@ -135,7 +135,9 @@ d("cancelling and time limits", () => {
   });
 
   it("terminates a job that runs past its limit, and the pool keeps working afterwards", async () => {
-    const model = await fakeModel(5000);
+    // The run job's limit is jobTimeoutSecs (1 s) plus one model batch (4 cells / batch 20 = 1 batch × 5 s
+    // llmBatchSecs) = 6 s, so the model must answer after that for the job to be terminated.
+    const model = await fakeModel(7000);
     const runner = pool({ ...settings, size: 1, jobTimeoutSecs: 1 });
     await runner.run({ kind: "preview", schema, previewRows: 1 }); // load the worker first; the limit measures the job, not the start
     const err = await runner.run({ kind: "run", schema: withModel, seed: 1, previewRows: 5, env: envFor(model.url) }).catch((e) => e);
@@ -178,8 +180,10 @@ d("the point: the server stays responsive while it generates", () => {
     return { stall: worst, took };
   }
 
-  it("on the calling thread a large preview freezes the event loop; in a worker it does not", async () => {
-    const job: PreviewJob = { kind: "preview", schema: big, seed: 1, previewRows: 5 };
+  it("on the calling thread a large export freezes the event loop; in a worker it does not", async () => {
+    // A preview no longer proves this: it only generates the rows it shows, so even a huge schema previews fast
+    // on the calling thread. An export still generates every row, so it is the heavy job now.
+    const job: ExportJob = { kind: "export", schema: big, seed: 1, format: "json", zip: false, env: {} };
     const inline = await worstStall(() => new InlineRunner().run(job));
     const runner = sharedPool();
     await runner.run({ kind: "preview", schema, previewRows: 1 }); // a worker is already running, so startup is not counted

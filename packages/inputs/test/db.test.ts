@@ -1,10 +1,11 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { PGlite } from "@electric-sql/pglite";
 import { afterAll, describe, expect, it } from "vitest";
 import { generate, parseSchema } from "@mockdata/core";
+import { captureSqliteIdentity, verifySqliteIdentity } from "../src/db/sqlite.js";
 import {
   catalogToSchema,
   detectDatabase,
@@ -12,9 +13,11 @@ import {
   inferFromSource,
   introspectMysql,
   introspectPostgres,
+  introspectSqlite,
   mapDbType,
   parseMysqlEnum,
   type MysqlQuery,
+  type SqliteLike,
 } from "../src/index.js";
 
 const dir = mkdtempSync(join(tmpdir(), "mockdata-db-"));
@@ -96,6 +99,67 @@ describe("sqlite", () => {
     const ids = new Set(data.customers!.map((r) => r.id));
     for (const o of data.orders!) expect(ids.has(o.customer_id)).toBe(true);
     data.employees!.forEach((e, i) => e.manager_id !== null && expect(e.manager_id as number).toBeLessThanOrEqual(i));
+  });
+
+  it("reflects with a bounded number of round trips (no per-table PRAGMA fan-out)", () => {
+    const raw = new DatabaseSync(file);
+    const calls: string[] = [];
+    const wrapped: SqliteLike = {
+      prepare: (sql: string) => {
+        calls.push(sql);
+        return raw.prepare(sql) as unknown as ReturnType<SqliteLike["prepare"]>;
+      },
+    };
+    try {
+      const tables = introspectSqlite(wrapped);
+      expect(tables.map((t) => t.name).sort()).toEqual(["customers", "employees", "enrollments", "line_items", "orders", "weird name"]);
+      expect(tables.find((t) => t.name === "line_items")!.foreignKeys).toEqual([{ columns: ["order_id"], refTable: "orders", refColumns: ["id"] }]);
+      expect(tables.find((t) => t.name === "line_items")!.uniques).toEqual([["order_id", "sku"]]);
+      expect(tables.find((t) => t.name === "enrollments")!.primaryKey).toEqual(["student", "course"]);
+      // One catalog query each for columns, foreign keys and indexes — regardless of table count.
+      expect(calls).toHaveLength(3);
+    } finally {
+      raw.close();
+    }
+  });
+
+  it("reflects a database reached through a legitimate symlink", async () => {
+    const link = join(dir, "shop-link.db");
+    symlinkSync(file, link);
+    const { schema } = await inferFromDatabase(link);
+    expect(Object.keys(schema.tables).sort()).toEqual(["customers", "employees", "enrollments", "line_items", "orders", "weird_name"]);
+  });
+
+  it("detects a SQLite path swapped for a different file between capture and verify (SEC-H1)", () => {
+    const a = join(dir, "swap-a.db");
+    const b = join(dir, "swap-b.db");
+    for (const f of [a, b]) {
+      const d = new DatabaseSync(f);
+      d.exec("create table t (id integer primary key)");
+      d.close();
+    }
+    // Same file, still there: verifies.
+    const id = captureSqliteIdentity(a)!;
+    expect(() => verifySqliteIdentity(a, id)).not.toThrow();
+    // The path now points at a different file (different inode): refused.
+    renameSync(b, a);
+    expect(() => verifySqliteIdentity(a, id)).toThrow(/changed while opening/);
+
+    // Same through a symlink that is re-pointed at the other file.
+    const c = join(dir, "swap-c.db");
+    const d = join(dir, "swap-d.db");
+    for (const f of [c, d]) {
+      const d2 = new DatabaseSync(f);
+      d2.exec("create table t (id integer primary key)");
+      d2.close();
+    }
+    const link = join(dir, "swap-link.db");
+    symlinkSync(c, link);
+    const linkId = captureSqliteIdentity(link)!;
+    expect(() => verifySqliteIdentity(link, linkId)).not.toThrow();
+    unlinkSync(link);
+    symlinkSync(d, link);
+    expect(() => verifySqliteIdentity(link, linkId)).toThrow(/changed while opening/);
   });
 
   it("does not modify the database (opened read-only)", async () => {

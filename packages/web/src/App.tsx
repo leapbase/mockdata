@@ -5,21 +5,15 @@ import GenerateBar from "./components/GenerateBar";
 import InferDialog from "./components/InferDialog";
 import Preview from "./components/Preview";
 import Sidebar, { withExtension } from "./components/Sidebar";
-import TemplatePicker from "./components/TemplatePicker";
 import { useDrawer, useNarrow } from "./drawers";
-import { EDITOR_MIN, PANEL_MIN, usePanelWidth } from "./panelWidth";
 import { navigateTabs } from "./tabs";
 import { messageOf, useDebounced } from "./hooks";
-import type { Template } from "./templates";
-import type { ComponentType } from "react";
-import type { InitialDraft, LibraryProps } from "./slots";
 
 const Editor = lazy(() => import("./components/Editor"));
 const SchemaDiagram = lazy(() => import("./components/SchemaDiagram"));
 
-export default function App({ debounceMs = 400, library: Library, initialDraft, downloadOnly = false }: { debounceMs?: number; library?: ComponentType<LibraryProps>; initialDraft?: () => Promise<InitialDraft | null>; downloadOnly?: boolean }) {
+export default function App({ debounceMs = 400 }: { debounceMs?: number }) {
   const [files, setFiles] = useState<string[]>([]);
-  const [libraryOpen, setLibraryOpen] = useState(false);
   const [path, setPath] = useState<string | null>(null);
   /** The name in the header: the file's path, or what the user typed (a new name, or a first name for a draft). */
   const [name, setName] = useState("");
@@ -56,14 +50,6 @@ export default function App({ debounceMs = 400, library: Library, initialDraft, 
   const closeGeneration = useCallback(() => { setGenerationOpen(false); generateButton.current?.focus(); }, []);
   const closeSidebar = useCallback(() => { setSidebarOpen(false); schemaButton.current?.focus(); }, []);
   useDrawer(generationPanel, generationOpen && narrow, closeGeneration);
-  const editorArea = useRef<HTMLElement | null>(null);
-  // Room for the panel: from the editor's left edge to the panel's right edge, less what the editor keeps.
-  const panelMax = useCallback(() => {
-    const panel = generationPanel.current?.getBoundingClientRect();
-    const editor = editorArea.current?.getBoundingClientRect();
-    return panel && editor && panel.right > 0 ? panel.right - editor.left - EDITOR_MIN : Number.POSITIVE_INFINITY;
-  }, []);
-  const panelWidth = usePanelWidth(panelMax);
   useDrawer(sidebarPanel, sidebarOpen && mobile, closeSidebar);
 
   const fail = useCallback((e: unknown) => setError(messageOf(e)), []);
@@ -73,34 +59,32 @@ export default function App({ debounceMs = 400, library: Library, initialDraft, 
     api.getConfig().then(setConfig).catch(fail);
   }, [fail]);
 
-  // A draft the shell hands over at startup opens like a library schema, under a name no file has yet.
-  useEffect(() => {
-    if (!initialDraft) return;
-    let live = true;
-    Promise.all([api.getFiles(), initialDraft()])
-      .then(([taken, draft]) => {
-        if (live && draft) startDraft(freeName(draft.file.replace(/\.(ya?ml|json)$/i, ""), taken), draft.text);
-      })
-      .catch((e) => live && fail(e));
-    return () => {
-      live = false;
-    };
-  }, [initialDraft, fail]);
-
   const debounced = useDebounced(text, debounceMs);
   useEffect(() => {
+    // The text is unchanged since the last successful validation: reuse that
+    // result instead of re-validating (and re-posting) the whole schema.
+    // Any error left over from validating different text in between is stale.
+    if (debounced === validatedText) {
+      setValidating((prev) => (prev ? false : prev));
+      setValidationError((prev) => (prev === null ? prev : null));
+      return;
+    }
+    const controller = new AbortController();
     let stale = false;
     setValidating(true);
     setValidationError(null);
     api
-      .validate(debounced)
+      .validate(debounced, controller.signal)
       .then((r) => { if (!stale) { setCheck(r); setValidatedText(debounced); } })
       .catch((e) => { if (!stale) { setValidationError(messageOf(e)); fail(e); } })
       .finally(() => { if (!stale) setValidating(false); });
     return () => {
       stale = true;
+      // Cancel the in-flight request when a newer text arrives (or on unmount);
+      // the stale flag above stays as a belt-and-braces guard.
+      controller.abort();
     };
-  }, [debounced, fail, validationAttempt]);
+  }, [debounced, fail, validationAttempt, validatedText]);
 
   const dirty = text !== savedText;
   const typedPath = name.trim() ? withExtension(name.trim()) : null;
@@ -147,42 +131,6 @@ export default function App({ debounceMs = 400, library: Library, initialDraft, 
     setError(null);
     setSchemaView("editor");
     closeSidebar();
-  }
-
-  /** An unsaved draft called `file` holding `body`, shown as a diagram: templates and the hosted library both land here. */
-  function startDraft(file: string, body: string) {
-    setPath(null);
-    setName(file);
-    setText(body);
-    setSavedText("");
-    setPreview(null);
-    setWarnings([]);
-    setError(null);
-    setSchemaView("diagram");
-  }
-
-  /** `<base>.yaml`, or `<base>-2.yaml` and so on if that file already exists. */
-  function freeName(base: string, taken = files) {
-    let file = `${base}.yaml`;
-    for (let n = 2; taken.includes(file); n++) file = `${base}-${n}.yaml`;
-    return file;
-  }
-
-  /** A template becomes an unsaved draft named after it (shop.yaml, or shop-2.yaml if that is taken). */
-  async function fromTemplate(t: Template) {
-    if (!okToDiscard()) return;
-    try {
-      startDraft(freeName(t.id), await t.load());
-    } catch (e) {
-      fail(e);
-    }
-  }
-
-  /** What the hosted library panel calls to load a shared schema. */
-  function fromLibrary(file: string, body: string) {
-    if (!okToDiscard()) return;
-    startDraft(freeName(file.replace(/\.(ya?ml|json)$/i, "")), body);
-    setLibraryOpen(false);
   }
 
   async function rename(from: string, to: string) {
@@ -274,7 +222,6 @@ export default function App({ debounceMs = 400, library: Library, initialDraft, 
         </div>
       )}
       {((generationOpen && narrow) || (sidebarOpen && mobile)) && <button className="drawer-scrim" aria-label="Close panel" onClick={() => { closeGeneration(); closeSidebar(); }} />}
-      {Library && libraryOpen && <Suspense fallback={null}><Library text={text} name={name} onUse={fromLibrary} onClose={() => setLibraryOpen(false)} /></Suspense>}
       <aside className="sidebar" ref={sidebarPanel} aria-label="Schema navigation" role={mobile && sidebarOpen ? "dialog" : undefined} aria-modal={mobile && sidebarOpen ? true : undefined} tabIndex={-1}>
       <button className="sidebar-close icon-button" aria-label="Close schema navigation" onClick={closeSidebar}>×</button>
       <Sidebar
@@ -283,7 +230,6 @@ export default function App({ debounceMs = 400, library: Library, initialDraft, 
         dirty={unsaved}
         onOpen={(p) => void open(p)}
         onNew={newSchema}
-        onLibrary={Library ? () => setLibraryOpen(true) : undefined}
         onInfer={() => setSidebarTab("import")}
         tab={sidebarTab}
         onTab={setSidebarTab}
@@ -294,18 +240,18 @@ export default function App({ debounceMs = 400, library: Library, initialDraft, 
         }} />}
       />
       </aside>
-      <main className="editor" ref={editorArea}>
+      <main className="editor">
         <header className="workspace-toolbar">
           <button className="mobile-navigation icon-button" aria-label="Open schema navigation" ref={schemaButton} onClick={() => { setSidebarOpen(true); setGenerationOpen(false); }}>☰</button>
-          <div className="schema-title"><span className="eyebrow">SCHEMA WORKSPACE</span><form className="schema-name" onSubmit={(e) => { e.preventDefault(); save(); }}><input ref={nameInput} aria-label="Schema name" placeholder="Untitled schema" value={name} size={Math.max((name || "Untitled schema").length, 8)} title={path ?? "Name this schema; press Enter to save"} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") { setName(path ?? ""); e.currentTarget.blur(); } }} spellCheck={false} />{unsaved && <span className="unsaved-mark" title="Unsaved changes">•</span>}<button type="submit" className="save-schema" disabled={!unsaved}>Save</button></form></div>
-          <button className="primary open-generation" ref={generateButton} aria-label={running ? "Generate data (running)" : "Generate data"} title="Generate data" aria-expanded={generationOpen} aria-controls="generation-panel" onClick={() => { setGenerationOpen(true); setSidebarOpen(false); }}>{running && <i className="running-dot" />}<span aria-hidden="true" className="open-generation-label">Generate data</span><span aria-hidden="true" className="open-generation-arrow">→</span></button>
+          <div className="schema-title"><span className="eyebrow">SCHEMA WORKSPACE</span><form className="schema-name" onSubmit={(e) => { e.preventDefault(); save(); }}><input ref={nameInput} aria-label="Schema name" placeholder="Untitled schema" value={name} title={path ?? "Name this schema; press Enter to save"} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") { setName(path ?? ""); e.currentTarget.blur(); } }} spellCheck={false} />{unsaved && <span className="unsaved-mark" title="Unsaved changes">•</span>}<button type="submit" className="save-schema" disabled={!unsaved}>Save</button></form></div>
+          <button className="primary open-generation" ref={generateButton} aria-label={running ? "Generate data (running)" : "Generate data"} aria-expanded={generationOpen} aria-controls="generation-panel" onClick={() => { setGenerationOpen(true); setSidebarOpen(false); }}>{running && <i className="running-dot" />}Generate data <span aria-hidden="true">→</span></button>
         </header>
         <div className="view-tabs" role="tablist" aria-label="Schema view" onKeyDown={navigateTabs}>
           <button role="tab" tabIndex={schemaView === "editor" ? 0 : -1} aria-selected={schemaView === "editor"} aria-controls="schema-editor" id="editor-tab" onClick={() => setSchemaView("editor")}>Editor</button>
           <button role="tab" tabIndex={schemaView === "diagram" ? 0 : -1} aria-selected={schemaView === "diagram"} aria-controls="schema-diagram" id="diagram-tab" onClick={() => setSchemaView("diagram")}>Diagram</button>
           <span className="view-hint">{schemaView === "editor" ? "Edit your schema in YAML or JSON" : "Explore tables and relationships"}</span>
         </div>
-        <div className="schema-surface" id="schema-editor" role="tabpanel" aria-labelledby="editor-tab" hidden={schemaView !== "editor"}>{path === null && text === "" && <TemplatePicker onPick={(t) => void fromTemplate(t)} onLibrary={Library ? () => setLibraryOpen(true) : undefined} />}<Suspense fallback={<div className="workspace-empty" role="status">Loading editor…</div>}><Editor value={text} onChange={setText} errors={errors} /></Suspense></div>
+        <div className="schema-surface" id="schema-editor" role="tabpanel" aria-labelledby="editor-tab" hidden={schemaView !== "editor"}><Suspense fallback={<div className="workspace-empty" role="status">Loading editor…</div>}><Editor value={text} onChange={setText} errors={errors} /></Suspense></div>
         {schemaView === "diagram" && <div className="schema-surface" id="schema-diagram" role="tabpanel" aria-labelledby="diagram-tab">
           {validationError ? <div className="workspace-empty"><h2>Validation unavailable</h2><p>{validationError}</p><button onClick={() => { setError(null); setValidationAttempt((n) => n + 1); }}>Retry validation</button></div> : validating || validatedText !== text ? <div className="workspace-empty"><p>Updating diagram…</p></div> : check?.ok && check.diagram ? <Suspense fallback={<div className="workspace-empty" role="status">Loading diagram…</div>}><SchemaDiagram data={check.diagram} dataTables={preview ? Object.keys(preview.tables) : []} onShowData={showData} /></Suspense> : <div className="workspace-empty"><h2>Diagram unavailable</h2><p>{check?.ok ? "Diagram metadata is unavailable. Rebuild and restart the server." : "Fix the schema in the editor to view its diagram."}</p><button onClick={() => setSchemaView("editor")}>Return to editor</button></div>}
         </div>}
@@ -334,20 +280,7 @@ export default function App({ debounceMs = 400, library: Library, initialDraft, 
           </ul>
         )}
       </main>
-      <section className={`preview generation-panel${panelWidth.dragging ? " resizing" : ""}`} id="generation-panel" ref={generationPanel} hidden={!generationOpen} style={narrow ? undefined : { flexBasis: panelWidth.width, width: panelWidth.width }} aria-label="Data generation" role={narrow && generationOpen ? "dialog" : undefined} aria-modal={narrow && generationOpen ? true : undefined} tabIndex={-1}>
-        {!narrow && (
-          <div
-            className="panel-resizer"
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Resize generation panel"
-            aria-valuenow={panelWidth.width}
-            aria-valuemin={PANEL_MIN}
-            tabIndex={0}
-            title="Drag to resize (double-click to reset)"
-            {...panelWidth.handle}
-          />
-        )}
+      <section className="preview generation-panel" id="generation-panel" ref={generationPanel} hidden={!generationOpen} aria-label="Data generation" role={narrow && generationOpen ? "dialog" : undefined} aria-modal={narrow && generationOpen ? true : undefined} tabIndex={-1}>
         <header className="panel-header"><div><span className="eyebrow">SYNTHETIC DATA</span><h2>Generate data</h2></div><button className="icon-button" aria-label="Collapse generation panel" onClick={closeGeneration}>→</button></header>
         <GenerateBar
           seed={seed}
@@ -374,7 +307,6 @@ export default function App({ debounceMs = 400, library: Library, initialDraft, 
           text={text}
           seed={seed === "" ? undefined : Number(seed)}
           hasLlm={(check?.llmColumns ?? []).length > 0}
-          downloadOnly={downloadOnly}
           onClose={() => setDialog(null)}
         />
       )}

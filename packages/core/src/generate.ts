@@ -1,5 +1,5 @@
 import { Faker, en } from "@faker-js/faker";
-import { columnOrder, planGeneration } from "./graph.js";
+import { columnOrder, planGeneration, type GenerationPlan } from "./graph.js";
 import { parseSchema, type Column, type DataSchemaT } from "./schema.js";
 
 export type Row = Record<string, unknown>;
@@ -35,19 +35,62 @@ function resolveOwner(faker: Faker, path: string): unknown {
   return parts.reduce<unknown>((o, k) => (o as Record<string, unknown> | undefined)?.[k], faker);
 }
 
-function generateValue(faker: Faker, col: Column, lowerBoundMs?: number): unknown {
-  if (col.enum) {
-    if (!col.enumWeights) return faker.helpers.arrayElement(col.enum);
-    const total = col.enumWeights.reduce((sum, weight) => sum + weight, 0);
-    let pick = faker.number.float({ min: 0, max: 1 }) * total;
-    for (let i = 0; i < col.enumWeights.length; i++) {
-      pick -= col.enumWeights[i]!;
-      if (pick < 0) return col.enum[i];
-    }
-    for (let i = col.enumWeights.length - 1; i >= 0; i--) {
-      if (col.enumWeights[i]! > 0) return col.enum[i];
+/**
+ * Per-column work hoisted out of the per-row loop (PERF-M1): the faker
+ * method is resolved once, `ref`/`after` are split once, and an `after`
+ * rule that reads through a foreign key has that key's target split once.
+ * Date bounds are parsed once by generateTable for date/datetime columns.
+ * None of this consumes RNG, so output for a given seed is unchanged.
+ */
+interface ColumnPlan {
+  col: Column;
+  name: string;
+  /** Parsed date bounds for date/datetime columns (undefined = no bound). */
+  minMs?: number;
+  maxMs?: number;
+  /** Resolved faker method for string faker columns (undefined method = unknown path; the error is still raised lazily, on first use, as before). */
+  fakerOwner?: Record<string, unknown>;
+  fakerFn?: unknown;
+  /** Foreign-key target, split once. */
+  refTable?: string;
+  refColumn?: string;
+  /** `after` rule, split once: same-row column, or foreign-key column + parent column. */
+  afterFirst?: string;
+  afterSecond?: string;
+  /** `after` through a foreign key: that key's ref target, split once. */
+  afterParentTable?: string;
+  afterParentColumn?: string;
+}
+
+function planColumn(schema: DataSchemaT, tname: string, cname: string, faker?: Faker): ColumnPlan {
+  const col = schema.tables[tname]!.columns[cname]!;
+  const plan: ColumnPlan = { col, name: cname };
+  if (col.faker && faker) {
+    plan.fakerOwner = resolveOwner(faker, col.faker) as Record<string, unknown> | undefined;
+    plan.fakerFn = plan.fakerOwner?.[col.faker.split(".").pop()!];
+  }
+  if (col.ref) {
+    const [pt, pc] = col.ref.split(".") as [string, string];
+    plan.refTable = pt;
+    plan.refColumn = pc;
+  }
+  if (col.after) {
+    const parts = col.after.split(".");
+    plan.afterFirst = parts[0]!;
+    if (parts.length === 2) {
+      plan.afterSecond = parts[1]!;
+      const fkCol = schema.tables[tname]!.columns[parts[0]!]!;
+      const [pt, pc] = fkCol.ref!.split(".") as [string, string];
+      plan.afterParentTable = pt;
+      plan.afterParentColumn = pc;
     }
   }
+  return plan;
+}
+
+function generateValue(faker: Faker, plan: ColumnPlan, lowerBoundMs?: number): unknown {
+  const col = plan.col;
+  if (col.enum) return faker.helpers.arrayElement(col.enum);
   switch (col.type) {
     case "integer":
       return faker.number.int({ min: Number(col.min ?? 0), max: Number(col.max ?? 1_000_000) });
@@ -61,9 +104,9 @@ function generateValue(faker: Faker, col: Column, lowerBoundMs?: number): unknow
       return faker.internet.email().toLowerCase();
     case "date":
     case "datetime": {
-      const min = Math.max(toMs(col.min, DEFAULT_MIN_DATE), lowerBoundMs ?? -Infinity);
+      const min = Math.max(plan.minMs ?? DEFAULT_MIN_DATE, lowerBoundMs ?? -Infinity);
       const span = col.within !== undefined && lowerBoundMs !== undefined ? lowerBoundMs + col.within * DAY : undefined;
-      const max = Math.min(toMs(col.max, span ?? Math.max(DEFAULT_MAX_DATE, min + 365 * DAY)), span ?? Infinity);
+      const max = Math.min(plan.maxMs ?? (span ?? Math.max(DEFAULT_MAX_DATE, min + 365 * DAY)), span ?? Infinity);
       if (min > max) throw new GenerationError(`Empty date range [${new Date(min).toISOString()}, ${new Date(max).toISOString()}]`);
       const d = new Date(faker.number.int({ min, max }));
       return col.type === "date" ? d.toISOString().slice(0, 10) : d.toISOString();
@@ -71,10 +114,9 @@ function generateValue(faker: Faker, col: Column, lowerBoundMs?: number): unknow
     case "string": {
       if (col.pattern) return faker.helpers.fromRegExp(col.pattern);
       if (col.faker) {
-        const owner = resolveOwner(faker, col.faker) as Record<string, unknown> | undefined;
-        const fn = owner?.[col.faker.split(".").pop()!];
+        const fn = plan.fakerFn;
         if (typeof fn !== "function") throw new GenerationError(`Unknown faker path "${col.faker}"`);
-        return String((fn as () => unknown).call(owner));
+        return String((fn as () => unknown).call(plan.fakerOwner));
       }
       return faker.lorem.words(3);
     }
@@ -158,6 +200,18 @@ export interface GenerateOptions {
    * @mockdata/llm) can fill them. The result is not fully validated until then.
    */
   deferLlm?: boolean;
+  /**
+   * Already-parsed schema (from parseSchema). Skips re-parsing `input`,
+   * which is then ignored. Must be the schema this run generates from.
+   */
+  parsed?: DataSchemaT;
+  /**
+   * Precomputed generation plan (from planGeneration). Skips re-planning;
+   * must be the plan for `parsed` (or for `input` when `parsed` is absent).
+   * generate() memoises each table's column order on the plan
+   * (`plan.columnOrders`), so a later run with the same plan reuses it.
+   */
+  plan?: GenerationPlan;
 }
 
 /** Columns marked `llm`, in schema order. */
@@ -173,7 +227,7 @@ export function llmColumns(schema: DataSchemaT): { table: string; column: string
 
 /** Deterministically generate every table, parents before children. */
 export function generate(input: unknown, opts: GenerateOptions = {}): Dataset {
-  const schema = parseSchema(input);
+  const schema = opts.parsed ?? parseSchema(input);
   const seed = opts.seed ?? schema.seed ?? 1;
   const faker = new Faker({ locale: en });
   faker.seed(seed);
@@ -186,23 +240,15 @@ export function generate(input: unknown, opts: GenerateOptions = {}): Dataset {
     );
   }
 
-  const plan = planGeneration(schema);
+  const plan = opts.plan ?? planGeneration(schema);
+  const columnOrders = plan.columnOrders ?? (plan.columnOrders = {});
   const deferred = new Set(plan.deferred);
-  for (const [tname, table] of Object.entries(schema.tables)) {
-    for (const [cname, col] of Object.entries(table.columns)) {
-      if (col.minPerParent === undefined) continue;
-      const parent = col.ref!.split(".")[0]!;
-      if (deferred.has(`${tname}.${cname}`)) throw new GenerationError(`${tname}.${cname}: "minPerParent" cannot be used on a deferred foreign key`);
-      const required = schema.tables[parent]!.rows * col.minPerParent;
-      if (table.rows < required) throw new GenerationError(`${tname}.${cname}: minPerParent needs at least ${required} child rows`);
-    }
-  }
   /** "table.column" -> parent row index -> number of children so far. */
   const usage = new Map<string, ParentUsage>();
 
   const data: Dataset = {};
   for (const level of plan.levels) {
-    for (const tname of level) data[tname] = generateTable(schema, tname, data, faker, deferred, usage);
+    for (const tname of level) data[tname] = generateTable(schema, tname, data, faker, deferred, usage, columnOrders);
   }
   for (const key of plan.deferred) fillDeferred(schema, key, data, faker, usage);
   validate(schema, data, { skipLlm: pending.length > 0 });
@@ -215,14 +261,6 @@ function usageFor(usage: Map<string, ParentUsage>, key: string): ParentUsage {
   return m;
 }
 
-function requiredParent(pool: Row[], parentColumn: string, count: number, rowIndex: number, col: Column, used: ParentUsage): unknown {
-  const index = Math.floor(rowIndex / count);
-  if (used.pick(index, pool.length, parentCap(col)) !== index) {
-    throw new GenerationError(`Could not reserve the required child for parent ${index + 1}`);
-  }
-  return pool[index]![parentColumn];
-}
-
 function generateTable(
   schema: DataSchemaT,
   tname: string,
@@ -230,34 +268,36 @@ function generateTable(
   faker: Faker,
   deferred: Set<string>,
   usage: Map<string, ParentUsage>,
+  columnOrders: Record<string, string[]>,
 ): Row[] {
   const table = schema.tables[tname]!;
-  const order = columnOrder(schema, tname);
+  let order = columnOrders[tname];
+  if (!order) columnOrders[tname] = order = columnOrder(schema, tname);
+  const plans = order.map((cname) => {
+    const plan = planColumn(schema, tname, cname, faker);
+    const col = plan.col;
+    if (col.type === "date" || col.type === "datetime") {
+      plan.minMs = toMs(col.min, DEFAULT_MIN_DATE);
+      plan.maxMs = col.max === undefined ? undefined : toMs(col.max, 0);
+    }
+    return plan;
+  });
   const rows: Row[] = [];
   const seen = new Map<string, Set<unknown>>();
-  const minimums = new Map<string, { pool: Row[]; column: string; count: number }>();
-  for (const [cname, col] of Object.entries(table.columns)) {
-    if (col.minPerParent === undefined) continue;
-    const [pt, pc] = col.ref!.split(".") as [string, string];
-    minimums.set(cname, { pool: data[pt]!, column: pc, count: col.minPerParent });
-  }
 
   for (let i = 0; i < table.rows; i++) {
     const row: Row = {};
-    for (const cname of order) {
-      const col = table.columns[cname]!;
-      const key = `${tname}.${cname}`;
-      const minimum = minimums.get(cname);
+    for (const plan of plans) {
+      const col = plan.col;
+      const key = `${tname}.${plan.name}`;
       // llm cells stay `undefined` (pending) for the async fill pass; null means intentionally null.
-      row[cname] = deferred.has(key)
+      row[plan.name] = deferred.has(key)
         ? null
-        : minimum && i < minimum.pool.length * minimum.count
-        ? requiredParent(minimum.pool, minimum.column, minimum.count, i, col, usageFor(usage, key))
         : col.llm
         ? col.nullable && faker.number.float({ min: 0, max: 1 }) < (col.nullRate ?? 0.1)
           ? null
           : undefined
-        : generateCell(schema, tname, cname, col, i, row, rows, data, faker, seen, usageFor(usage, key), deferred);
+        : generateCell(tname, plan, i, row, rows, data, faker, seen, usageFor(usage, key), deferred);
     }
     rows.push(row);
   }
@@ -265,10 +305,8 @@ function generateTable(
 }
 
 function generateCell(
-  schema: DataSchemaT,
   tname: string,
-  cname: string,
-  col: Column,
+  plan: ColumnPlan,
   index: number,
   row: Row,
   earlier: Row[],
@@ -278,11 +316,13 @@ function generateCell(
   used: ParentUsage,
   deferred: Set<string>,
 ): unknown {
-  const where = `${tname}.${cname}`;
+  const col = plan.col;
+  const where = `${tname}.${plan.name}`;
   if (col.nullable && faker.number.float({ min: 0, max: 1 }) < (col.nullRate ?? 0.1)) return null;
 
   if (col.ref) {
-    const [pt, pc] = col.ref.split(".") as [string, string];
+    const pt = plan.refTable!;
+    const pc = plan.refColumn!;
     // Self reference: only point at earlier rows so no cycle forms.
     const pool = pt === tname ? earlier : (data[pt] ?? []);
     const pick = pickParent(faker, col, pool.length, used);
@@ -298,12 +338,11 @@ function generateCell(
   }
 
   let lower: number | undefined;
-  if (col.after) {
-    const via = col.after.split(".");
-    if (via.length === 2 && deferred.has(`${tname}.${via[0]}`)) {
-      throw new GenerationError(`${where}: "after ${col.after}" reads through "${via[0]}", which is nullable and deferred to break a table cycle`);
+  if (plan.afterFirst !== undefined) {
+    if (plan.afterSecond !== undefined && deferred.has(`${tname}.${plan.afterFirst}`)) {
+      throw new GenerationError(`${where}: "after ${col.after}" reads through "${plan.afterFirst}", which is nullable and deferred to break a table cycle`);
     }
-    lower = resolveAfter(schema, tname, col.after, row, data, where);
+    lower = resolveAfter(plan, row, data, where);
   }
 
   const unique = col.unique || col.primaryKey;
@@ -312,10 +351,10 @@ function generateCell(
   }
 
   const attempts = unique ? 50 : 1;
-  const set = seen.get(cname) ?? new Set<unknown>();
-  seen.set(cname, set);
+  const set = seen.get(plan.name) ?? new Set<unknown>();
+  seen.set(plan.name, set);
   for (let a = 0; a < attempts; a++) {
-    const v = generateValue(faker, col, lower);
+    const v = generateValue(faker, plan, lower);
     if (!unique) return v;
     if (!set.has(v)) {
       set.add(v);
@@ -371,27 +410,32 @@ function lookupRow(data: Dataset, table: string, column: string, value: unknown)
   return index.byKey.get(value);
 }
 
-function resolveAfter(schema: DataSchemaT, tname: string, after: string, row: Row, data: Dataset, where: string): number | undefined {
-  const parts = after.split(".");
+function resolveAfter(plan: ColumnPlan, row: Row, data: Dataset, where: string): number | undefined {
   let value: unknown;
-  if (parts.length === 1) {
-    value = row[parts[0]!];
+  if (plan.afterSecond === undefined) {
+    value = row[plan.afterFirst!];
   } else {
-    const fkCol = schema.tables[tname]!.columns[parts[0]!]!;
-    const fkValue = row[parts[0]!];
+    const fkValue = row[plan.afterFirst!];
     if (fkValue === null || fkValue === undefined) return undefined;
-    const [pt, pc] = fkCol.ref!.split(".") as [string, string];
-    value = lookupRow(data, pt, pc, fkValue)?.[parts[1]!];
+    value = lookupRow(data, plan.afterParentTable!, plan.afterParentColumn!, fkValue)?.[plan.afterSecond];
   }
   if (value === null || value === undefined) return undefined;
   const ms = Date.parse(String(value));
-  if (Number.isNaN(ms)) throw new GenerationError(`${where}: "after" source "${after}" is not a date`);
+  if (Number.isNaN(ms)) throw new GenerationError(`${where}: "after" source "${plan.col.after}" is not a date`);
   return ms;
 }
 
 export class ValidationError extends Error {
-  constructor(public readonly violations: string[]) {
-    super(`${violations.length} constraint violation(s):\n  ` + violations.slice(0, 10).join("\n  "));
+  /**
+   * @param violations the first violations found (validate keeps at most the
+   *   first 100; the message always shows the first 10).
+   * @param total the true violation count, when more were found than kept.
+   */
+  constructor(
+    public readonly violations: string[],
+    total?: number,
+  ) {
+    super(`${total ?? violations.length} constraint violation(s):\n  ` + violations.slice(0, 10).join("\n  "));
     this.name = "ValidationError";
   }
 }
@@ -399,53 +443,57 @@ export class ValidationError extends Error {
 /** Hard post-check: generators should never violate these; if they do, fail loudly. */
 export function validate(schema: DataSchemaT, data: Dataset, opts: { skipLlm?: boolean } = {}): void {
   const bad: string[] = [];
+  let total = 0;
+  /** Record a violation, keeping at most the first 100 (the message shows the first 10 and the true total). */
+  const push = (msg: string): void => {
+    total++;
+    if (bad.length < 100) bad.push(msg);
+  };
   for (const [tname, table] of Object.entries(schema.tables)) {
     const rows = data[tname] ?? [];
     for (const [cname, col] of Object.entries(table.columns)) {
       if (opts.skipLlm && col.llm) continue;
+      const plan = planColumn(schema, tname, cname);
       const uniques = new Set<unknown>();
       const children = new Map<unknown, number>();
-      const parentKeys = col.ref ? new Set((data[col.ref.split(".")[0]!] ?? []).map((r) => r[col.ref!.split(".")[1]!])) : undefined;
+      const parentKeys = plan.refTable ? new Set((data[plan.refTable] ?? []).map((r) => r[plan.refColumn!])) : undefined;
+      const enumSet = col.enum ? new Set(col.enum) : undefined;
       const pattern = col.pattern ? new RegExp(`^(?:${col.pattern})$`) : undefined;
       rows.forEach((row, i) => {
         const v = row[cname];
         const at = `${tname}[${i}].${cname}`;
         if (v === null || v === undefined) {
-          if (!col.nullable) bad.push(`${at}: null in non-nullable column`);
+          if (!col.nullable) push(`${at}: null in non-nullable column`);
           return;
         }
-        if (col.enum && !col.enum.includes(v as never)) bad.push(`${at}: ${String(v)} not in enum`);
+        if (enumSet && !enumSet.has(v as never)) push(`${at}: ${String(v)} not in enum`);
         if (typeof v === "number") {
-          if (col.min !== undefined && v < Number(col.min)) bad.push(`${at}: ${v} < min ${col.min}`);
-          if (col.max !== undefined && v > Number(col.max)) bad.push(`${at}: ${v} > max ${col.max}`);
+          if (col.min !== undefined && v < Number(col.min)) push(`${at}: ${v} < min ${col.min}`);
+          if (col.max !== undefined && v > Number(col.max)) push(`${at}: ${v} > max ${col.max}`);
         }
-        if (pattern && !pattern.test(String(v))) bad.push(`${at}: "${String(v)}" does not match /${col.pattern}/`);
+        if (pattern && !pattern.test(String(v))) push(`${at}: "${String(v)}" does not match /${col.pattern}/`);
         if (col.unique || col.primaryKey) {
-          if (uniques.has(v)) bad.push(`${at}: duplicate ${String(v)}`);
+          if (uniques.has(v)) push(`${at}: duplicate ${String(v)}`);
           uniques.add(v);
         }
         if (col.ref) {
           const n = (children.get(v) ?? 0) + 1;
           children.set(v, n);
-          if (n > parentCap(col) && n === parentCap(col) + 1) bad.push(`${at}: more than ${parentCap(col)} children for parent ${String(v)}`);
+          if (n > parentCap(col) && n === parentCap(col) + 1) push(`${at}: more than ${parentCap(col)} children for parent ${String(v)}`);
         }
-        if (parentKeys && !parentKeys.has(v)) bad.push(`${at}: orphan foreign key ${String(v)} -> ${col.ref}`);
-        if (col.after) {
-          const lower = resolveAfter(schema, tname, col.after, row, data, at);
-          if (lower !== undefined && Date.parse(String(v)) < lower) bad.push(`${at}: ${String(v)} is before ${col.after}`);
-          if (lower !== undefined && col.within !== undefined && Date.parse(String(v)) > lower + col.within * DAY) {
-            bad.push(`${at}: ${String(v)} is more than ${col.within} days after ${col.after}`);
+        if (parentKeys && !parentKeys.has(v)) push(`${at}: orphan foreign key ${String(v)} -> ${col.ref}`);
+        if (plan.afterFirst !== undefined) {
+          const lower = resolveAfter(plan, row, data, at);
+          if (lower !== undefined) {
+            const vMs = Date.parse(String(v));
+            if (vMs < lower) push(`${at}: ${String(v)} is before ${col.after}`);
+            if (col.within !== undefined && vMs > lower + col.within * DAY) {
+              push(`${at}: ${String(v)} is more than ${col.within} days after ${col.after}`);
+            }
           }
         }
       });
-      if (col.minPerParent !== undefined && parentKeys) {
-        for (const key of parentKeys) {
-          if ((children.get(key) ?? 0) < col.minPerParent) {
-            bad.push(`${tname}.${cname}: fewer than ${col.minPerParent} children for parent ${String(key)}`);
-          }
-        }
-      }
     }
   }
-  if (bad.length) throw new ValidationError(bad);
+  if (total) throw new ValidationError(bad, total);
 }

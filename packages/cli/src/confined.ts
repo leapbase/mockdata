@@ -1,13 +1,14 @@
-import { closeSync, constants, existsSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, realpathSync, writeSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync, writeSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import {
   detectDatabase,
   fromJsonSchema,
+  InferError,
   inferFromDatabase,
   inferFromSampleFiles,
-  inferFromSource,
   looksLikeJsonSchema,
+  MAX_SOURCE_BYTES,
   type InferResult,
 } from "@mockdata/inputs";
 import { loadEnv } from "./env.js";
@@ -35,18 +36,14 @@ export const SCHEMA_EXT = new Set([".yaml", ".yml", ".json"]);
 export const isEnvFile = (p: string): boolean => path.basename(p).startsWith(".env");
 
 /** Env var names a caller may use for a database URL: must look like database config, never e.g. an API key. */
-/** A database URL a caller may name for inference. MOCKDATA_* names are the operator's own settings (such as the account database), never a source. */
-const DB_ENV_NAME = /^(?!MOCKDATA_)(?=.*(DATABASE|DB|POSTGRES|MYSQL|MARIADB|SQLITE))[A-Z][A-Z0-9_]*$/;
+const DB_ENV_NAME = /^(?=.*(DATABASE|DB|POSTGRES|MYSQL|MARIADB|SQLITE))[A-Z][A-Z0-9_]*$/;
 const MAX_INLINE_BYTES = 5 * 1024 * 1024;
-/** Longest relative path a caller may name. The walk below is quadratic in path length, so an uncapped path could block the event loop for minutes. */
-export const MAX_RELATIVE_PATH = 1024;
 
 /**
  * Resolve a caller-supplied relative path inside `root`. Rejects absolute
- * paths, `..` escapes, symlinks that lead outside the root, and paths longer than `MAX_RELATIVE_PATH`.
+ * paths, `..` escapes, and symlinks that lead outside the root.
  */
 export function resolveInside(root: string, rel: string): string {
-  if (rel.length > MAX_RELATIVE_PATH) throw new UserError(`Path is longer than ${MAX_RELATIVE_PATH} characters`);
   if (path.isAbsolute(rel)) throw new UserError(`Path "${rel}" must be relative to the server root`);
   const rootReal = realpathSync(root);
   const target = path.resolve(rootReal, rel);
@@ -135,6 +132,82 @@ export function writeFileConfined(root: string, file: string, data: string | Buf
     if (opts.overwrite) ftruncateSync(fd, 0);
     const buf = typeof data === "string" ? Buffer.from(data) : data;
     for (let off = 0; off < buf.length; ) off += writeSync(fd, buf, off);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * Open `file` (a path from resolveInside) for reading without trusting an
+ * earlier check: the path is re-resolved, the file is opened with O_NOFOLLOW
+ * (a link swapped in since the check is refused, not followed), and the
+ * opened file must really live inside the root, not be a .env file, and be
+ * the same inode the path now resolves to before anything is read. The
+ * caller reads through the returned fd and must close it.
+ */
+export function openConfined(root: string, file: string): number {
+  const rootReal = realpathSync(root);
+  const rel = path.relative(rootReal, file);
+  if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) throw new UserError(`Path "${path.basename(file)}" is outside the server root`);
+  const target = resolveInside(root, rel);
+  assertNotEnv(target);
+  let fd: number;
+  try {
+    fd = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "ELOOP" || code === "EMLINK") throw new UserError(`${path.basename(file)} is a symbolic link; refusing to read through it`);
+    if (code === "ENOENT") throw new UserError(`No such file: ${path.basename(file)}`);
+    throw e;
+  }
+  try {
+    const real = realpathSync(target);
+    if (isEnvFile(real)) throw new UserError("Refusing to read .env files");
+    const r = path.relative(rootReal, real);
+    const opened = fstatSync(fd);
+    const onDisk = lstatSync(real);
+    if (r.startsWith("..") || path.isAbsolute(r) || opened.ino !== onDisk.ino || opened.dev !== onDisk.dev) {
+      throw new UserError(`Path "${path.basename(file)}" changed while reading; refusing`);
+    }
+    if (!opened.isFile()) throw new UserError(`${path.basename(file)} is not a regular file`);
+  } catch (e) {
+    closeSync(fd);
+    throw e;
+  }
+  return fd;
+}
+
+/**
+ * Read a confined file as UTF-8 text through its fd (see openConfined).
+ * `maxBytes` refuses a file larger than the limit instead of reading it.
+ */
+export function readFileConfined(root: string, file: string, opts: { maxBytes?: number } = {}): string {
+  const fd = openConfined(root, file);
+  try {
+    if (opts.maxBytes !== undefined) {
+      const size = fstatSync(fd).size;
+      if (size > opts.maxBytes) {
+        throw new UserError(`${path.basename(file)} is ${Math.round(size / 1e6)} MB; the limit is ${opts.maxBytes / 1024 / 1024} MB (use a smaller file)`);
+      }
+    }
+    return readFileSync(fd, "utf8");
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Read only the first `maxBytes` of a confined file (a sniff, never the whole file). */
+export function readPrefixConfined(root: string, file: string, maxBytes: number): string {
+  const fd = openConfined(root, file);
+  try {
+    const buf = Buffer.alloc(maxBytes);
+    let n = 0;
+    while (n < maxBytes) {
+      const read = readSync(fd, buf, n, maxBytes - n, n);
+      if (read === 0) break;
+      n += read;
+    }
+    return buf.subarray(0, n).toString("utf8");
   } finally {
     closeSync(fd);
   }
@@ -230,5 +303,57 @@ export async function inferConfined(root: string, baseEnv: Record<string, string
   if (!existsSync(target)) throw new UserError(`No such file or folder: ${args.path}`);
   assertNotEnv(target);
   if (args.kind === "database" && !detectDatabase(target)) throw new UserError("kind database with a path needs a SQLite file (.db, .sqlite, .sqlite3)");
-  return inferFromSource(target, opts);
+  // A database is reflected through @mockdata/inputs, whose SQLite introspector opens the file itself — but
+  // `openSqlite` verifies post-open that the path still resolves to the same file (dev/ino), so a swapped
+  // symlink is refused; see the SEC-H1 note in packages/inputs/src/db/sqlite.ts.
+  if (args.kind === "database" || (!args.kind && detectDatabase(target))) {
+    return inferFromDatabase(target, opts);
+  }
+  if (statSync(target).isDirectory()) {
+    // A folder of samples: names come from the directory listing, but every
+    // file is read through the confined reader, and symlinked children are
+    // skipped (with a warning) exactly as inferFromSource did.
+    const SAMPLE_EXT = /\.(csv|json|ndjson|jsonl)$/i;
+    const skipped: string[] = [];
+    const names = readdirSync(target)
+      .filter((f) => SAMPLE_EXT.test(f))
+      .sort()
+      .filter((f) => {
+        const isLink = lstatSync(path.join(target, f)).isSymbolicLink();
+        if (isLink) skipped.push(f);
+        return !isLink;
+      });
+    const files: { name: string; text: string }[] = [];
+    for (const f of names) {
+      try {
+        files.push({ name: f, text: readFileConfined(root, path.join(target, f), { maxBytes: MAX_SOURCE_BYTES }) });
+      } catch (e) {
+        if (e instanceof UserError && /symbolic link/.test(e.message)) {
+          skipped.push(f);
+          continue;
+        }
+        throw e;
+      }
+    }
+    if (files.length === 0) throw new InferError(`No .csv, .json or .ndjson files in ${target}`);
+    const dirResult = inferFromSampleFiles(files, opts);
+    for (const f of skipped) dirResult.warnings.push(`Skipped ${f}: symlinks in a sample folder are not followed`);
+    return dirResult;
+  }
+  // A single file: read its bytes through the confined fd, then interpret the
+  // content in memory — no path-string read of it remains. This mirrors
+  // inferFromSource's dispatch for non-database files.
+  const text = readFileConfined(root, target, { maxBytes: MAX_SOURCE_BYTES });
+  const ext = path.extname(target).toLowerCase();
+  if (args.kind === "json-schema" || (!args.kind && (ext === ".yaml" || ext === ".yml"))) return fromJsonSchema(parseYaml(text), opts);
+  if (!args.kind && ext === ".json") {
+    let doc: unknown;
+    try {
+      doc = JSON.parse(text);
+    } catch (e) {
+      throw new InferError(`${target}: invalid JSON (${(e as Error).message})`);
+    }
+    if (looksLikeJsonSchema(doc)) return fromJsonSchema(doc as Record<string, unknown>, opts);
+  }
+  return inferFromSampleFiles([{ name: path.basename(target), text }], opts);
 }

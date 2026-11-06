@@ -121,7 +121,7 @@ async function send(method: string, url: string, body?: unknown, signal?: AbortS
   return res;
 }
 
-export async function json<T>(method: string, url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+async function json<T>(method: string, url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const res = await send(method, url, body, signal);
   if (!res.ok) throw await failure(res);
   return (await res.json()) as T;
@@ -133,7 +133,7 @@ export const getFile = async (path: string) => (await json<{ text: string }>("GE
 export const putFile = (path: string, text: string, create = false) => json<{ path: string }>("PUT", "/api/file", { path, text, create });
 /** Save `text` as `to` and remove `from`; refused if `to` already exists. */
 export const renameFile = (from: string, to: string, text: string) => json<{ path: string }>("POST", "/api/file/rename", { from, to, text });
-export const validate = (text: string) => json<ValidateResult>("POST", "/api/validate", { text });
+export const validate = (text: string, signal?: AbortSignal) => json<ValidateResult>("POST", "/api/validate", { text }, signal);
 export const generate = (body: GenerateBody, signal?: AbortSignal) => json<Preview>("POST", "/api/generate", body, signal);
 export const infer = (body: InferBody) => json<InferResult>("POST", "/api/infer", body);
 export const exportFiles = (body: ExportBody) => json<ExportResult>("POST", "/api/export", body);
@@ -155,3 +155,37 @@ export async function streamGenerate(body: GenerateBody, onProgress: (p: Progres
   }
   throw new ApiError("The server closed the connection before the run finished");
 }
+
+export interface AuthUser {
+  id: number;
+  email: string | null;
+  displayName: string;
+  avatarUrl: string | null;
+}
+export interface Me {
+  user: AuthUser | null;
+  auth: { accountsEnabled: boolean; googleConfigured: boolean; emailEnabled: boolean };
+}
+
+export const getMe = () => json<Me>("GET", "/api/auth/me");
+export const login = async (email: string, password: string) => (await json<{ user: AuthUser }>("POST", "/api/auth/login", { email, password })).user;
+export const verifyEmail = async (token: string, password: string) => (await json<{ user: AuthUser }>("POST", "/api/auth/verify-email", { token, password })).user;
+export const register = (email: string, password: string) => json<{ pending: true }>("POST", "/api/auth/register", { email, password });
+export const logoutAll = () => json<{ ok: true }>("POST", "/api/auth/logout-all", {});
+export const logout = () => json<{ ok: true }>("POST", "/api/auth/logout", {});
+export const forgotPassword = (email: string) => json<{ ok: true }>("POST", "/api/auth/forgot-password", { email });
+export const resetPassword = async (token: string, password: string) => (await json<{ user: AuthUser }>("POST", "/api/auth/reset-password", { token, password })).user;
+export const resendVerification = (email: string) => json<{ ok: true }>("POST", "/api/auth/resend-verification", { email });
+export const changePassword = (currentPassword: string, newPassword: string) => json<{ ok: true }>("POST", "/api/auth/change-password", { currentPassword, newPassword });
+
+/** An API key as listed: never the secret, which is only returned once by createApiKey. */
+export interface ApiKeyInfo {
+  id: number;
+  name: string;
+  prefix: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+}
+export const listApiKeys = async () => (await json<{ keys: ApiKeyInfo[] }>("GET", "/api/auth/keys")).keys;
+export const createApiKey = (name: string) => json<{ key: string; info: ApiKeyInfo }>("POST", "/api/auth/keys", { name });
+export const revokeApiKey = (id: number) => json<{ ok: true }>("POST", "/api/auth/keys/revoke", { id });

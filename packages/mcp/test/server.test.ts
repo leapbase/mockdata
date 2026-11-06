@@ -139,6 +139,16 @@ describe("mcp file safety", () => {
     }
   });
 
+  it("will not read a schema through a symlink that points outside the root", async () => {
+    const { call, root } = await start();
+    const outside = tmp();
+    writeFileSync(join(outside, "secret.yaml"), "tables:\n  t:\n    rows: 1\n    columns:\n      id: { type: integer, primaryKey: true }\n");
+    symlinkSync(join(outside, "secret.yaml"), join(root, "s.yaml"));
+    const r = await call("validate_schema", { schemaPath: "s.yaml" });
+    expect(r.isError).toBe(true);
+    expect(r.body).toMatch(/outside|symbolic link/);
+  });
+
   it("rejects table names that could escape as file names", async () => {
     const { call } = await start();
     const evil = { tables: { "../evil": { rows: 1, columns: { id: { type: "integer" } } } } };

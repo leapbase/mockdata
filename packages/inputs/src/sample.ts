@@ -21,46 +21,85 @@ export type SampleFormat = "csv" | "json" | "ndjson";
 export function parseCsv(input: string): string[][] {
   const text = input.charCodeAt(0) === 0xfeff ? input.slice(1) : input;
   const rows: string[][] = [];
-  let row: string[] = [];
-  let field = "";
-  let quoted = false;
-  let sawAnything = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (quoted) {
-      if (ch === '"') {
-        if (text[i + 1] === '"') {
-          field += '"';
-          i++;
-        } else quoted = false;
-      } else field += ch;
+  const n = text.length;
+  let i = 0;
+  // Slice-based (no per-character +=): fields are cut out with indexOf/slice.
+  // Quoted fields still start only at a field start, "" is an escaped quote,
+  // and anything after a closing quote up to the next delimiter is literal,
+  // exactly as the previous char-by-char parser behaved.
+  const consumeNewline = () => {
+    if (text[i] === "\r" && text[i + 1] === "\n") i += 2;
+    else i++;
+  };
+  const nextDelimiter = (from: number): number => {
+    let end = n;
+    for (const d of [",", "\n", "\r"]) {
+      const at = text.indexOf(d, from);
+      if (at !== -1 && at < end) end = at;
+    }
+    return end;
+  };
+
+  while (i < n) {
+    // A bare line ending is an empty line, not an empty row.
+    if (text[i] === "\n" || text[i] === "\r") {
+      consumeNewline();
       continue;
     }
-    if (ch === '"' && field === "") {
-      quoted = true;
-      sawAnything = true;
-    } else if (ch === ",") {
-      row.push(field);
-      field = "";
-      sawAnything = true;
-    } else if (ch === "\n" || ch === "\r") {
-      if (ch === "\r" && text[i + 1] === "\n") i++;
-      if (sawAnything || field !== "") {
-        row.push(field);
-        rows.push(row);
+    const row: string[] = [];
+    for (;;) {
+      let field: string;
+      if (text[i] === '"') {
+        const parts: string[] = [];
+        let j = i + 1;
+        let closed = -1;
+        for (;;) {
+          const q = text.indexOf('"', j);
+          if (q === -1) throw new InferError("CSV has an unterminated quoted field");
+          if (text[q + 1] === '"') {
+            parts.push(text.slice(j, q), '"');
+            j = q + 2;
+          } else {
+            parts.push(text.slice(j, q));
+            closed = q;
+            break;
+          }
+        }
+        i = closed + 1;
+        const end = nextDelimiter(i);
+        if (end > i) parts.push(text.slice(i, end));
+        i = end;
+        field = parts.join("");
+      } else {
+        const end = nextDelimiter(i);
+        field = text.slice(i, end);
+        i = end;
       }
-      row = [];
-      field = "";
-      sawAnything = false;
-    } else {
-      field += ch;
-      sawAnything = true;
+      row.push(field);
+      if (i >= n) {
+        rows.push(row);
+        return rows;
+      }
+      if (text[i] === ",") {
+        i++;
+        if (i >= n) {
+          row.push("");
+          rows.push(row);
+          return rows;
+        }
+        if (text[i] === "\n" || text[i] === "\r") {
+          row.push("");
+          consumeNewline();
+          rows.push(row);
+          break;
+        }
+        continue;
+      }
+      // A line ending ends the row.
+      consumeNewline();
+      rows.push(row);
+      break;
     }
-  }
-  if (quoted) throw new InferError("CSV has an unterminated quoted field");
-  if (sawAnything || field !== "") {
-    row.push(field);
-    rows.push(row);
   }
   return rows;
 }
@@ -189,9 +228,17 @@ function analyzeColumn(rows: SampleRow[], name: string, textual: boolean, opts: 
   const column: ColumnDoc = { type: kind };
 
   if (kind === "integer" || kind === "float") {
+    // A loop, not Math.min(...nums): spreading a whole column throws
+    // RangeError once it exceeds the engine's argument limit (~10^5).
     const nums = values.map(num);
-    column.min = round(Math.min(...nums), 4);
-    column.max = round(Math.max(...nums), 4);
+    let lo = nums[0]!;
+    let hi = nums[0]!;
+    for (const v of nums) {
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    column.min = round(lo, 4);
+    column.max = round(hi, 4);
   } else if (kind === "date" || kind === "datetime") {
     const sorted = values.map(String).sort();
     column.min = sorted[0];
@@ -314,6 +361,12 @@ export function inferFromSamples(
 
 const ms = (v: unknown) => Date.parse(String(v));
 
+/** Median of an array of numbers (sorted in place; callers pass a fresh copy). */
+function median(values: number[]): number {
+  values.sort((p, q) => p - q);
+  return values[Math.floor(values.length / 2)]!;
+}
+
 /** Propose `after` rules that hold in every observed row (and only with enough rows to mean something). */
 function inferDateRules(
   schema: SchemaDoc,
@@ -327,6 +380,18 @@ function inferDateRules(
     const rows = samples[tname]!;
     const t = schema.tables[tname]!;
     const dateCols = [...cols].filter(([, a]) => isDate(a)).map(([c]) => c);
+    // Parent lookups are per (foreign key, parent date column), not per child
+    // date column: build each one once and reuse it for every child column.
+    const byKeyCache = new Map<string, Map<string, unknown>>();
+    const byKeyFor = (fkName: string, pt: string, pc: string, pd: string): Map<string, unknown> => {
+      const key = `${fkName}\u0000${pd}`;
+      let m = byKeyCache.get(key);
+      if (!m) {
+        m = new Map(samples[pt]!.map((r) => [String(r[pc]), r[pd]] as const));
+        byKeyCache.set(key, m);
+      }
+      return m;
+    };
 
     for (const a of dateCols) {
       if (t.columns[a]!.after) continue;
@@ -339,7 +404,7 @@ function inferDateRules(
         if (pairs.length < MIN_ROWS_FOR_RULES) continue;
         const holds = pairs.every(([x, y]) => x >= y);
         const strict = pairs.filter(([x, y]) => x > y).length;
-        if (holds && strict >= pairs.length / 2) candidates.push({ source: b, typical: pairs.map(([, y]) => y).sort((p, q) => p - q)[Math.floor(pairs.length / 2)]! });
+        if (holds && strict >= pairs.length / 2) candidates.push({ source: b, typical: median(pairs.map(([, y]) => y)) });
       }
 
       // Through a foreign key: child date >= parent date in every joined row.
@@ -351,14 +416,14 @@ function inferDateRules(
         if (!parentRows || !parentCols) continue;
         for (const [pd, pa] of parentCols) {
           if (!isDate(pa)) continue;
-          const byKey = new Map(parentRows.map((r) => [String(r[pc]), r[pd]] as const));
+          const byKey = byKeyFor(fkName, pt, pc, pd);
           const pairs = rows
             .filter((r) => !isNull(r[a]) && !isNull(r[fkName]) && !isNull(byKey.get(String(r[fkName]))))
             .map((r) => [ms(r[a]), ms(byKey.get(String(r[fkName])))] as const);
           if (pairs.length < MIN_ROWS_FOR_RULES) continue;
           const strict = pairs.filter(([x, y]) => x > y).length;
           if (pairs.every(([x, y]) => x >= y) && strict >= pairs.length / 2) {
-            candidates.push({ source: `${fkName}.${pd}`, typical: pairs.map(([, y]) => y).sort((p, q) => p - q)[Math.floor(pairs.length / 2)]! });
+            candidates.push({ source: `${fkName}.${pd}`, typical: median(pairs.map(([, y]) => y)) });
           }
         }
       }

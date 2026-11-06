@@ -1,47 +1,57 @@
-import { crc32 } from "node:zlib";
+import { crc32, deflateRawSync } from "node:zlib";
 
 /** DOS date 1980-01-01, time 00:00: archives are reproducible. */
 const DOS_DATE = 0x21;
 const UTF8_NAMES = 0x0800;
+const METHOD_DEFLATE = 8;
 
-/** Minimal store-only (uncompressed) zip archive. */
-export function zip(entries: { name: string; data: Buffer }[]): Buffer {
+/**
+ * Minimal zip archive, one deflate entry per file. Entries are compressed with `zlib.deflateRawSync` (the stored
+ * bytes are the compressed form, so the archive is far smaller than the serialised text it holds) and the caller
+ * passes strings straight in: `deflateRawSync` accepts a string, so no per-table `Buffer.from(text)` copy is made.
+ * What still gets materialised: the serialised strings, one compressed buffer per entry, and the final archive
+ * (one `Buffer.concat` copy). A fully streaming zip is not possible here because the archive must cross back from
+ * the worker thread as a single transferred buffer.
+ */
+export function zip(entries: { name: string; data: string | Buffer }[]): Buffer {
   const parts: Buffer[] = [];
   const central: Buffer[] = [];
   let offset = 0;
   for (const { name, data } of entries) {
     const nameBuf = Buffer.from(name, "utf8");
     const crc = crc32(data);
+    const compressed = deflateRawSync(data);
+    const uncompressedSize = Buffer.byteLength(data);
 
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4); // version needed
+    local.writeUInt16LE(20, 4); // version needed (2.0: deflate)
     local.writeUInt16LE(UTF8_NAMES, 6);
-    local.writeUInt16LE(0, 8); // method: store
+    local.writeUInt16LE(METHOD_DEFLATE, 8); // method: deflate
     local.writeUInt16LE(0, 10); // time
     local.writeUInt16LE(DOS_DATE, 12);
     local.writeUInt32LE(crc, 14);
-    local.writeUInt32LE(data.length, 18);
-    local.writeUInt32LE(data.length, 22);
+    local.writeUInt32LE(compressed.length, 18);
+    local.writeUInt32LE(uncompressedSize, 22);
     local.writeUInt16LE(nameBuf.length, 26);
-    parts.push(local, nameBuf, data);
+    parts.push(local, nameBuf, compressed);
 
     const cd = Buffer.alloc(46);
     cd.writeUInt32LE(0x02014b50, 0);
     cd.writeUInt16LE(20, 4); // version made by
     cd.writeUInt16LE(20, 6); // version needed
     cd.writeUInt16LE(UTF8_NAMES, 8);
-    cd.writeUInt16LE(0, 10); // method
+    cd.writeUInt16LE(METHOD_DEFLATE, 10); // method
     cd.writeUInt16LE(0, 12); // time
     cd.writeUInt16LE(DOS_DATE, 14);
     cd.writeUInt32LE(crc, 16);
-    cd.writeUInt32LE(data.length, 20);
-    cd.writeUInt32LE(data.length, 24);
+    cd.writeUInt32LE(compressed.length, 20);
+    cd.writeUInt32LE(uncompressedSize, 24);
     cd.writeUInt16LE(nameBuf.length, 28);
     cd.writeUInt32LE(offset, 42);
     central.push(cd, nameBuf);
 
-    offset += 30 + nameBuf.length + data.length;
+    offset += 30 + nameBuf.length + compressed.length;
   }
   const directory = Buffer.concat(central);
   const end = Buffer.alloc(22);

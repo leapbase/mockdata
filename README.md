@@ -9,7 +9,7 @@ Generate realistic, **related** test data from a schema you write, or from a sch
 
 Inspired by [syda](https://github.com/syda-ai/syda), with the constraints enforced by code rather than by prompting.
 
-mockdata is open source ([AGPL-3.0-or-later](#license)) at https://github.com/leapbase/mockdata.
+mockdata is open source ([AGPL-3.0-or-later](#license)) at https://github.com/leapbase/mockdata. A hosted copy at https://mockdata.com is free to use: sign in to use the web workspace and the [hosted MCP endpoint](#hosted-mcp-accounts-mode) without installing anything.
 
 ## Install
 
@@ -31,29 +31,17 @@ npx mockdata generate examples/shop.yaml -s 123               # same seed = same
 npx mockdata validate examples/shop.yaml                      # check a schema without generating
 ```
 
-### Seed an existing database
-
-`seed` checks that the schema exactly matches existing tables and that every target table is empty. It previews the database kind, insertion order, row counts, seed, and LLM usage by default. `--apply` generates again, rechecks the target inside a transaction, inserts rows, and commits. An insert error rolls back all rows; the command never truncates, updates, or overwrites existing data.
-
-```
-npx mockdata seed schema.yaml --target sqlite:./test.db
-npx mockdata seed schema.yaml --target sqlite:./test.db --seed 42 --apply
-npx mockdata seed schema.yaml --target env:TEST_DATABASE_URL --apply
-```
-
-The SQLite file must already exist. For PostgreSQL or MySQL/MariaDB, put the connection URL in `TEST_DATABASE_URL` or `.env` and pass `env:TEST_DATABASE_URL`; raw network URLs are rejected on the command line. PostgreSQL defaults to the `public` schema; use `--pg-schema name` to select another. MySQL/MariaDB target tables must use InnoDB. Composite keys, unsupported column types, foreign keys outside the schema, and table cycles needing deferred links are rejected. A preview with LLM columns can incur provider costs, and a later `--apply` generates the model text again, so the preview does not promise identical text.
-
 ### Run the servers
 
-Run `npm run build` first (and again after code changes). Needs Node 22.13 or newer. Both servers listen on 127.0.0.1 only unless you pass `--allow` (see "Opening it to your network").
+Run `npm run build` first (and again after code changes). Needs Node 22.13 or newer. Both servers listen on 127.0.0.1 only unless you pass `--allow` (see "Opening it to your network") or turn on accounts (see "Accounts and going public").
 
 | What | Command | Address |
 |---|---|---|
-| Web UI | `npm run ui -- <folder>` (`--port n` to change) | http://127.0.0.1:8000 (workspace at `/app`) |
+| Web UI | `npm run ui -- <folder>` (`--port n` to change) | http://127.0.0.1:4747 (workspace at `/app`) |
 | MCP server over HTTP | `MOCKDATA_ROOT=<folder> node packages/mcp/dist/bin.js --http` (`--port n`) | http://127.0.0.1:4748/mcp |
 | MCP server over stdio | started by the client: `claude mcp add mockdata -e MOCKDATA_ROOT=<folder> -- node <repo>/packages/mcp/dist/bin.js` | (none) |
 
-`<folder>` holds your schema files and `.env`; nothing outside it is read or written. `GET /healthz` on the web UI answers `{"ok":true}` for uptime monitors and reverse proxies (after the same host and token checks as everything else). Details: [Use it from an AI agent (MCP)](#use-it-from-an-ai-agent-mcp) and [Web UI](#web-ui).
+`<folder>` holds your schema files and `.env`; nothing outside it is read or written. Details: [Use it from an AI agent (MCP)](#use-it-from-an-ai-agent-mcp) and [Web UI](#web-ui).
 
 `examples/shop.yaml`:
 
@@ -121,23 +109,19 @@ A schema is YAML or JSON: an optional `seed`, an optional `llm` block, and `tabl
 | `primaryKey: true` | Integer keys are numbered 1..rows |
 | `unique: true` | Values never repeat. On a foreign key it means one-to-one |
 | `nullable: true`, `nullRate: 0.2` | Some values are null (default rate 0.1) |
-| `enum: [a, b]` | One of these values |
-| `enumWeights: [7, 2]` | Relative weights for the matching `enum` values; zero excludes a value |
+| `enum: [a, b]` | One of these values (at most 1,000 entries) |
 | `min`, `max` | Numbers, or ISO dates for `date`/`datetime` |
-| `pattern: "[A-Z]{3}-[0-9]{4}"` | String matching this regex |
+| `pattern: "[A-Z]{3}-[0-9]{4}"` | String matching this regex (at most 200 characters) |
 | `faker: person.fullName` | String from a faker `module.method` (no arguments) |
 | `ref: table.column` | Foreign key. The target must be a primary key or unique column of the same type |
 | `distribution: zipf` | A few parents get most of the children (default is uniform) |
 | `maxPerParent: 3` | At most 3 children per parent |
-| `minPerParent: 2` | At least 2 children per parent; use with `maxPerParent` for a range or an exact count |
 | `after: other_col` | Date is on or after another column in the same row |
 | `after: fk_col.parent_col` | Date is on or after a column of the parent row reached through `fk_col` |
 | `within: 14` | With `after`: at most 14 days after that date (a bounded gap such as a hospital stay); an explicit `max` still applies |
 | `llm: true` or `llm: {prompt: "..."}` | Text written by an LLM (string columns) |
 
 **Relationships.** A self reference (`ref` to its own table) only points at earlier rows, so make it `nullable`. Tables that reference each other are only allowed when a nullable foreign key on the cycle can be filled afterwards (see `hr.yaml`); otherwise you get a clear error instead of a guessed order.
-
-`minPerParent` reserves the required links before distributing remaining child rows. The child table's `rows` must be at least the parent row count times the minimum; reserved links count toward `maxPerParent` and stay non-null even on a nullable column. The minimum does not support self references or a foreign key deferred to break a table cycle. Set `minPerParent` and `maxPerParent` to the same number for an exact count per parent.
 
 ## Infer a schema from what you already have
 
@@ -195,7 +179,7 @@ The run prints how many calls and tokens it used. LLM output is not reproducible
 
 ## Use it from an AI agent (MCP)
 
-The MCP server exposes the same abilities to agents: over stdio or local HTTP (below):
+The MCP server exposes the same abilities to agents: over stdio or local HTTP (below), or hosted by a site running in accounts mode, such as https://mockdata.com (see [Hosted MCP](#hosted-mcp-accounts-mode)):
 
 | Tool | Does |
 |---|---|
@@ -238,12 +222,12 @@ A local editor and preview, for people who prefer a browser to a terminal.
 
 ```
 npm run build
-npm run ui -- examples          # or: node packages/server/dist/bin.js <folder> [--port 8000]
+npm run ui -- examples          # or: node packages/server/dist/bin.js <folder> [--port 4747]
 ```
 
-Open http://127.0.0.1:8000 for the workspace (also at `/app`), or http://127.0.0.1:8000/docs for the documentation (available in English, Español and 中文 from the language menu). The folder you pass is the root: schema files are listed in the sidebar, `.env` is read from there, and nothing outside it is ever read or written.
+Open http://127.0.0.1:4747 for the landing page (what mockdata does, examples, FAQ) or go straight to the workspace at http://127.0.0.1:4747/app. The folder you pass is the root: schema files are listed in the sidebar, `.env` is read from there, and nothing outside it is ever read or written.
 
-- **Schemas**: select, create, and save schemas in the left sidebar. The top bar holds the theme switch (System, Light, Dark; remembered in this browser) and the Local workspace label.
+- **Schemas**: select, create, and save schemas in the left sidebar. The top bar holds the theme switch (System, Light, Dark; remembered in this browser) and account actions, or shows Local workspace when accounts are disabled.
 - **Editor / Diagram**: edit YAML or JSON with live validation, or switch to a read-only table and relationship diagram with pan, zoom, and fit controls. Errors appear inline and in the status strip, which also shows the generation order. Switching views preserves edits.
 - **Generate data**: open the collapsible right panel for seed, row count, and generation controls. Generate shows the first 50 rows of every table; foreign key values link to the parent row. Collapsing preserves settings and results and keeps a run going. Cancel stops a run and retains the previous preview.
 - **Fill LLM columns**: turn it on to run `llm` columns with progress and a Cancel button. It is only enabled when a provider is configured in `.env` (see LLM setup); the toggle shows which one. Cancelling discards the partial run.
@@ -252,7 +236,7 @@ Open http://127.0.0.1:8000 for the workspace (also at `/app`), or http://127.0.0
 
 On smaller screens the generation panel opens over the schema; on phones the schema sidebar also becomes a drawer. Escape closes a drawer and returns focus to its opening button.
 
-The server listens on 127.0.0.1 only (unless you use `--allow`, below) and rejects requests from other hosts or origins. Connection strings are never typed into the browser: keep them in `.env` and pick the variable name. For development run `npm run dev` (after `npm run build`): it starts `mockdata-ui` on port 3005 and Vite on http://localhost:3000, which proxies `/api` to it. To run only Vite, use `npm run dev -w packages/web`.
+The server listens on 127.0.0.1 only (unless you use `--allow`, below) and rejects requests from other hosts or origins. Connection strings are never typed into the browser: keep them in `.env` and pick the variable name. For development run `npm run dev -w packages/web` (Vite on its own port, proxying `/api` to a running `mockdata-ui`).
 
 ## Opening it to your network
 
@@ -267,7 +251,7 @@ MOCKDATA_ROOT=<folder> node packages/mcp/dist/bin.js --http --allow 100.100.1.x
 
 Everyone outside this machine also needs a shared secret token. Set `MOCKDATA_TOKEN` (16 or more characters from `A-Z a-z 0-9 . _ ~ -`, in the environment or `.env`; `.env` is never served) or let the server generate one and print it at start. There is deliberately no `--token` flag, since command lines show up in process lists.
 
-- **Browser:** open `http://<address>:8000/app?token=<token>` once. The server swaps it for an `HttpOnly`, `SameSite=Strict` cookie and redirects to a clean URL, so the token does not stay in the address bar or history.
+- **Browser:** open `http://<address>:4747/app?token=<token>` once. The server swaps it for an `HttpOnly`, `SameSite=Strict` cookie and redirects to a clean URL, so the token does not stay in the address bar or history.
 - **Scripts and MCP clients:** send `Authorization: Bearer <token>`, for example `claude mcp add --transport http mockdata http://<address>:4748/mcp --header "Authorization: Bearer <token>"`. The MCP endpoint accepts the header only, never a cookie or query string.
 - **Localhost** needs no token.
 
@@ -275,22 +259,75 @@ Traffic is plain http, so the token can be read by anyone who can see the networ
 
 ## Generation runs in worker threads
 
-The web UI generates data (previews, runs with model-written columns, exports) in worker threads, so a big run no longer freezes the page or anyone else's requests. With 20,000 rows x 6 columns, a trivial request that waited up to 3.2 s behind ten concurrent generations on the main thread waits 2-5 ms with the pool, and preview throughput went from 4 to 11 requests a second.
+The web UI generates data (previews, runs with model-written columns, exports) in worker threads, so a big run no longer freezes the page, sign-ins or anyone else's requests. With 20,000 rows x 6 columns, a trivial request that waited up to 3.2 s behind ten concurrent generations on the main thread waits 2-5 ms with the pool, and preview throughput went from 4 to 11 requests a second (`npm run loadtest` measures this on your machine).
 
 | Variable | Meaning |
 |---|---|
 | `MOCKDATA_WORKERS` | threads (default: up to 4, always leaving a core for the server); `0` generates on the main thread as before |
 | `MOCKDATA_WORKER_QUEUE` | jobs allowed to wait for a free thread (16); more are refused with 503 "busy" |
 | `MOCKDATA_JOB_TIMEOUT_SECS` | a job running longer is stopped and answered with 504 (120); the clock starts once the thread has loaded, not while it starts |
+| `MOCKDATA_JOB_TIMEOUT_LLM_BATCH_SECS` | extra seconds per model batch on top of the timeout above (5), so a long model run is not cut short: a job with model-written columns gets 120 s + `ceil(model cells / batch size)` × this value |
 | `MOCKDATA_WORKER_HEAP_MB` | each thread's memory limit (2048), so one pathological schema cannot take the server down |
 
 Threads start when first needed and are reused. A worker that crashes or overruns costs only that job and one replacement thread. Closing the browser tab cancels a queued job and stops a model run before its next request. The same seed gives byte-identical output with or without the pool. Worker threads run the compiled code, so `npm run build` is needed (as it already is for `npm run ui`). The CLI and the MCP server still generate on their own thread.
 
-## Building a hosted layer
+## Accounts and going public
 
-The server has one seam for a multi-user site. Implement `HostedPlugin` (`packages/server/src/hosted.ts`) and pass it as `hosted` to `createApp` or `startServer`: the plugin names the caller of each request, gives that caller their own folder and a `Policy` (rate limits, schema and write limits, model and database access, run slots), may serve its own `/api/` routes and `/mcp`, and adds response headers. Without a plugin the server is the local workspace described above. `@mockdata/server` exports the helpers a plugin's routes need (`HttpError`, `readJson`, `sendJson`, `Ctx`, `publicMessage`, ...).
+For a site other people sign in to, set `MOCKDATA_PUBLIC_URL` and start the UI as usual. Accounts are an opt-in mode; without that variable nothing here applies.
 
-On the web side, `mountApp(slots)` from `@mockdata/web` takes a `gate` (sign-in around the workspace), `landing: true` (serve the landing page at `/`; the open build opens the workspace there), call-to-action labels for the landing page, landing copy and extra documentation pages. `vitest.aliases.ts` exports `mockdataAliases(repoRoot)` for a repository that embeds this one as a git submodule. The hosted site at https://mockdata.com is built this way, from a separate private repository.
+| Mode | Turned on by | Who gets in |
+|---|---|---|
+| Local (default) | nothing | anyone on this machine; nothing is reachable from outside |
+| Private network | `--allow ranges` | the listed private ranges, with a shared token |
+| **Accounts** | `MOCKDATA_PUBLIC_URL` | everyone signs in, **including localhost**; no token, no allow list |
+
+Localhost is not trusted in accounts mode because a reverse proxy that terminates https connects from localhost on behalf of the whole internet. To keep the no-login local workflow, run without `MOCKDATA_PUBLIC_URL`; to try accounts on your own machine, use `MOCKDATA_PUBLIC_URL=http://localhost:4747`.
+
+**What you configure** (environment or `.env`; see `.env.example`):
+
+| Variable | Meaning |
+|---|---|
+| `MOCKDATA_PUBLIC_URL` | `https://your-domain` (plain http is accepted only for localhost) |
+| `MOCKDATA_DATA_DIR` or `--data-dir` | accounts database and every user's private folder (default `./mockdata-data`); back it up |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | email for verification and password reset. **Resend:** `smtp.resend.com`, port `465`, secure `true`, user `resend`, password = your Resend API key; verify your sending domain in Resend first |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | optional Google sign-in; in Google Cloud add the redirect URI `<MOCKDATA_PUBLIC_URL>/api/auth/google/callback` |
+| `MOCKDATA_TRUST_PROXY` | `1` or `0`. Rate limits need each visitor's address, which a reverse proxy on this machine supplies in `X-Forwarded-For` (the **last** entry is used, and only when the connection comes from localhost). Default: on for an `https` address, off for plain-http localhost. Set `0` if a CDN sits in front of your proxy, because the last entry would then be the CDN, not the visitor |
+| `MOCKDATA_LLM_DAILY_ROWS`, `MOCKDATA_LLM_GLOBAL_DAILY_ROWS` | model-written rows per user per day (2000) and across all users per day (20000): the second is your overall spending ceiling |
+| `MOCKDATA_MAX_ROWS`, `MOCKDATA_MAX_CELLS` | rows per run (200000) and rows x columns per run (500000, about one second of server time) |
+| `MOCKDATA_USER_QUOTA_MB`, `MOCKDATA_USER_MAX_FILES`, `MOCKDATA_MAX_RUNS` | storage per user (50 MB), files per user (500), and runs at once across all users (4) |
+
+It refuses to start unless people can sign up (email and/or Google) and the address is valid. The UI listens on 127.0.0.1; put a reverse proxy in front that provides https. With Caddy (certificates are automatic):
+
+```
+mockdata.example.com {
+  reverse_proxy 127.0.0.1:4747
+}
+```
+
+```
+MOCKDATA_PUBLIC_URL=https://mockdata.example.com MOCKDATA_TRUST_PROXY=1 npm run ui -- /path/holding/.env
+```
+
+**How it behaves.** Sign-up needs a verified email (a link mailed to the address; Google accounts need Google to report the address as verified). Sessions are a random id in an `HttpOnly`, `SameSite=Lax` cookie (named `__Host-mockdata_session` and `Secure` over https, so a sibling subdomain cannot plant one), stored hashed on the server, sliding over 30 days and never longer than 90. Sign-up, sign-in and reset answer the same whether or not an address exists, and email is sent after the answer so a slow mail server does not show in response times. Confirming an address needs both proofs: the emailed link (the mailbox) **and** the password chosen at sign-up, typed on a confirm screen, so a stranger who signs up first with someone else's address cannot be handed that account when the real owner clicks. That owner recovers with "Forgot password?", which proves the mailbox, replaces the password and signs everyone else out. Signing up again with an address that is already registered changes nothing (not the password, not the sessions, not earlier links); an unverified one is mailed one more link, limited to five mails an hour per mailbox. Resetting or changing a password signs out the other sessions, and "Sign out everywhere" ends all of them. Emailed links keep their one-time token in the URL fragment, so it never reaches a proxy log, a Referer header or a mail scanner (verifying is a POST, not a link that does something when opened). Each user gets a private folder named by a random id; nobody can read or write outside their own, and the account database (kept private to the server's user) lives outside all of them.
+
+**What users cannot do**, because the server's keys and databases are the operator's: infer a schema from a database variable, or choose a model, provider, address or key in a schema's `llm:` block (the operator's settings are used; batch size is at least 10, retries at most 2, context depth at most 1, and a column's instruction at most 500 characters). Schemas are limited to 50 tables, 100 columns per table and 64-character names, plus the row and cell limits above. Password hashing is the costly part of an anonymous request, so at most two run at once (a short queue, then a 503), every sign-in attempt is counted before it is hashed, and failed sign-ins are tracked per mailbox and address so a stranger cannot lock the owner out from elsewhere. Sign-ups, mail requests and Google starts are rate limited per visitor (an IPv6 visitor by its /64), and each signed-in user has a row, cell, storage, file, daily model-row and concurrent-run limit, at most 30 runs (generate, run, export, infer) and 120 schema checks a minute, and 5 password changes per 15 minutes. Every unauthenticated request that hashes a password, and every sign-in attempt, is counted before the hash runs.
+
+**Known limits.** The same person signing in with email and with Google gets two separate accounts. Password hashing is bounded (two at once, a short queue), so a large distributed flood can still make sign-ins answer "busy" (503) for everyone until it stops; front the site with a CDN or firewall rate limit if you expect that. About 100 failed sign-ins a quarter-hour against one mailbox, spread over many addresses, will lock its owner out of password sign-in for a while (Forgot password still works). If the mail queue is full (a flood from many addresses) messages are dropped with a log line while the visitor is told to check their email. Model spend is charged per requested row up front (with the caps above), not per token, so the two daily row limits are the real ceiling; nothing stops someone making many accounts except those limits and the per-address sign-up limit (consider a verified-domain allowlist or a CAPTCHA if that matters to you). Empty folders are not counted against a user's limits. Rate limits and run slots live in memory, so they reset on restart and assume a single server process. SMTP credentials and model keys sit in the operator's environment.
+
+### Hosted MCP (accounts mode)
+
+In accounts mode the web server also serves MCP (Streamable HTTP) at `<MOCKDATA_PUBLIC_URL>/mcp`, for example `https://mockdata.com/mcp`. Clients authenticate with a per-user **API key**: sign in, open the account menu, choose **API keys**, and create one. The key is shown once; only its SHA-256 is stored, and the list shows each key's name, first characters and when it was last used.
+
+```
+claude mcp add --transport http mockdata https://mockdata.com/mcp --header "Authorization: Bearer <your API key>"
+```
+
+- The key goes in the `Authorization` header only. The session cookie is not accepted at `/mcp`, so a web page cannot use a signed-in browser to call it.
+- The tools work in that user's private folder, with everything in "What users cannot do" above: the operator's model settings, the row, cell, storage, file and daily model limits, and no inference from database variables. Generation runs in the worker pool, like the web UI's runs.
+- A session belongs to the user who opened it; a request for it with another user's key is answered as if it did not exist. At most 5 open sessions per user and 500 in total; idle ones close after 30 minutes. Each user may send 240 requests a minute, and an address that sends 30 wrong keys in 15 minutes is refused for a while.
+- Each user may hold 10 keys and revoke any of them at any time. Resetting a password through "Forgot password?" revokes all of that user's keys, because whoever knew the old password may have made one. Changing the password while signed in, or "Sign out everywhere", does not; revoke keys in the list if you need to.
+
+The local `--http` server (above) is separate and keeps its no-login, localhost-only setup.
 
 ## Use it as a library
 
@@ -309,6 +346,8 @@ const data = generate(schemaObjectOrYamlParsed, { seed: 1 });   // { customers: 
 | Package | Role |
 |---|---|
 | `packages/core` | Schema validation, table ordering, generation, constraint checks |
+| `packages/auth-kit` | Vendored account logic from itravelmap: password hashing, validation, verification and reset tokens, mailer |
+| `packages/accounts` | SQLite account store, sessions, OAuth state, rate limits, quotas, emails |
 | `packages/llm` | Providers (Anthropic, OpenAI, Ollama/OpenAI-compatible), prompts with parent context, retries |
 | `packages/inputs` | Schema inference from databases, OpenAPI/JSON Schema, sample data |
 | `packages/cli` | The `mockdata` command |
@@ -321,34 +360,12 @@ const data = generate(schemaObjectOrYamlParsed, { seed: 1 });   // { customers: 
 ```
 npm test              # everything (vitest); no network, no API keys, no database servers needed
 npm run build         # tsc for each package, in dependency order
+npm run loadtest      # dev-only: ramps sign-ins, page loads and generation against a real accounts-mode server (apps/loadtest)
 ```
 
-A live MySQL inference test runs when `MOCKDATA_TEST_MYSQL_URL` is set. The CLI seeding integration tests also run when `MOCKDATA_TEST_POSTGRES_URL` and/or `MOCKDATA_TEST_MYSQL_URL` are set. Use only disposable test databases: the tests create and remove their own schema or tables, then check preview, commit, and rollback. See `CLAUDE.md` for the architecture notes.
+A live MySQL test runs when `MOCKDATA_TEST_MYSQL_URL` is set. See `CLAUDE.md` for the architecture notes.
 
 Run `npm run build` before `npm test` to include the production bundle checks (they skip when no Vite manifest exists). These guard the 250 kB startup JavaScript budget, the 500 kB per-chunk limit, and lazy-loading boundaries for the workspace, editor, and diagram. The sign-in screen does not load workspace code; the diagram loads on first selection, while the editor stays mounted to preserve undo history.
-
-### CI and standalone packages
-
-GitHub Actions runs a clean `npm ci`, build, full test suite, standalone package installation check, and dependency audit on Node 22 and 24 for pull requests and pushes to `main` or `develop`. Live database tests still require the disposable database settings described above.
-
-```sh
-npm run test:packages    # build, pack, install in a temporary folder, and smoke-test
-npm run pack:packages   # build and write the six release tarballs to artifacts/
-```
-
-The standalone check installs all six local tarballs together because the packages are not published yet. It downloads their public npm dependencies, imports the installed libraries, exercises CLI generation and MCP startup, and checks the web page, its assets, and generation through a worker. Temporary installations are removed afterward. CI calls `node scripts/test-packages.mjs` after its build to avoid building twice.
-
-The full build copies the web bundle into `@mockdata/server` under `dist/web`, so an installed server no longer needs a sibling web workspace. Embedding applications can continue to supply their own `staticDir`. The six packages include compiled code, TypeScript source, README, and LICENSE; internal dependencies use the matching package version and must be updated together when releasing. Packaging does not publish anything to npm.
-
-To try the tarballs in an empty folder outside the checkout:
-
-```sh
-npm init -y
-npm install /absolute/path/to/mockdata/artifacts/*.tgz
-npx mockdata --help
-npx mockdata-mcp --help
-npx mockdata-ui .
-```
 
 ## Git setup
 

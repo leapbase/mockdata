@@ -58,6 +58,12 @@ export interface GenerationPlan {
    * first pass to break a table cycle; they are filled in afterwards.
    */
   deferred: string[];
+  /**
+   * Optional memo of each table's column order (from columnOrder), filled in
+   * by generate() when a plan is reused across runs so the order is not
+   * recomputed per table per run. planGeneration() leaves it unset.
+   */
+  columnOrders?: Record<string, string[]>;
 }
 
 /**

@@ -20,8 +20,7 @@ const INDEXES = `
 
 const FOREIGN_KEYS = `
   select k.table_name as table_name, k.constraint_name as constraint_name, k.column_name as column_name,
-         k.referenced_table_name as ref_table, k.referenced_table_schema as ref_schema,
-         k.referenced_column_name as ref_column, k.ordinal_position as pos
+         k.referenced_table_name as ref_table, k.referenced_column_name as ref_column, k.ordinal_position as pos
   from information_schema.key_column_usage k
   where k.table_schema = ? and k.referenced_table_name is not null
   order by k.table_name, k.constraint_name, k.ordinal_position`;
@@ -39,6 +38,12 @@ export function parseMysqlEnum(columnType: string): string[] | undefined {
 /** Reflect one MySQL/MariaDB database (the schema in `database`) using catalog SELECTs only. */
 export async function introspectMysql(query: Query, database: string): Promise<RawTable[]> {
   // Sequential: one connection, one query at a time.
+  // Verified against mysql2 3.24.5 (node_modules/mysql2/lib/base/connection.js):
+  // query() goes through addCommand(), which runs one command at a time and
+  // pushes any further command onto the _commands queue until the current one
+  // finishes. Promise.all over these three would only queue them serially
+  // inside the driver, so only a second connection could parallelise them —
+  // and that is out of scope for this introspection.
   const columns = await query(COLUMNS, [database]);
   const indexes = await query(INDEXES, [database]);
   const fks = await query(FOREIGN_KEYS, [database]);
@@ -73,16 +78,16 @@ export async function introspectMysql(query: Query, database: string): Promise<R
     else if (idx.unique) t.uniques.push(idx.columns);
   }
 
-  const byFk = new Map<string, { table: string; refTable: string; refSchema: string; columns: string[]; refColumns: string[] }>();
+  const byFk = new Map<string, { table: string; refTable: string; columns: string[]; refColumns: string[] }>();
   for (const r of fks) {
     const key = `${r.table_name}\u0000${r.constraint_name}`;
-    const fk = byFk.get(key) ?? { table: String(r.table_name), refTable: String(r.ref_table), refSchema: String(r.ref_schema ?? database), columns: [], refColumns: [] };
+    const fk = byFk.get(key) ?? { table: String(r.table_name), refTable: String(r.ref_table), columns: [], refColumns: [] };
     fk.columns.push(String(r.column_name));
     fk.refColumns.push(String(r.ref_column));
     byFk.set(key, fk);
   }
   for (const fk of byFk.values()) {
-    tables.get(fk.table)?.foreignKeys.push({ columns: fk.columns, refTable: fk.refTable, refColumns: fk.refColumns, ...(fk.refSchema !== database ? { external: true } : {}) });
+    tables.get(fk.table)?.foreignKeys.push({ columns: fk.columns, refTable: fk.refTable, refColumns: fk.refColumns });
   }
   return [...tables.values()];
 }

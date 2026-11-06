@@ -1,9 +1,9 @@
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseSchemaText, run, serialize, type IO } from "../src/cli.js";
+import { loadEnv, parseSchemaText, run, serialize, type IO } from "../src/cli.js";
 
 const example = join(__dirname, "../../../examples/shop.yaml");
 const llmExample = join(__dirname, "../../../examples/shop-llm.yaml");
@@ -55,6 +55,56 @@ describe("cli", () => {
     expect((await exec("generate", example, "-f", "csv")).err).toMatch(/needs --out/);
     expect((await exec("generate", example, "-s", "abc")).code).toBe(1);
     expect((await exec("validate", "/no/such/file.yaml")).code).toBe(1);
+  });
+
+  it("refuses a schema over the 1,000,000-row budget before generating anything", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mockdata-budget-"));
+    const schema = join(dir, "big.yaml");
+    writeFileSync(schema, "tables:\n  t:\n    rows: 1000001\n    columns:\n      id: { type: integer, primaryKey: true }\n");
+    const r = await exec("generate", schema);
+    expect(r.code).toBe(1);
+    expect(r.err).toMatch(/would generate 1000001 rows; the limit is 1000000/);
+  });
+
+  it("writes -o files byte-identical to serialize() in every format, across chunk boundaries", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mockdata-stream-"));
+    const { out } = await exec("generate", example);
+    const data = JSON.parse(out);
+    for (const format of ["json", "ndjson", "csv"] as const) {
+      const outDir = join(dir, format);
+      expect((await exec("generate", example, "-o", outDir, "-f", format)).code).toBe(0);
+      for (const table of ["customers", "orders"]) {
+        const columns = Object.keys(data[table][0]);
+        expect(readFileSync(join(outDir, `${table}.${format}`), "utf8")).toBe(serialize(data[table], columns, format));
+      }
+    }
+    // 2,500 rows crosses the 1,000-row write chunk twice, in every format.
+    const big = join(dir, "big.yaml");
+    writeFileSync(big, "tables:\n  t:\n    rows: 2500\n    columns:\n      id: { type: integer, primaryKey: true }\n      n: { type: integer, min: 0, max: 9 }\n");
+    const bigOut = JSON.parse((await exec("generate", big)).out);
+    for (const format of ["json", "ndjson", "csv"] as const) {
+      const outDir = join(dir, `big-${format}`);
+      expect((await exec("generate", big, "-o", outDir, "-f", format)).code).toBe(0);
+      expect(readFileSync(join(outDir, `t.${format}`), "utf8")).toBe(serialize(bigOut.t, ["id", "n"], format));
+    }
+  });
+
+  it("documents the row cap in --help", async () => {
+    expect((await exec("--help")).out).toMatch(/capped at 1,000,000 rows/);
+  });
+});
+
+describe("loadEnv memoisation", () => {
+  it("re-reads .env when it changes and forgets it when deleted", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mockdata-loadenv-"));
+    writeFileSync(join(dir, ".env"), "A=one\n");
+    expect(loadEnv(dir, {})).toMatchObject({ A: "one" });
+    expect(loadEnv(dir, {})).toMatchObject({ A: "one" });
+    writeFileSync(join(dir, ".env"), "A=two-is-longer\n");
+    utimesSync(join(dir, ".env"), new Date(), new Date(Date.now() + 2000));
+    expect(loadEnv(dir, {})).toMatchObject({ A: "two-is-longer" });
+    unlinkSync(join(dir, ".env"));
+    expect(loadEnv(dir, {})).not.toHaveProperty("A");
   });
 });
 
