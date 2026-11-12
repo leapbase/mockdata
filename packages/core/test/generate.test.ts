@@ -325,3 +325,11 @@ describe("within (bounded gap after another date)", () => {
     expect(() => parseSchema(col({ type: "date", after: "d", within: 0 }))).toThrow();
   });
 });
+
+describe("schema errors", () => {
+  it("names the rule for an invalid table name, not just the record key", () => {
+    expect(() => parseSchema({ tables: { "bad name": { rows: 1, columns: { id: { type: "integer" } } } } })).toThrow(
+      /tables\.bad name: table names may use letters, digits, _ and -/,
+    );
+  });
+});

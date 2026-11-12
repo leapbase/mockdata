@@ -13,7 +13,8 @@
     "@mockdata/core": "0.0.1",
     "@mockdata/inputs": "0.0.1",
     "@mockdata/llm": "0.0.1",
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^4.6.7"
   },
   "files": [
     "dist",

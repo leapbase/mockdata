@@ -91,7 +91,7 @@ export const LlmConfigSchema = z
 export const TableSchema = z
   .object({
     rows: z.number().int().nonnegative(),
-    columns: z.record(ColumnSchema),
+    columns: z.record(z.string(), ColumnSchema),
   })
   .strict();
 
@@ -126,7 +126,8 @@ export function parseSchema(input: unknown): DataSchemaT {
   const result = DataSchema.safeParse(input);
   if (!result.success) {
     const issues = result.error.issues
-      .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
+      // zod 4 reports a bad record key as "Invalid key in record" and nests the key schema's own message.
+      .map((i) => `${i.path.join(".") || "(root)"}: ${i.code === "invalid_key" && i.issues[0] ? i.issues[0].message : i.message}`)
       .join("; ");
     throw new SchemaError(`Invalid schema: ${issues}`);
   }
