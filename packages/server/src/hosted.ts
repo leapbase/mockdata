@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { PublicUrl } from "@mockdata/cli";
-import type { DataSchemaT, LlmConfig } from "@mockdata/core";
+import { llmColumns, type DataSchemaT, type LlmConfig } from "@mockdata/core";
 import type { Ctx } from "./http.js";
 
 /**
@@ -8,6 +8,12 @@ import type { Ctx } from "./http.js";
  * A hosted layer implements `HostedPlugin` and passes it to `createApp` / `startServer` as `hosted`; the server then
  * asks it who the caller is and what they may do, and otherwise behaves as it does locally.
  */
+
+/** What a gated run will do, for budgeting. */
+export interface RunOptions {
+  /** Model-filled cells the run fills; absent means every `llm` cell of every row. */
+  llmCells?: number;
+}
 
 /** A run the policy admitted: generate from `schema` (the policy may have tightened it), then call `done`. */
 export interface RunTicket {
@@ -37,8 +43,12 @@ export interface Policy {
   checkSchema(schema: DataSchemaT): void;
   /** `checkSchema` plus the row cap, for a run that is not slot-gated. */
   checkRun(schema: DataSchemaT): void;
-  /** Before a gated generation: throttle, schema and row caps, budgets, and the run slot. */
-  beginRun(schema: DataSchemaT): Promise<RunTicket>;
+  /**
+   * Before a gated generation: throttle, schema and row caps, budgets, and the run slot. `llmCells`, when given, is
+   * how many model-filled cells the run will actually fill (a preview fills only its subset), so a budget can be
+   * charged on that instead of the schema's full row counts.
+   */
+  beginRun(schema: DataSchemaT, opts?: RunOptions): Promise<RunTicket>;
   /**
    * Before writing files into the caller's folder. `netBytes` is what the write adds after replaced files free
    * their size, `newFiles` how many files it creates, `fileBytes` the size of the single file when there is one.
@@ -76,6 +86,14 @@ export interface HostedPlugin {
 }
 
 /** Admit a generation: the caller's policy decides when there is one, a local server admits everything. */
-export async function beginRun(ctx: Ctx, schema: DataSchemaT): Promise<RunTicket> {
-  return ctx.policy ? ctx.policy.beginRun(schema) : { schema, done: () => undefined };
+export async function beginRun(ctx: Ctx, schema: DataSchemaT, opts?: RunOptions): Promise<RunTicket> {
+  return ctx.policy ? ctx.policy.beginRun(schema, opts) : { schema, done: () => undefined };
+}
+
+/**
+ * Model-filled cells a run makes when each table is cut to at most `maxRows` (the preview subset the run job fills),
+ * so a daily budget is charged on the cells actually filled, not the schema's full row counts.
+ */
+export function llmCellsCapped(schema: DataSchemaT, maxRows: number): number {
+  return llmColumns(schema).reduce((n, c) => n + Math.min(schema.tables[c.table]?.rows ?? 0, maxRows), 0);
 }

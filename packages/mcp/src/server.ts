@@ -37,15 +37,15 @@ export interface HostedHooks {
   /** Model settings (the operator's), instead of .env under root, which belongs to the caller. */
   env: () => Record<string, string | undefined>;
   /** Before a schema is checked: throw to refuse (rate limits, size caps). */
-  beforeValidate(schema: DataSchemaT): void;
+  beforeValidate(schema: DataSchemaT): void | Promise<void>;
   /** Before inference: throw to refuse (rate limits). */
-  beforeInfer(): void;
+  beforeInfer(): void | Promise<void>;
   /** Whether infer_schema may read a database named by an environment variable. */
   allowConnectionEnv: boolean;
   /** Generate under the caller's quotas, somewhere other than this thread. */
   generate(schema: DataSchemaT, opts: { seed?: number; sampleRows: number; format?: Format; signal?: AbortSignal }): Promise<GenerateResult>;
-  /** Before files are written (`bytes` replaces whatever is at `file`): throw to refuse (storage quota). */
-  beforeWrite(files: { file: string; bytes: number }[]): void;
+  /** Before files are written (`bytes` replaces whatever is at `file`): throw or reject to refuse (storage quota). Awaited. */
+  beforeWrite(files: { file: string; bytes: number }[]): void | Promise<void>;
   /** What the caller is told about a failed tool call (a shared server hides internals such as file system paths). */
   describeError(e: unknown): string;
 }
@@ -134,9 +134,9 @@ export function createServer(opts: ServerOptions = {}): McpServer {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     (args) =>
-      guarded(() => {
+      guarded(async () => {
         const schema = parseSchema(loadRaw(args));
-        hosted?.beforeValidate(schema);
+        await hosted?.beforeValidate(schema);
         return {
           ok: true,
           tables: Object.fromEntries(Object.entries(schema.tables).map(([n, t]) => [n, { rows: t.rows, columns: Object.keys(t.columns) }])),
@@ -171,7 +171,7 @@ export function createServer(opts: ServerOptions = {}): McpServer {
     (args) =>
       guarded(async () => {
         if (hosted) {
-          hosted.beforeInfer();
+          await hosted.beforeInfer();
           if (!hosted.allowConnectionEnv && args.connectionEnv !== undefined) throw new UserError("Inferring from a database is not available on this server");
         }
         const result = await inferConfined(root, hosted ? hosted.env() : baseEnv, args);
@@ -222,7 +222,7 @@ export function createServer(opts: ServerOptions = {}): McpServer {
 
         const files: string[] = [];
         if (outDir) {
-          hosted?.beforeWrite(targets.map(({ table, file }) => ({ file, bytes: Buffer.byteLength(texts![table]!) })));
+          await hosted?.beforeWrite(targets.map(({ table, file }) => ({ file, bytes: Buffer.byteLength(texts![table]!) })));
           for (const { table, file } of targets) {
             writeFileConfined(root, file, texts![table]!, { overwrite: args.overwrite });
             files.push(path.relative(root, file).split(path.sep).join("/"));

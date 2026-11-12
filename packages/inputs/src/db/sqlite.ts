@@ -79,16 +79,24 @@ export function introspectSqlite(db: SqliteLike): RawTable[] {
     tables.get(fk.table)?.foreignKeys.push({ columns: fk.columns, refTable: fk.refTable, refColumns });
   }
 
-  const uniquesByIndex = new Map<string, { table: string; columns: string[] }>();
+  // Unique indexes in index order. Partial and expression indexes are left out of `uniques` (inference cannot express
+  // them) but recorded in `unsupportedForSeed`, since seeding rows straight into such a table could violate them.
+  const uniquesByIndex = new Map<string, { table: string; name: string; partial: boolean; columns: string[] }>();
   for (const r of indexRows) {
-    if (Number(r.unique) !== 1 || Number(r.partial) === 1) continue;
+    if (Number(r.unique) !== 1) continue;
     if (r.origin === "pk") continue; // the primary key, reported separately
     const key = `${r.t}\u0000${r.idx}`;
-    const idx = uniquesByIndex.get(key) ?? { table: String(r.t), columns: [] };
-    idx.columns.push(String(r.col));
+    const idx = uniquesByIndex.get(key) ?? { table: String(r.t), name: String(r.idx), partial: Number(r.partial) === 1, columns: [] };
+    idx.columns.push(String(r.col)); // an expression column has a NULL name, which reads as "null"
     uniquesByIndex.set(key, idx);
   }
-  for (const idx of uniquesByIndex.values()) tables.get(idx.table)?.uniques.push(idx.columns);
+  for (const idx of uniquesByIndex.values()) {
+    const t = tables.get(idx.table);
+    if (!t) continue;
+    const unsupported = idx.partial ? `partial unique index ${idx.name}` : idx.columns.includes("null") ? `expression unique index ${idx.name}` : undefined;
+    if (unsupported) (t.unsupportedForSeed ??= []).push(unsupported);
+    else t.uniques.push(idx.columns);
+  }
 
   return [...tables.values()];
 }

@@ -19,6 +19,13 @@ describe("resolveInside", () => {
     expect(() => resolveInside(root, "../x")).toThrow(/outside/);
     expect(() => resolveInside(root, "link/x.yaml")).toThrow(/outside/);
   });
+  it("refuses an over-long path quickly instead of walking it", () => {
+    const root = tmp();
+    expect(resolveInside(root, "a/".repeat(500) + "x.yaml")).toBe(join(root, "a/".repeat(500) + "x.yaml"));
+    const started = Date.now();
+    expect(() => resolveInside(root, "a/".repeat(500_000) + "x.yaml")).toThrow(/longer than 1024/);
+    expect(Date.now() - started).toBeLessThan(100);
+  });
 });
 
 describe("checkSchemaPath / isEnvFile", () => {
@@ -53,6 +60,14 @@ describe("inferConfined", () => {
     expect(err).toBeInstanceOf(UserError);
     expect(String(err.message)).not.toContain("sk-secret");
     await expect(inferConfined(root, {}, { connectionEnv: "DATABASE_URL" })).rejects.toThrow(/DATABASE_URL is not set/);
+  });
+  it("never offers the operator's own MOCKDATA_ settings, such as the account database, as a source", async () => {
+    const root = tmp();
+    const env = { MOCKDATA_ACCOUNTS_DB: "postgres://ops:hunter2@db.internal/accounts", SHOP_DATABASE_URL: "postgres://app@localhost/shop" };
+    expect(dbEnvNames(env)).toEqual(["SHOP_DATABASE_URL"]);
+    const err = await inferConfined(root, env, { connectionEnv: "MOCKDATA_ACCOUNTS_DB" }).catch((e) => e as Error);
+    expect(String(err.message)).toMatch(/connectionEnv must be/);
+    expect(String(err.message)).not.toContain("hunter2");
   });
   it("requires exactly one source, refuses .env paths and escapes", async () => {
     const root = tmp();

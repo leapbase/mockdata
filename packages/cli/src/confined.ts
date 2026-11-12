@@ -36,14 +36,18 @@ export const SCHEMA_EXT = new Set([".yaml", ".yml", ".json"]);
 export const isEnvFile = (p: string): boolean => path.basename(p).startsWith(".env");
 
 /** Env var names a caller may use for a database URL: must look like database config, never e.g. an API key. */
-const DB_ENV_NAME = /^(?=.*(DATABASE|DB|POSTGRES|MYSQL|MARIADB|SQLITE))[A-Z][A-Z0-9_]*$/;
+/** A database URL a caller may name for inference. MOCKDATA_* names are the operator's own settings (such as the account database), never a source. */
+const DB_ENV_NAME = /^(?!MOCKDATA_)(?=.*(DATABASE|DB|POSTGRES|MYSQL|MARIADB|SQLITE))[A-Z][A-Z0-9_]*$/;
 const MAX_INLINE_BYTES = 5 * 1024 * 1024;
+/** Longest relative path a caller may name. The walk below is quadratic in path length, so an uncapped path could block the event loop for minutes. */
+export const MAX_RELATIVE_PATH = 1024;
 
 /**
  * Resolve a caller-supplied relative path inside `root`. Rejects absolute
- * paths, `..` escapes, and symlinks that lead outside the root.
+ * paths, `..` escapes, symlinks that lead outside the root, and paths longer than `MAX_RELATIVE_PATH`.
  */
 export function resolveInside(root: string, rel: string): string {
+  if (rel.length > MAX_RELATIVE_PATH) throw new UserError(`Path is longer than ${MAX_RELATIVE_PATH} characters`);
   if (path.isAbsolute(rel)) throw new UserError(`Path "${rel}" must be relative to the server root`);
   const rootReal = realpathSync(root);
   const target = path.resolve(rootReal, rel);

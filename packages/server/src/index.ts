@@ -1,9 +1,9 @@
 export { createApp, type AppOptions } from "./app.js";
 export { startServer } from "./listen.js";
 export { poolSettingsFromEnv, type PoolSettings } from "./workers/factory.js";
-export type { HostedPlugin, Policy, RunTicket } from "./hosted.js";
+export type { HostedPlugin, Policy, RunOptions, RunTicket } from "./hosted.js";
 
 // What a hosted layer built on this server (see HostedPlugin) needs: request helpers, error mapping and the context type.
 export { HttpError, MAX_BODY, abortOnClose, optBool, optEnum, optInt, optString, optStringArray, readJson, reqString, sendJson, type Ctx, type Handler } from "./http.js";
 export { MODELS_OFF, publicMessage, statusFor } from "./errors.js";
-export { beginRun } from "./hosted.js";
+export { beginRun, llmCellsCapped } from "./hosted.js";
