@@ -1,3 +1,4 @@
+import { MAX_COLUMNS, MAX_TABLES } from "@mockdata/core";
 import {
   DEFAULT_ROWS,
   fakerHint,
@@ -31,10 +32,15 @@ export function parseCsv(input: string): string[][] {
     if (text[i] === "\r" && text[i + 1] === "\n") i += 2;
     else i++;
   };
+  // Each delimiter's next position is remembered and only searched again once the cursor has passed it. Searching
+  // from every field made a file with no "\r" at all (any Unix CSV) quadratic: 80,000 rows took 16 s.
+  const DELIMITERS = [",", "\n", "\r"] as const;
+  const cached = [-2, -2, -2]; // -2 = not searched yet, -1 = does not occur again
   const nextDelimiter = (from: number): number => {
     let end = n;
-    for (const d of [",", "\n", "\r"]) {
-      const at = text.indexOf(d, from);
+    for (let k = 0; k < 3; k++) {
+      let at = cached[k]!;
+      if (at !== -1 && at < from) at = cached[k] = text.indexOf(DELIMITERS[k]!, from);
       if (at !== -1 && at < end) end = at;
     }
     return end;
@@ -132,6 +138,7 @@ export function parseSample(text: string, name: string, format?: SampleFormat): 
   if (fmt === "csv") {
     const [header, ...body] = parseCsv(text);
     if (!header) throw new InferError(`${name}: empty CSV`);
+    if (header.length > MAX_COLUMNS) throw new InferError(`${name}: ${header.length} columns; the limit is ${MAX_COLUMNS}`);
     const names = new Set<string>();
     const cols = header.map((h) => uniqueName(safeColumnName(h), names));
     return { [table]: body.map((cells) => Object.fromEntries(cols.map((c, i) => [c, cells[i] ?? ""]))) };
@@ -154,6 +161,7 @@ export function parseSample(text: string, name: string, format?: SampleFormat): 
   }
   if (Array.isArray(parsed)) return { [table]: asRows(parsed, name) };
   if (parsed && typeof parsed === "object") {
+    if (Object.keys(parsed).length > MAX_TABLES) throw new InferError(`${name}: ${Object.keys(parsed).length} tables; the limit is ${MAX_TABLES}`);
     return Object.fromEntries(Object.entries(parsed).map(([k, v]) => [safeTableName(k), asRows(v, `${name}: "${k}"`)]));
   }
   throw new InferError(`${name}: expected a JSON array or an object of arrays`);
@@ -173,11 +181,16 @@ const RE = {
   email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
 };
 
+/** Longest text that can still be a number, date, uuid or email (an address is at most 320 characters). */
+const MAX_TYPED_LENGTH = 320;
+
 /** Classify a value. CSV cells are all strings, so `textual` lets "42" count as an integer. */
 function classify(v: unknown, textual: boolean): Kind {
   if (typeof v === "number") return Number.isInteger(v) ? "integer" : "float";
   if (typeof v === "boolean") return "boolean";
   const s = String(v);
+  // Nothing below is longer than this, and the email pattern is quadratic on a long run of dots.
+  if (s.length > MAX_TYPED_LENGTH) return "string";
   if (textual) {
     if (RE.int.test(s)) return "integer";
     if (RE.float.test(s) && s !== "") return "float";
@@ -286,6 +299,7 @@ export function inferFromSamples(
   opts: SampleOptions & { textual?: boolean | Record<string, boolean> } = {},
 ): InferResult {
   const warnings: string[] = [];
+  if (Object.keys(tables).length > MAX_TABLES) throw new InferError(`${Object.keys(tables).length} tables; the limit is ${MAX_TABLES}`);
   const schema: SchemaDoc = { tables: {} };
   const analyses = new Map<string, Map<string, Analysis>>();
   const textualFor = (t: string) => (typeof opts.textual === "object" ? (opts.textual[t] ?? false) : (opts.textual ?? false));
@@ -295,7 +309,13 @@ export function inferFromSamples(
       warnings.push(`${tname}: no rows, skipped`);
       continue;
     }
-    const colNames = [...new Set(rows.flatMap((r) => Object.keys(r)))];
+    // Each column is analysed over every row, so rows that each bring their own key would be quadratic.
+    const names = new Set<string>();
+    for (const r of rows) {
+      for (const k of Object.keys(r)) names.add(k);
+      if (names.size > MAX_COLUMNS) throw new InferError(`${tname}: more than ${MAX_COLUMNS} different columns in the sample rows`);
+    }
+    const colNames = [...names];
     const cols = new Map<string, Analysis>();
     for (const c of colNames) {
       const a = analyzeColumn(rows, c, textualFor(tname), opts);

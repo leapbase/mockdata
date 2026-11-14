@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { compilePattern, PatternError } from "./pattern.js";
 
 export const COLUMN_TYPES = [
   "integer",
@@ -41,7 +42,7 @@ export const ColumnSchema = z
     within: z.number().positive().optional(),
     /** Faker path such as "person.fullName" for string columns. */
     faker: z.string().optional(),
-    /** Regex the string must match, e.g. "[A-Z]{3}-[0-9]{4}". Capped at 200 chars: an unbounded pattern is a ReDoS / CPU-exhaustion vector (it is compiled and run per row). */
+    /** What the string must look like, e.g. "[A-Z]{3}-[0-9]{4}": literals, ".", classes and simple quantifiers only (see pattern.ts). Capped at 200 chars. */
     pattern: z.string().max(200, "pattern must be at most 200 characters").optional(),
     /**
      * Foreign keys only: cap on children per parent. `unique: true` on a
@@ -121,8 +122,35 @@ export class SchemaError extends Error {
   }
 }
 
+/** Most tables in a schema and columns in a table. Planning is quadratic in tables and a row costs memory per column. */
+export const MAX_TABLES = 1000;
+export const MAX_COLUMNS = 1000;
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/**
+ * Checks that need the raw input, before zod walks it: size limits (so an oversized schema costs nothing more),
+ * and names that cannot be keys of a plain object. `constructor` or `toString` as a table would be found on every
+ * object, and `__proto__` would be dropped silently.
+ */
+function precheck(input: unknown): void {
+  if (!isRecord(input) || !isRecord(input.tables)) return; // zod reports the shape
+  const tables = Object.keys(input.tables);
+  if (tables.length > MAX_TABLES) throw new SchemaError(`Invalid schema: ${tables.length} tables; the limit is ${MAX_TABLES}`);
+  for (const tname of tables) {
+    if (tname in Object.prototype) throw new SchemaError(`Invalid schema: "${tname}" cannot be used as a table name`);
+    const table = input.tables[tname];
+    if (!isRecord(table) || !isRecord(table.columns)) continue;
+    const columns = Object.keys(table.columns);
+    if (columns.length > MAX_COLUMNS) throw new SchemaError(`Invalid schema: table "${tname}" has ${columns.length} columns; the limit is ${MAX_COLUMNS}`);
+    const reserved = columns.find((cname) => cname in Object.prototype);
+    if (reserved !== undefined) throw new SchemaError(`Invalid schema: "${reserved}" cannot be used as a column name (table "${tname}")`);
+  }
+}
+
 /** Parse and cross-validate a schema (references, rules), throwing SchemaError. */
 export function parseSchema(input: unknown): DataSchemaT {
+  precheck(input);
   const result = DataSchema.safeParse(input);
   if (!result.success) {
     const issues = result.error.issues
@@ -157,9 +185,9 @@ export function parseSchema(input: unknown): DataSchemaT {
       if (col.pattern !== undefined) {
         if (col.type !== "string") throw new SchemaError(`${where}: "pattern" only applies to string columns`);
         try {
-          new RegExp(col.pattern);
-        } catch {
-          throw new SchemaError(`${where}: invalid pattern "${col.pattern}"`);
+          compilePattern(col.pattern);
+        } catch (e) {
+          throw new SchemaError(`${where}: invalid pattern "${col.pattern}"${e instanceof PatternError ? `: ${e.message}` : ""}`);
         }
       }
       if (col.maxPerParent !== undefined && !col.ref) {
@@ -174,9 +202,9 @@ export function parseSchema(input: unknown): DataSchemaT {
       }
       if (col.ref) {
         const [pt, pc] = col.ref.split(".") as [string, string];
-        const parent = schema.tables[pt];
+        const parent = Object.hasOwn(schema.tables, pt) ? schema.tables[pt] : undefined;
         if (!parent) throw new SchemaError(`${where}: ref to unknown table "${pt}"`);
-        const pcol = parent.columns[pc];
+        const pcol = Object.hasOwn(parent.columns, pc) ? parent.columns[pc] : undefined;
         if (!pcol) throw new SchemaError(`${where}: ref to unknown column "${col.ref}"`);
         if (!pcol.primaryKey && !pcol.unique) {
           throw new SchemaError(`${where}: ref target "${col.ref}" must be primaryKey or unique`);
@@ -192,12 +220,12 @@ export function parseSchema(input: unknown): DataSchemaT {
         }
         const parts = col.after.split(".");
         if (parts.length === 1) {
-          if (!table.columns[parts[0]!]) throw new SchemaError(`${where}: after unknown column "${col.after}"`);
+          if (!Object.hasOwn(table.columns, parts[0]!)) throw new SchemaError(`${where}: after unknown column "${col.after}"`);
         } else if (parts.length === 2) {
-          const fk = table.columns[parts[0]!];
+          const fk = Object.hasOwn(table.columns, parts[0]!) ? table.columns[parts[0]!] : undefined;
           if (!fk?.ref) throw new SchemaError(`${where}: after "${col.after}" needs "${parts[0]}" to be a foreign key`);
           const [pt] = fk.ref.split(".") as [string];
-          if (!schema.tables[pt]!.columns[parts[1]!]) {
+          if (!Object.hasOwn(schema.tables[pt]!.columns, parts[1]!)) {
             throw new SchemaError(`${where}: after unknown parent column "${col.after}"`);
           }
         } else {

@@ -83,6 +83,8 @@ const MAX_UNIQUE_ROUNDS = 3;
 const TOKENS_PER_VALUE = 150;
 const MAX_OUTPUT_TOKENS = 8192;
 const AVOID_LIST_SIZE = 40;
+/** Longest value a model may write into one cell. */
+export const MAX_VALUE_CHARS = 10_000;
 
 /** A reply that starts a JSON array but never closes it was cut off, even if the provider did not say so. */
 function looksTruncated(text: string): boolean {
@@ -100,7 +102,8 @@ export function parseStringArray(text: string): string[] | undefined {
   for (const c of candidates) {
     try {
       const v = JSON.parse(c);
-      if (Array.isArray(v) && v.every((x) => typeof x === "string")) return v;
+      // A value past MAX_VALUE_CHARS is not a cell (a server could send megabytes); such a reply counts as unusable.
+      if (Array.isArray(v) && v.every((x) => typeof x === "string" && x.length <= MAX_VALUE_CHARS)) return v;
     } catch {
       /* try next candidate */
     }

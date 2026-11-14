@@ -41,7 +41,7 @@ export function inferFromSampleFiles(files: { name: string; text: string }[], op
   for (const f of files) {
     const format = guessSampleFormat(f.name, f.text);
     for (const [name, rows] of Object.entries(parseSample(f.text, f.name, format))) {
-      if (tables[name]) throw new InferError(`Two sample files produce a table named "${name}"`);
+      if (Object.hasOwn(tables, name)) throw new InferError(`Two sample files produce a table named "${name}"`);
       tables[name] = rows;
       textual[name] = format === "csv";
     }

@@ -86,6 +86,28 @@ describe("mcp server", () => {
     expect(report.llm).toBeUndefined();
   });
 
+  it("generate_data without outputDir builds only the preview rows, and still reports the full counts", async () => {
+    const prompts: string[] = [];
+    const provider = { name: "fake", complete: async (req: { user: string }) => (prompts.push(req.user), { text: JSON.stringify(Array.from({ length: (req.user.match(/^\d+: /gm) ?? []).length }, (_, i) => `note ${i}`)), usage: { inputTokens: 1, outputTokens: 1 } }) };
+    const big = { tables: { notes: { rows: 5000, columns: { id: { type: "integer", primaryKey: true }, body: { type: "string", llm: true } } } } };
+    const { call } = await start({ llm: { provider } });
+    const r = (await call("generate_data", { schema: big, previewRows: 3 })).json();
+    expect(r.rows).toEqual({ notes: 5000 });
+    expect(r.preview.notes).toHaveLength(3);
+    expect(prompts).toHaveLength(1); // one batch of 3 rows, not 250 batches
+  });
+
+  it("generate_data refuses oversized schema text and a file that is not a sample for infer_schema", async () => {
+    const { call, root } = await start();
+    expect((await call("generate_data", { schema: "# " + "x".repeat(2 * 1024 * 1024) + "\ntables: {}" })).body).toMatch(/larger than 2 MB/);
+    writeFileSync(join(root, ".env"), "ANTHROPIC_API_KEY=sk-ant-very-secret\n");
+    for (const path of [".ENV", ".env"]) {
+      const r = await call("infer_schema", { path });
+      expect(r.isError, path).toBe(true);
+      expect(r.body, path).not.toContain("sk-ant");
+    }
+  });
+
   it("same seed gives the same data through the tool", async () => {
     const { call } = await start();
     const a = (await call("generate_data", { schema, seed: 3, previewRows: 50 })).json().preview;

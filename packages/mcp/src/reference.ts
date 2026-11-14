@@ -17,7 +17,8 @@ Column
   enum: [a, b, c]          value is one of these (max 1000 entries)
   enumWeights: [7, 2, 1]  relative weights for enum values, in order; zero excludes a value
   min / max                numbers, or ISO dates for date/datetime
-  pattern: "[A-Z]{3}-[0-9]{4}"   string matches this regex (max 200 characters)
+  pattern: "[A-Z]{3}-[0-9]{4}"   string matches this pattern (max 200 characters): literals, ".", classes like
+                                 [A-Z0-9], and ? * + {n} {n,m} with counts up to 100; no escapes (\\d), groups, | or anchors
   faker: person.fullName   string from a faker "module.method" (no arguments)
 
 Relationships

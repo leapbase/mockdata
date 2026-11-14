@@ -109,10 +109,21 @@ describe("timeouts", () => {
       expect(() => createProvider({ provider: "openai-compatible", model: "m", baseUrl: "http://api.example.com/v1", apiKeyEnv: "MY_SERVICE_API_KEY" }, { env })).toThrow(LlmConfigError);
     });
 
-    it("still allows a custom https host with its own key, and loopback http", async () => {
+    it("sends a key to a schema-chosen host only when MOCKDATA_LLM_HOSTS approves it", async () => {
+      const custom = { provider: "openai-compatible", model: "m", baseUrl: "https://api.example.com/v1", apiKeyEnv: "MY_SERVICE_API_KEY" } as const;
+      // Any *_API_KEY in the environment could otherwise be posted to a host a downloaded schema picked.
+      expect(() => createProvider(custom, { env })).toThrow(/MOCKDATA_LLM_HOSTS/);
+      expect(() => createProvider({ ...custom, baseUrl: "https://evil.example/v1" }, { env: { ...env, MOCKDATA_LLM_HOSTS: "api.example.com" } })).toThrow(/MOCKDATA_LLM_HOSTS/);
+      expect(() => createProvider({ ...custom, provider: "ollama", baseUrl: "https://evil.example/v1" }, { env })).toThrow(/MOCKDATA_LLM_HOSTS/);
+      // Without a key there is nothing to protect.
+      expect(() => createProvider({ provider: "openai-compatible", model: "m", baseUrl: "https://evil.example/v1" }, { env })).not.toThrow();
+    });
+
+    it("still allows an approved custom https host with its own key, and loopback http", async () => {
       const { f, calls } = fakeFetch(200, { choices: [{ message: { content: "ok" } }] });
-      const p = createProvider({ provider: "openai-compatible", model: "m", baseUrl: "https://api.example.com/v1", apiKeyEnv: "MY_SERVICE_API_KEY" }, { fetch: f, env });
+      const p = createProvider({ provider: "openai-compatible", model: "m", baseUrl: "https://api.example.com/v1", apiKeyEnv: "MY_SERVICE_API_KEY" }, { fetch: f, env: { ...env, MOCKDATA_LLM_HOSTS: " API.example.com , other.example" } });
       await p.complete(req);
+      expect(calls[0]!.init.redirect).toBe("error"); // a redirect would replay the request somewhere unchecked
       expect((calls[0]!.init.headers as Record<string, string>).authorization).toBe("Bearer svc");
       expect(() => createProvider({ provider: "openai-compatible", model: "m", baseUrl: "http://127.0.0.1:8000/v1", apiKeyEnv: "MY_SERVICE_API_KEY" }, { env })).not.toThrow();
     });
@@ -149,10 +160,44 @@ describe("timeouts", () => {
       expect(err.message).toMatch(/500/);
     });
 
-    it("keeps the response body for loopback and default hosts (useful API errors)", async () => {
+    it("keeps the response body for the default hosts and a server set in the environment (useful API errors)", async () => {
       const { f } = fakeFetch(400, "model not found");
-      const p = createProvider({ provider: "ollama", model: "m", baseUrl: "http://localhost:11434/v1" }, { fetch: f, env: {} });
+      const p = createProvider({ provider: "ollama", model: "m", baseUrl: "http://localhost:11434/v1", trustedBaseUrl: true }, { fetch: f, env: {} });
       expect((await p.complete(req).catch((e) => e as Error)).message).toMatch(/model not found/);
+      const official = createProvider({ provider: "openai", model: "m" }, { fetch: f, env });
+      expect((await official.complete(req).catch((e) => e as Error)).message).toMatch(/model not found/);
+    });
+
+    it("does not echo a body from a schema-chosen localhost address (it could be any local service)", async () => {
+      const { f } = fakeFetch(403, "INTERNAL-ADMIN-BANNER");
+      const p = createProvider({ provider: "openai-compatible", model: "m", baseUrl: "http://127.0.0.1:9000/secret" }, { fetch: f, env: {} });
+      const message = (await p.complete(req).catch((e) => e as Error)).message;
+      expect(message).toMatch(/403/);
+      expect(message).not.toMatch(/INTERNAL-ADMIN-BANNER/);
+    });
+
+    it("refuses a schema-chosen public name that resolves to a private or local address", async () => {
+      const { f, calls } = fakeFetch(200, { choices: [{ message: { content: "ok" } }] });
+      for (const address of ["10.0.0.5", "127.0.0.1", "169.254.169.254", "fd00::1"]) {
+        const p = createProvider({ provider: "openai-compatible", model: "m", baseUrl: "https://rebind.example.com/v1" }, { fetch: f, env: {}, lookup: async () => ["93.184.216.34", address] });
+        await expect(p.complete(req), address).rejects.toThrow(/resolves to a private/);
+      }
+      expect(calls).toHaveLength(0);
+      const ok = createProvider({ provider: "openai-compatible", model: "m", baseUrl: "https://api.example.com/v1" }, { fetch: f, env: {}, lookup: async () => ["93.184.216.34"] });
+      await ok.complete(req);
+      expect(calls).toHaveLength(1);
+    });
+
+    it("refuses name tricks: a trailing dot and NAT64 forms of internal addresses", () => {
+      for (const baseUrl of ["https://metadata.google.internal./v1", "https://db.corp./v1", "https://[64:ff9b::a9fe:a9fe]/v1"]) {
+        expect(() => createProvider({ provider: "openai-compatible", model: "m", baseUrl }, { env }), baseUrl).toThrow(LlmConfigError);
+      }
+    });
+
+    it("gives up on an oversized reply instead of buffering it", async () => {
+      const huge = (async () => new Response(new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(1024 * 1024)); } }), { status: 200 })) as unknown as typeof fetch;
+      const p = createProvider({ provider: "ollama", model: "m" }, { fetch: huge, env: {} });
+      await expect(p.complete(req)).rejects.toThrow(/larger than 8 MB/);
     });
   });
 });

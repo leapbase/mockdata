@@ -2,8 +2,8 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { assertNotEnv, assertNotSymlink, assertRowBudget, checkSchemaPath, inferConfined, loadEnv, parseSchemaText, readFileConfined, resolveInside, serialize, UserError, writeFileConfined } from "@mockdata/cli";
-import { llmColumns, parseSchema, planGeneration, type Dataset, type DataSchemaT } from "@mockdata/core";
+import { assertNotEnv, assertNotSymlink, assertRowBudget, assertSchemaTextSize, MAX_SCHEMA_TEXT_BYTES, checkSchemaPath, inferConfined, loadEnv, parseSchemaText, readFileConfined, resolveInside, serialize, UserError, writeFileConfined } from "@mockdata/cli";
+import { GenerationError, llmColumns, parseSchema, planGeneration, type Dataset, type DataSchemaT } from "@mockdata/core";
 import { generateWithLlm, type GenerateWithLlmOptions, type LlmReport } from "@mockdata/llm";
 import { SCHEMA_REFERENCE } from "./reference.js";
 
@@ -106,12 +106,16 @@ export function createServer(opts: ServerOptions = {}): McpServer {
     if ((args.schema === undefined) === (args.schemaPath === undefined)) {
       throw new UserError('Provide exactly one of "schema" or "schemaPath"');
     }
-    if (args.schema !== undefined) return typeof args.schema === "string" ? parseSchemaText(args.schema) : args.schema;
+    if (args.schema !== undefined) {
+      if (typeof args.schema !== "string") return args.schema;
+      assertSchemaTextSize(args.schema);
+      return parseSchemaText(args.schema);
+    }
     const ext = checkSchemaPath(args.schemaPath!);
     const file = resolveInside(root, args.schemaPath!);
     if (!existsSync(file)) throw new UserError(`No such file: ${args.schemaPath}`);
     assertNotEnv(file);
-    const content = readFileConfined(root, file);
+    const content = readFileConfined(root, file, { maxBytes: MAX_SCHEMA_TEXT_BYTES }); // parsed on the event loop
     return ext === ".json" ? JSON.parse(content) : parseSchemaText(content);
   }
 
@@ -185,7 +189,7 @@ export function createServer(opts: ServerOptions = {}): McpServer {
       title: "Generate synthetic data",
       description:
         "Generate related synthetic tables (parents before children, valid foreign keys, cross-column rules). " +
-        "Returns row counts and a small preview; set outputDir to write every row to files. " +
+        "Returns row counts and a small preview (without outputDir only the preview rows are generated); set outputDir to write every row to files. " +
         "Columns marked `llm` send prompts (with that row's other values) to the configured AI provider.",
       inputSchema: {
         ...schemaInput,
@@ -266,10 +270,23 @@ async function generateHere(
   llm: ServerOptions["llm"],
 ): Promise<GenerateResult> {
   assertRowBudget(schema);
-  const { data, report } = await generateWithLlm(schema, { seed: want.seed, ...llm, env, signal: want.signal, parsed: schema, plan: planGeneration(schema) });
   const format = want.format;
+  const run = (s: DataSchemaT) => generateWithLlm(s, { seed: want.seed, ...llm, env, signal: want.signal, parsed: s, plan: planGeneration(s) });
+  let result: Awaited<ReturnType<typeof run>> | undefined;
+  if (!format) {
+    // Nothing is written, so only the preview rows are needed: building (and model-filling) every row just to
+    // return a few blocked the server for seconds on a large schema. Same as the web UI's preview.
+    const subset = structuredClone(schema);
+    for (const t of Object.values(subset.tables)) t.rows = Math.min(t.rows, want.sampleRows);
+    try {
+      result = await run(subset);
+    } catch (e) {
+      if (!(e instanceof GenerationError)) throw e; // e.g. minPerParent no longer fits the smaller tables: do the full run
+    }
+  }
+  const { data, report } = result ?? (await run(schema));
   return {
-    counts: Object.fromEntries(Object.entries(data).map(([t, r]) => [t, r.length])),
+    counts: Object.fromEntries(Object.entries(schema.tables).map(([t, table]) => [t, table.rows])),
     report,
     sample: Object.fromEntries(Object.entries(data).map(([t, rows]) => [t, rows.slice(0, want.sampleRows)])),
     ...(format ? { texts: Object.fromEntries(Object.keys(schema.tables).map((t) => [t, serialize(data[t]!, Object.keys(schema.tables[t]!.columns), format)])) } : {}),

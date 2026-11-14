@@ -189,8 +189,9 @@ d("the point: the server stays responsive while it generates", () => {
     await runner.run({ kind: "preview", schema, previewRows: 1 }); // a worker is already running, so startup is not counted
     const threaded = await worstStall(() => runner.run(job));
     console.log(`event-loop stall: ${Math.round(inline.stall)} ms in-process vs ${Math.round(threaded.stall)} ms with a worker (job took ${Math.round(inline.took)} / ${Math.round(threaded.took)} ms)`);
-    expect(inline.stall).toBeGreaterThan(500); // the problem is real
-    expect(threaded.stall).toBeLessThan(150); // and the worker removes it
+    // Relative, not absolute: how long the export takes depends on the machine and on how fast the generator is.
+    expect(inline.stall).toBeGreaterThan(inline.took * 0.5); // the problem is real: the loop is frozen for most of the job
+    expect(threaded.stall).toBeLessThan(Math.min(150, inline.stall / 2)); // and the worker removes it
   }, 60_000);
 });
 

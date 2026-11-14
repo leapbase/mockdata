@@ -1,4 +1,4 @@
-import { parseSchemaText, UserError } from "@mockdata/cli";
+import { assertSchemaTextSize, parseSchemaText, UserError } from "@mockdata/cli";
 import { CycleError, llmColumns, parseSchema, planGeneration, SchemaError, type DataSchemaT } from "@mockdata/core";
 import { LlmCancelledError } from "@mockdata/llm";
 import { beginRun, llmCellsCapped } from "../hosted.js";
@@ -14,6 +14,7 @@ export function parseSchemaBody(body: Record<string, unknown>): DataSchemaT {
 
 /** The yaml library throws more than YAMLParseError (an unresolved alias is a ReferenceError): all of it is bad input. */
 function parseText(text: string): unknown {
+  assertSchemaTextSize(text);
   try {
     return parseSchemaText(text);
   } catch (e) {

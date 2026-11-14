@@ -1,7 +1,7 @@
 import { closeSync, mkdirSync, openSync, readFileSync, writeSync } from "node:fs";
 import { extname, join } from "node:path";
 import { parseArgs } from "node:util";
-import { parse as parseYaml } from "yaml";
+import { parseYamlLinear } from "./yaml.js";
 import { parseSchema, planGeneration, type Dataset, type Row } from "@mockdata/core";
 import { generateWithLlm, type GenerateWithLlmOptions, type LlmReport } from "@mockdata/llm";
 import { assertRowBudget } from "./confined.js";
@@ -39,8 +39,9 @@ generate options:
   -s, --seed <n>        override the schema seed
   -h, --help            show this help
 
-generate is capped at 1,000,000 rows in total across all tables; lower the
-row counts in the schema to stay under it.
+generate is capped at 1,000,000 rows in total across all tables, and at
+10,000,000 values (rows x columns); lower the row counts in the schema to
+stay under it.
 `;
 
 const FORMATS = ["json", "ndjson", "csv"] as const;
@@ -48,7 +49,7 @@ type Format = (typeof FORMATS)[number];
 
 /** Parse schema text. YAML is a superset of JSON, so one parser handles both. */
 export function parseSchemaText(text: string): unknown {
-  return parseYaml(text);
+  return parseYamlLinear(text);
 }
 
 export function loadSchemaFile(path: string): unknown {
@@ -73,7 +74,7 @@ export function serialize(rows: Row[], columns: string[], format: Format): strin
     case "ndjson":
       return rows.map((r) => JSON.stringify(r)).join("\n") + (rows.length ? "\n" : "");
     case "csv":
-      return [columns.join(","), ...rows.map((r) => columns.map((c) => csvCell(r[c])).join(","))].join("\n") + "\n";
+      return [columns.map(csvCell).join(","), ...rows.map((r) => columns.map((c) => csvCell(r[c])).join(","))].join("\n") + "\n";
   }
 }
 
@@ -93,17 +94,21 @@ function writeTableFile(dest: string, rows: Row[], columns: string[], format: Fo
         write("[]\n");
         return;
       }
+      // In chunks: one write per row was a system call per row, a third of a large run's time.
       write("[\n");
-      rows.forEach((row, i) => {
-        write(`  ${JSON.stringify(row, null, 2).split("\n").join("\n  ")}${i === rows.length - 1 ? "" : ","}\n`);
-      });
+      for (let start = 0; start < rows.length; start += CHUNK_ROWS) {
+        const end = Math.min(rows.length, start + CHUNK_ROWS);
+        const text = JSON.stringify(rows.slice(start, end), null, 2); // "[\n  {...},\n  {...}\n]"
+        write(text.slice(2, -2) + (end === rows.length ? "\n" : ",\n"));
+      }
       write("]\n");
       return;
     }
     for (let start = 0; start < rows.length || start === 0; start += CHUNK_ROWS) {
       const chunk = rows.slice(start, start + CHUNK_ROWS);
       let text = serialize(chunk, columns, format);
-      if (format === "csv" && start > 0) text = text.slice(text.indexOf("\n") + 1);
+      // Drop the repeated header by its length: a quoted header name may itself contain a line break.
+      if (format === "csv" && start > 0) text = text.slice(columns.map(csvCell).join(",").length + 1);
       write(text);
       if (chunk.length < CHUNK_ROWS) break;
     }

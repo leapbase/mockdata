@@ -2,7 +2,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { extname } from "node:path";
 import { parseArgs } from "node:util";
 import { Document, visit } from "yaml";
-import { inferFromSource, type SourceKind } from "@mockdata/inputs";
+import { detectDatabase, inferFromSource, type SourceKind } from "@mockdata/inputs";
 import { loadEnv } from "./env.js";
 import type { IO } from "./cli.js";
 
@@ -49,6 +49,8 @@ export function resolveSource(source: string, env: Record<string, string | undef
   const name = source.slice(4);
   const value = env[name];
   if (!value) throw new Error(`Environment variable ${name} is not set (checked the environment and ./.env)`);
+  // Anything else would be treated as a file path and echoed in "No such file": never print a variable's value.
+  if (!detectDatabase(value)) throw new Error(`${name} does not hold a supported database URL (postgres://, mysql://, mariadb:// or sqlite:)`);
   return value;
 }
 

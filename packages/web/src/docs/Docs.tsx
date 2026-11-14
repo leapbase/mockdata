@@ -207,7 +207,13 @@ export default function Docs({ location = window.location, extension }: { locati
   useEffect(() => { document.title = page ? `${slug ? `${page.title} · ` : ""}${t.titleSuffix}` : `${t.notFound} · ${t.titleSuffix}`; }, [page, slug, t]);
   // After a page change, go to the requested section or the top.
   useEffect(() => {
-    const target = path.hash && document.getElementById(decodeURIComponent(path.hash.slice(1)));
+    let id = "";
+    try {
+      id = decodeURIComponent(path.hash.slice(1));
+    } catch {
+      /* a malformed escape such as "#%" names no section */
+    }
+    const target = id && document.getElementById(id);
     if (target) target.scrollIntoView?.();
     else window.scrollTo?.(0, 0);
   }, [path]);

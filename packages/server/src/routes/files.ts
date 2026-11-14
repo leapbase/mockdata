@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, statSync, unlinkSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync, rmdirSync, unlinkSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { assertNotEnv, assertNotSymlink, checkSchemaPath, isEnvFile, readFileConfined, readPrefixConfined, resolveInside, SCHEMA_EXT, UserError, writeFileConfined } from "@mockdata/cli";
@@ -8,6 +8,8 @@ const SKIP_DIRS = new Set(["node_modules", "dist", "out"]);
 const MAX_FILES = 500;
 const MAX_DEPTH = 4;
 const SNIFF_BYTES = 1024 * 1024;
+/** A schema file is read whole on the event loop and sent back as JSON, so it gets the same ceiling as a request body. */
+const MAX_SCHEMA_BYTES = 10 * 1024 * 1024;
 /** Only the first bytes of a file are needed to tell whether it defines `tables:`; never read the whole file for the sniff. */
 const SNIFF_PREFIX_BYTES = 16 * 1024;
 /** Schema files define a top-level `tables:` map (YAML at line start, or JSON possibly on one line). */
@@ -59,7 +61,7 @@ export const readFile: Handler = async (ctx, _req, res, url) => {
   const file = resolveInside(ctx.root, rel);
   if (!existsSync(file)) throw new UserError(`No such file: ${rel}`);
   assertNotEnv(file);
-  sendJson(res, 200, { path: rel, text: readFileConfined(ctx.root, file) });
+  sendJson(res, 200, { path: rel, text: readFileConfined(ctx.root, file, { maxBytes: MAX_SCHEMA_BYTES }) });
 };
 
 /** Hosted: the policy refuses a write that would pass the file size, disk quota or file count limits. */
@@ -87,6 +89,19 @@ export const writeFile: Handler = async (ctx, req, res) => {
   writeFileConfined(ctx.root, file, text, { overwrite: !create });
   sendJson(res, 200, { path: rel });
 };
+
+/** Folders a rename emptied are removed, so renaming back and forth cannot pile up directories outside the file quota. */
+function removeEmptyParents(rootDir: string, file: string): void {
+  const root = realpathSync(rootDir); // `file` comes from resolveInside, which works under the real root
+  let dir = path.dirname(file);
+  for (let i = 0; i < 16 && dir !== root && dir.startsWith(root + path.sep); i++, dir = path.dirname(dir)) {
+    try {
+      rmdirSync(dir); // fails on a folder that still holds something, which ends the walk
+    } catch {
+      return;
+    }
+  }
+}
 
 /**
  * Save `text` under a new name and remove the old file. The new file is created
@@ -117,6 +132,17 @@ export const renameFile: Handler = async (ctx, req, res) => {
   if (existsSync(target)) throw new UserError(`${to} already exists`);
   await checkWriteAllowed(ctx, target, text, stat.size);
   writeFileConfined(ctx.root, target, text);
-  unlinkSync(source);
+  // The quota check above awaited, so the path may have changed: only remove the very file that was checked.
+  const again = resolveInside(ctx.root, from);
+  let now;
+  try {
+    now = lstatSync(again);
+  } catch {
+    now = undefined;
+  }
+  if (now && now.isFile() && now.ino === stat.ino && now.dev === stat.dev) {
+    unlinkSync(again);
+    removeEmptyParents(ctx.root, again);
+  }
   sendJson(res, 200, { path: to });
 };

@@ -1,5 +1,10 @@
-import { Faker, en } from "@faker-js/faker";
+import type { Faker } from "@faker-js/faker";
+// The package index loads every locale (about 40 ms and 37 MB per process or worker thread); this entry loads English only.
+import { faker as enFaker } from "@faker-js/faker/locale/en";
+
+const FakerClass = enFaker.constructor as typeof Faker;
 import { columnOrder, planGeneration, type GenerationPlan } from "./graph.js";
+import { compilePattern } from "./pattern.js";
 import { parseSchema, type Column, type DataSchemaT } from "./schema.js";
 
 export type Row = Record<string, unknown>;
@@ -15,6 +20,67 @@ export class GenerationError extends Error {
 const DAY = 86_400_000;
 const DEFAULT_MIN_DATE = Date.UTC(2020, 0, 1);
 const DEFAULT_MAX_DATE = Date.UTC(2025, 0, 1);
+
+const pad2 = (n: number): string => (n < 10 ? "0" + n : "" + n);
+const pad3 = (n: number): string => (n < 10 ? "00" + n : n < 100 ? "0" + n : "" + n);
+const MIN_FAST_DATE = Date.UTC(1000, 0, 1);
+const MAX_FAST_DATE = Date.UTC(9999, 11, 31);
+
+/** Days since 1970-01-01 as "YYYY-MM-DD" (civil-from-days, Howard Hinnant's algorithm). */
+function isoDay(days: number): string {
+  const z = days + 719468;
+  const era = Math.floor(z / 146097);
+  const doe = z - era * 146097;
+  const yoe = Math.floor((doe - Math.floor(doe / 1460) + Math.floor(doe / 36524) - Math.floor(doe / 146096)) / 365);
+  const doy = doe - (365 * yoe + Math.floor(yoe / 4) - Math.floor(yoe / 100));
+  const mp = Math.floor((5 * doy + 2) / 153);
+  const d = doy - Math.floor((153 * mp + 2) / 5) + 1;
+  const m = mp < 10 ? mp + 3 : mp - 9;
+  return yoe + era * 400 + (m <= 2 ? 1 : 0) + "-" + pad2(m) + "-" + pad2(d);
+}
+
+/**
+ * The same text as `new Date(ms).toISOString()` (`.slice(0, 10)` for a date), about ten times cheaper: date cells
+ * were a fifth of generation time. Anything outside whole milliseconds in years 1000-9999 takes the slow path.
+ */
+export function isoDate(ms: number): string {
+  if (!(ms >= MIN_FAST_DATE && ms <= MAX_FAST_DATE)) return new Date(ms).toISOString().slice(0, 10);
+  return isoDay(Math.floor(ms / DAY));
+}
+
+export function isoDateTime(ms: number): string {
+  if (!(ms >= MIN_FAST_DATE && ms <= MAX_FAST_DATE) || !Number.isInteger(ms)) return new Date(ms).toISOString();
+  const days = Math.floor(ms / DAY);
+  let r = ms - days * DAY;
+  const h = Math.floor(r / 3_600_000);
+  r -= h * 3_600_000;
+  const mi = Math.floor(r / 60_000);
+  r -= mi * 60_000;
+  const sec = Math.floor(r / 1000);
+  r -= sec * 1000;
+  return isoDay(days) + "T" + pad2(h) + ":" + pad2(mi) + ":" + pad2(sec) + "." + pad3(r) + "Z";
+}
+
+/**
+ * `Date.parse` for the canonical "YYYY-MM-DD" this generator writes, without the general parser. Days 29-31 depend
+ * on the month, so they (and every other shape, datetimes included) go to `Date.parse`.
+ */
+export function parseIsoDate(s: string): number {
+  if (s.length !== 10 || s.charCodeAt(4) !== 45 || s.charCodeAt(7) !== 45) return Date.parse(s);
+  const c0 = s.charCodeAt(0) - 48, c1 = s.charCodeAt(1) - 48, c2 = s.charCodeAt(2) - 48, c3 = s.charCodeAt(3) - 48;
+  const c5 = s.charCodeAt(5) - 48, c6 = s.charCodeAt(6) - 48, c8 = s.charCodeAt(8) - 48, c9 = s.charCodeAt(9) - 48;
+  const digit = (c: number): boolean => c >= 0 && c <= 9;
+  if (!(digit(c0) && digit(c1) && digit(c2) && digit(c3) && digit(c5) && digit(c6) && digit(c8) && digit(c9))) return Date.parse(s);
+  const y = c0 * 1000 + c1 * 100 + c2 * 10 + c3;
+  const m = c5 * 10 + c6;
+  const d = c8 * 10 + c9;
+  if (y < 1000 || m < 1 || m > 12 || d < 1 || d > 28) return Date.parse(s);
+  const yy = m <= 2 ? y - 1 : y;
+  const era = Math.floor(yy / 400);
+  const yoe = yy - era * 400;
+  const doy = Math.floor((153 * (m > 2 ? m - 3 : m + 9) + 2) / 5) + d - 1;
+  return (era * 146097 + yoe * 365 + Math.floor(yoe / 4) - Math.floor(yoe / 100) + doy - 719468) * DAY;
+}
 
 function toMs(v: number | string | undefined, fallback: number): number {
   if (v === undefined) return fallback;
@@ -60,6 +126,11 @@ interface ColumnPlan {
   /** `after` through a foreign key: that key's ref target, split once. */
   afterParentTable?: string;
   afterParentColumn?: string;
+  /** Set by generateTable, once per column instead of once per cell: "table.column", and what that key looks up. */
+  where?: string;
+  isDeferred?: boolean;
+  minimum?: { pool: Row[]; column: string; count: number };
+  used?: ParentUsage;
 }
 
 function planColumn(schema: DataSchemaT, tname: string, cname: string, faker?: Faker): ColumnPlan {
@@ -119,8 +190,8 @@ function generateValue(faker: Faker, plan: ColumnPlan, lowerBoundMs?: number): u
       const span = col.within !== undefined && lowerBoundMs !== undefined ? lowerBoundMs + col.within * DAY : undefined;
       const max = Math.min(plan.maxMs ?? (span ?? Math.max(DEFAULT_MAX_DATE, min + 365 * DAY)), span ?? Infinity);
       if (min > max) throw new GenerationError(`Empty date range [${new Date(min).toISOString()}, ${new Date(max).toISOString()}]`);
-      const d = new Date(faker.number.int({ min, max }));
-      return col.type === "date" ? d.toISOString().slice(0, 10) : d.toISOString();
+      const ms = faker.number.int({ min, max });
+      return col.type === "date" ? isoDate(ms) : isoDateTime(ms);
     }
     case "string": {
       if (col.pattern) return faker.helpers.fromRegExp(col.pattern);
@@ -240,7 +311,7 @@ export function llmColumns(schema: DataSchemaT): { table: string; column: string
 export function generate(input: unknown, opts: GenerateOptions = {}): Dataset {
   const schema = opts.parsed ?? parseSchema(input);
   const seed = opts.seed ?? schema.seed ?? 1;
-  const faker = new Faker({ locale: en });
+  const faker = new FakerClass({ locale: enFaker.rawDefinitions });
   faker.seed(seed);
 
   const pending = llmColumns(schema);
@@ -319,22 +390,30 @@ function generateTable(
     minimums.set(cname, { pool: data[pt]!, column: pc, count: col.minPerParent });
   }
 
+  // Building the key and doing these lookups for every cell was a sixth of generation time.
+  for (const plan of plans) {
+    const key = `${tname}.${plan.name}`;
+    plan.where = key;
+    plan.isDeferred = deferred.has(key);
+    plan.minimum = minimums.get(plan.name);
+    plan.used = usageFor(usage, key);
+  }
+
   for (let i = 0; i < table.rows; i++) {
     const row: Row = {};
     for (const plan of plans) {
       const col = plan.col;
-      const key = `${tname}.${plan.name}`;
-      const minimum = minimums.get(plan.name);
+      const minimum = plan.minimum;
       // llm cells stay `undefined` (pending) for the async fill pass; null means intentionally null.
-      row[plan.name] = deferred.has(key)
+      row[plan.name] = plan.isDeferred
         ? null
         : minimum && i < minimum.pool.length * minimum.count
-        ? requiredParent(minimum.pool, minimum.column, minimum.count, i, col, usageFor(usage, key))
+        ? requiredParent(minimum.pool, minimum.column, minimum.count, i, col, plan.used!)
         : col.llm
         ? col.nullable && faker.number.float({ min: 0, max: 1 }) < (col.nullRate ?? 0.1)
           ? null
           : undefined
-        : generateCell(tname, plan, i, row, rows, data, faker, seen, usageFor(usage, key), deferred);
+        : generateCell(tname, plan, i, row, rows, data, faker, seen, plan.used!, deferred);
     }
     rows.push(row);
   }
@@ -354,7 +433,7 @@ function generateCell(
   deferred: Set<string>,
 ): unknown {
   const col = plan.col;
-  const where = `${tname}.${plan.name}`;
+  const where = plan.where ?? `${tname}.${plan.name}`;
   if (col.nullable && faker.number.float({ min: 0, max: 1 }) < (col.nullRate ?? 0.1)) return null;
 
   if (col.ref) {
@@ -387,12 +466,12 @@ function generateCell(
     return index + 1; // sequential ids: unique by construction
   }
 
-  const attempts = unique ? 50 : 1;
+  if (!unique) return generateValue(faker, plan, lower);
+  const attempts = 50;
   const set = seen.get(plan.name) ?? new Set<unknown>();
   seen.set(plan.name, set);
   for (let a = 0; a < attempts; a++) {
     const v = generateValue(faker, plan, lower);
-    if (!unique) return v;
     if (!set.has(v)) {
       set.add(v);
       return v;
@@ -447,7 +526,7 @@ function lookupRow(data: Dataset, table: string, column: string, value: unknown)
   return index.byKey.get(value);
 }
 
-function resolveAfter(plan: ColumnPlan, row: Row, data: Dataset, where: string): number | undefined {
+function resolveAfter(plan: ColumnPlan, row: Row, data: Dataset, where: string | (() => string)): number | undefined {
   let value: unknown;
   if (plan.afterSecond === undefined) {
     value = row[plan.afterFirst!];
@@ -457,8 +536,8 @@ function resolveAfter(plan: ColumnPlan, row: Row, data: Dataset, where: string):
     value = lookupRow(data, plan.afterParentTable!, plan.afterParentColumn!, fkValue)?.[plan.afterSecond];
   }
   if (value === null || value === undefined) return undefined;
-  const ms = Date.parse(String(value));
-  if (Number.isNaN(ms)) throw new GenerationError(`${where}: "after" source "${plan.col.after}" is not a date`);
+  const ms = typeof value === "string" ? parseIsoDate(value) : Date.parse(String(value));
+  if (Number.isNaN(ms)) throw new GenerationError(`${typeof where === "string" ? where : where()}: "after" source "${plan.col.after}" is not a date`);
   return ms;
 }
 
@@ -495,37 +574,37 @@ export function validate(schema: DataSchemaT, data: Dataset, opts: { skipLlm?: b
       const children = new Map<unknown, number>();
       const parentKeys = plan.refTable ? new Set((data[plan.refTable] ?? []).map((r) => r[plan.refColumn!])) : undefined;
       const enumSet = col.enum ? new Set(col.enum) : undefined;
-      const pattern = col.pattern ? new RegExp(`^(?:${col.pattern})$`) : undefined;
+      const pattern = col.pattern ? compilePattern(col.pattern) : undefined; // linear time, unlike a RegExp
       rows.forEach((row, i) => {
         const v = row[cname];
-        const at = `${tname}[${i}].${cname}`;
+        const at = (): string => `${tname}[${i}].${cname}`; // only built for a violation
         if (v === null || v === undefined) {
-          if (!col.nullable) push(`${at}: null in non-nullable column`);
+          if (!col.nullable) push(`${at()}: null in non-nullable column`);
           return;
         }
-        if (enumSet && !enumSet.has(v as never)) push(`${at}: ${String(v)} not in enum`);
+        if (enumSet && !enumSet.has(v as never)) push(`${at()}: ${String(v)} not in enum`);
         if (typeof v === "number") {
-          if (col.min !== undefined && v < Number(col.min)) push(`${at}: ${v} < min ${col.min}`);
-          if (col.max !== undefined && v > Number(col.max)) push(`${at}: ${v} > max ${col.max}`);
+          if (col.min !== undefined && v < Number(col.min)) push(`${at()}: ${v} < min ${col.min}`);
+          if (col.max !== undefined && v > Number(col.max)) push(`${at()}: ${v} > max ${col.max}`);
         }
-        if (pattern && !pattern.test(String(v))) push(`${at}: "${String(v)}" does not match /${col.pattern}/`);
+        if (pattern && !pattern.test(String(v))) push(`${at()}: "${String(v)}" does not match /${col.pattern}/`);
         if (col.unique || col.primaryKey) {
-          if (uniques.has(v)) push(`${at}: duplicate ${String(v)}`);
+          if (uniques.has(v)) push(`${at()}: duplicate ${String(v)}`);
           uniques.add(v);
         }
         if (col.ref) {
           const n = (children.get(v) ?? 0) + 1;
           children.set(v, n);
-          if (n > parentCap(col) && n === parentCap(col) + 1) push(`${at}: more than ${parentCap(col)} children for parent ${String(v)}`);
+          if (n > parentCap(col) && n === parentCap(col) + 1) push(`${at()}: more than ${parentCap(col)} children for parent ${String(v)}`);
         }
-        if (parentKeys && !parentKeys.has(v)) push(`${at}: orphan foreign key ${String(v)} -> ${col.ref}`);
+        if (parentKeys && !parentKeys.has(v)) push(`${at()}: orphan foreign key ${String(v)} -> ${col.ref}`);
         if (plan.afterFirst !== undefined) {
           const lower = resolveAfter(plan, row, data, at);
           if (lower !== undefined) {
-            const vMs = Date.parse(String(v));
-            if (vMs < lower) push(`${at}: ${String(v)} is before ${col.after}`);
+            const vMs = typeof v === "string" ? parseIsoDate(v) : Date.parse(String(v));
+            if (vMs < lower) push(`${at()}: ${String(v)} is before ${col.after}`);
             if (col.within !== undefined && vMs > lower + col.within * DAY) {
-              push(`${at}: ${String(v)} is more than ${col.within} days after ${col.after}`);
+              push(`${at()}: ${String(v)} is more than ${col.within} days after ${col.after}`);
             }
           }
         }

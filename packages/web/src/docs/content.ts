@@ -216,7 +216,7 @@ signup_date: { type: date, min: "2023-01-01", max: "2024-06-30" }
 status: { type: string, enum: [new, paid, shipped] }` },
       ] },
       { id: "patterns", title: "Patterns", blocks: [
-        { p: "`pattern` generates strings that match a regular expression, and the result is checked against it, anchored at both ends." },
+        { p: "`pattern` generates strings from a small part of regular-expression syntax: literal characters, `.`, classes such as `[A-Z0-9]`, and the quantifiers `?`, `*`, `+`, `{n}` and `{n,m}` with counts up to 100. Escapes such as `\\d`, groups, `|` and anchors are refused, and the whole value is always checked against the pattern." },
         { code: `sku: { type: string, pattern: "[A-Z]{3}-[0-9]{4}" }` },
       ] },
       { id: "faker", title: "Faker values", blocks: [
@@ -398,7 +398,7 @@ npx mockdata infer env:DATABASE_URL -o schema.yaml      # a database, password k
       ] },
       { id: "costs-and-limits", title: "Costs and limits", blocks: [
         { p: "Rows are sent in batches and bad or cut-off replies are retried. A run reports the calls and tokens it used. Model output is not reproducible from the seed (the other columns are), and it costs tokens, so try a small `rows` first." },
-        { note: "A schema can come from someone else, so its `llm:` block cannot redirect your keys: `baseUrl` is accepted only for `ollama` and `openai-compatible`, private network addresses are refused, and keys are sent only over https or to localhost.", tone: "warn" },
+        { note: "A schema can come from someone else, so its `llm:` block cannot redirect your keys: `baseUrl` is accepted only for `ollama` and `openai-compatible`, private network addresses are refused, keys are sent only over https or to localhost, and a key reaches a host named in a schema only if you list that host in `MOCKDATA_LLM_HOSTS`.", tone: "warn" },
       ] },
     ],
   },
@@ -432,7 +432,7 @@ claude mcp add --transport http mockdata http://127.0.0.1:4748/mcp` },
           "The agent reads schemas and writes output only inside `MOCKDATA_ROOT`; symlinks that lead outside it are refused.",
           "It never reads `.env` files and never overwrites an existing file unless asked (`overwrite: true`).",
           "Model settings come from `.env` in that folder or the environment, as for the [command line](/docs/llm#providers).",
-          "`generate_data` refuses schemas that add up to more than 1,000,000 rows, since it builds everything in memory; the command line has no such limit.",
+          "`generate_data` refuses schemas that add up to more than 1,000,000 rows or 10,000,000 values (rows × columns), since it builds everything in memory; `mockdata generate` has the same limits.",
         ] },
       ] },
       { id: "databases", title: "Inferring from a database", blocks: [
@@ -474,7 +474,7 @@ claude mcp add --transport http mockdata http://127.0.0.1:4748/mcp` },
         ] } },
       ] },
       { id: "limits", title: "Limits", blocks: [
-        { p: "The MCP `generate_data` tool and the web export refuse schemas that add up to more than 1,000,000 rows, since they build everything in memory. The command line has no such limit." },
+        { p: "The MCP `generate_data` tool, the web export and `mockdata generate` refuse schemas that add up to more than 1,000,000 rows or 10,000,000 values (rows × columns), since they build everything in memory." },
       ] },
     ],
   },

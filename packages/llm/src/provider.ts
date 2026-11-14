@@ -1,3 +1,4 @@
+import { lookup as dnsLookup } from "node:dns/promises";
 import type { ResolvedLlmConfig } from "./config.js";
 import { LlmConfigError } from "./errors.js";
 
@@ -45,7 +46,15 @@ export interface ProviderDeps {
   /** Per-request timeout in ms (default 120000); a timeout is a retryable failure. */
   timeoutMs?: number;
   env?: Record<string, string | undefined>;
+  /**
+   * Resolves a host name to its addresses, to refuse a schema-chosen public name that points at a private address.
+   * Default: the system resolver, but only with the real `fetch` (an injected `fetch` never touches the network).
+   */
+  lookup?: (host: string) => Promise<string[]>;
 }
+
+/** Largest reply body read from a model server: a schema-chosen host could otherwise stream gigabytes into memory. */
+const MAX_REPLY_BYTES = 8 * 1024 * 1024;
 
 const DEFAULT_KEY_ENV: Record<string, string | undefined> = {
   anthropic: "ANTHROPIC_API_KEY",
@@ -57,10 +66,10 @@ const KEY_OPTIONAL = new Set(["ollama", "openai-compatible"]);
 
 const RESERVED_KEY_ENV: Record<string, string> = { ANTHROPIC_API_KEY: "anthropic", OPENAI_API_KEY: "openai" };
 const API_KEY_ENV_NAME = /^[A-Z][A-Z0-9_]*_API_(KEY|TOKEN)$/;
-const DEFAULT_HOSTS = new Set(["api.anthropic.com", "api.openai.com"]);
 
 function hostname(url: string): string {
-  return new URL(url).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  // A trailing dot names the same host ("metadata.google.internal."), so it must not slip past the name checks.
+  return new URL(url).hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
 }
 
 function isLoopback(host: string): boolean {
@@ -87,7 +96,8 @@ function isNonPublic(host: string): boolean {
     const [a, b] = [Number(v4[1]), Number(v4[2])];
     return a === 10 || a === 0 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) || a >= 224;
   }
-  if (host.includes(":")) return host === "::" || /^f[cd][0-9a-f]{2}:/.test(host) || /^fe[89ab][0-9a-f]:/.test(host);
+  // 64:ff9b::/96 is NAT64: an IPv4 address (possibly a private one) in IPv6 clothing.
+  if (host.includes(":")) return host === "::" || /^f[cd][0-9a-f]{2}:/.test(host) || /^fe[89ab][0-9a-f]:/.test(host) || /^64:ff9b:/.test(host);
   // A name with no dot is a LAN short name; these suffixes are never public DNS.
   return !host.includes(".") || /\.(internal|local|localdomain|lan|home|corp|intranet)$/.test(host);
 }
@@ -106,20 +116,7 @@ function redactUrl(url: string): string {
  * The schema (possibly untrusted) can set baseUrl and apiKeyEnv, so this keeps
  * credentials from reaching a host the user did not choose in the environment.
  */
-function assertSafeTarget(config: ResolvedLlmConfig, apiKey: string | undefined): void {
-  if (config.baseUrl) {
-    const host = hostname(config.baseUrl);
-    if (isLinkLocal(host)) throw new LlmConfigError(`"llm.baseUrl" points at a link-local or metadata address`);
-    if (!config.trustedBaseUrl && isNonPublic(host)) {
-      throw new LlmConfigError(`"llm.baseUrl" points at a private or internal address; set OLLAMA_BASE_URL in the environment/.env to use a server on your network`);
-    }
-    if (config.provider === "anthropic" || config.provider === "openai") {
-      throw new LlmConfigError(`"llm.baseUrl" is not allowed for provider "${config.provider}" (its key is only sent to the official API); use "openai-compatible" for a custom endpoint`);
-    }
-    if (apiKey && new URL(config.baseUrl).protocol !== "https:" && !isLoopback(host)) {
-      throw new LlmConfigError(`An API key is only sent over https (or to localhost); "llm.baseUrl" must use https`);
-    }
-  }
+function assertSafeTarget(config: ResolvedLlmConfig, apiKey: string | undefined, env: Record<string, string | undefined>): void {
   if (config.apiKeyEnv) {
     if (!API_KEY_ENV_NAME.test(config.apiKeyEnv)) {
       throw new LlmConfigError(`"llm.apiKeyEnv" must be an upper-case variable name ending in _API_KEY or _API_TOKEN`);
@@ -129,28 +126,82 @@ function assertSafeTarget(config: ResolvedLlmConfig, apiKey: string | undefined)
       throw new LlmConfigError(`"llm.apiKeyEnv" names the ${owner} key, which is only used with provider "${owner}"`);
     }
   }
+  if (config.baseUrl) {
+    const host = hostname(config.baseUrl);
+    if (config.provider === "anthropic" || config.provider === "openai") {
+      throw new LlmConfigError(`"llm.baseUrl" is not allowed for provider "${config.provider}" (its key is only sent to the official API); use "openai-compatible" for a custom endpoint`);
+    }
+    // The schema chose this host. Without the owner's say-so it gets no key at all: `apiKeyEnv` can name any
+    // *_API_KEY in the environment, so a downloaded schema could otherwise post one to a server of its choosing.
+    if (apiKey && !config.trustedBaseUrl && !isLoopback(host) && !allowedHosts(env).has(host)) {
+      throw new LlmConfigError(
+        `An API key is only sent to a host you have approved: add ${host} to MOCKDATA_LLM_HOSTS in the environment/.env (comma-separated host names) to use this "llm.baseUrl" with a key`,
+      );
+    }
+    if (isLinkLocal(host)) throw new LlmConfigError(`"llm.baseUrl" points at a link-local or metadata address`);
+    if (!config.trustedBaseUrl && isNonPublic(host)) {
+      throw new LlmConfigError(`"llm.baseUrl" points at a private or internal address; set OLLAMA_BASE_URL in the environment/.env to use a server on your network`);
+    }
+    if (apiKey && new URL(config.baseUrl).protocol !== "https:" && !isLoopback(host)) {
+      throw new LlmConfigError(`An API key is only sent over https (or to localhost); "llm.baseUrl" must use https`);
+    }
+  }
 }
 
-async function postJson(f: typeof fetch, url: string, headers: Record<string, string>, body: unknown, timeoutMs: number): Promise<any> {
-  // Response bodies are only echoed from loopback and the official APIs, so a
-  // schema-chosen host cannot use error messages to read back internal services.
-  const host = hostname(url);
-  const echoBody = isLoopback(host) || DEFAULT_HOSTS.has(host);
+/** Hosts the owner approved (MOCKDATA_LLM_HOSTS) to receive a key at a schema-chosen `llm.baseUrl`. */
+function allowedHosts(env: Record<string, string | undefined>): Set<string> {
+  return new Set((env.MOCKDATA_LLM_HOSTS ?? "").split(",").map((h) => h.trim().replace(/\.$/, "").toLowerCase()).filter(Boolean));
+}
+
+/** Read a reply as text, giving up past `MAX_REPLY_BYTES` instead of buffering whatever the server sends. */
+async function readCapped(res: Response, shown: string): Promise<string> {
+  if (!res.body) return res.text();
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_REPLY_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      throw new LlmHttpError(`${shown} sent a reply larger than ${MAX_REPLY_BYTES / 1024 / 1024} MB`, 502);
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+interface PostOptions {
+  timeoutMs: number;
+  /** Show the server's own words in errors. Only for the official APIs and a server the owner configured. */
+  echoBody: boolean;
+  /** Runs before the first request; throws to refuse the target. */
+  preflight?: () => Promise<void>;
+}
+
+async function postJson(f: typeof fetch, url: string, headers: Record<string, string>, body: unknown, opts: PostOptions): Promise<any> {
+  const { timeoutMs, echoBody } = opts;
   const shown = redactUrl(url);
+  await opts.preflight?.();
   let res: Response;
+  let text: string;
   try {
     res = await f(url, {
       method: "POST",
       headers: { "content-type": "application/json", ...headers },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs),
+      // A redirect would replay the prompt (and, same-origin, the key) at an address nobody checked.
+      redirect: "error",
     });
+    text = await readCapped(res, shown);
   } catch (e) {
+    if (e instanceof LlmHttpError) throw e;
     const err = e as Error;
     const why = err.name === "TimeoutError" ? `timed out after ${timeoutMs} ms` : err.message;
     throw new LlmHttpError(`Network error calling ${shown}: ${why}`, 0);
   }
-  const text = await res.text();
   if (!res.ok) throw new LlmHttpError(`${shown} returned ${res.status}${echoBody ? `: ${text.slice(0, 300)}` : ""}`, res.status);
   try {
     return JSON.parse(text);
@@ -167,7 +218,33 @@ export function createProvider(config: ResolvedLlmConfig, deps: ProviderDeps = {
   const keyEnv = config.apiKeyEnv ?? DEFAULT_KEY_ENV[config.provider];
   const apiKey = keyEnv ? env[keyEnv] : undefined;
 
-  assertSafeTarget(config, apiKey);
+  assertSafeTarget(config, apiKey, env);
+
+  // Error bodies are only echoed from the official APIs and from a server the owner configured in the environment:
+  // a schema-chosen address (localhost included) must not be able to read a local service back through messages.
+  const echoBody = !config.baseUrl || config.trustedBaseUrl === true;
+  // Name checks cannot see where a name points, so a schema-chosen public name is resolved once and every address
+  // judged. (The connection resolves again, so this narrows DNS tricks rather than closing them.)
+  const lookup = deps.lookup ?? (deps.fetch ? undefined : async (host: string) => (await dnsLookup(host, { all: true })).map((a) => a.address));
+  let checked: Promise<void> | undefined;
+  const preflight =
+    config.baseUrl && !config.trustedBaseUrl && lookup
+      ? () =>
+          (checked ??= (async () => {
+            const host = hostname(config.baseUrl!);
+            if (isLoopback(host) || /^[\d.]+$/.test(host) || host.includes(":")) return; // literals were judged by name
+            let addresses: string[];
+            try {
+              addresses = await lookup(host);
+            } catch {
+              return; // unresolvable: the request itself reports it
+            }
+            if (addresses.map((a) => a.toLowerCase()).some((a) => isLinkLocal(a) || isNonPublic(a) || isLoopback(a))) {
+              throw new LlmConfigError(`"llm.baseUrl" resolves to a private, local or link-local address; set OLLAMA_BASE_URL in the environment/.env to use a server on your network`);
+            }
+          })())
+      : undefined;
+  const post: PostOptions = { timeoutMs, echoBody, preflight };
 
   // Required for hosted providers; for local servers only when the schema names a key variable.
   if (!apiKey && (!KEY_OPTIONAL.has(config.provider) || config.apiKeyEnv)) {
@@ -184,7 +261,7 @@ export function createProvider(config: ResolvedLlmConfig, deps: ProviderDeps = {
           `${base}/v1/messages`,
           { "x-api-key": apiKey!, "anthropic-version": "2023-06-01" },
           { model: config.model, max_tokens: req.maxTokens, system: req.system, messages: [{ role: "user", content: req.user }] },
-          timeoutMs,
+          post,
         );
         const text = (json.content ?? []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
         return {
@@ -215,7 +292,7 @@ export function createProvider(config: ResolvedLlmConfig, deps: ProviderDeps = {
             { role: "user", content: req.user },
           ],
         },
-        timeoutMs,
+        post,
       );
       const text = json.choices?.[0]?.message?.content ?? "";
       return {

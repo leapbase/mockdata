@@ -76,7 +76,8 @@ export function createApp(opts: AppOptions = {}): (req: IncomingMessage, res: Se
       if (req.method === "GET" && !url.pathname.startsWith("/api/") && tokensEqual(url.searchParams.get("token") ?? undefined, opts.access!.token)) {
         url.searchParams.delete("token");
         res.writeHead(302, {
-          location: url.pathname + url.search,
+          // "//host/x" would be a link to another site, so collapse leading slashes: the redirect always stays here.
+          location: url.pathname.replace(/^[/\\]+/, "/") + url.search,
           "set-cookie": `${TOKEN_COOKIE}=${opts.access!.token}; HttpOnly; SameSite=Strict; Path=/`,
           "referrer-policy": "no-referrer",
           "cache-control": "no-store",

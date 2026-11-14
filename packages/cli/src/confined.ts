@@ -1,6 +1,6 @@
 import { closeSync, constants, existsSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync, writeSync } from "node:fs";
 import path from "node:path";
-import { parse as parseYaml } from "yaml";
+import { parseYamlLinear as parseYaml } from "./yaml.js";
 import {
   detectDatabase,
   fromJsonSchema,
@@ -26,14 +26,39 @@ export class UserError extends Error {}
 /** Most rows one untrusted-caller run (web export, MCP generate_data) may build in memory. */
 export const MAX_TOTAL_ROWS = 1_000_000;
 
-/** Refuse a schema whose tables add up to more than `max` rows, before any generation work. */
-export function assertRowBudget(schema: { tables: Record<string, { rows: number }> }, max = MAX_TOTAL_ROWS): void {
-  const total = Object.values(schema.tables).reduce((n, t) => n + t.rows, 0);
+/** Most cells (rows x columns, summed over tables): memory follows cells, and 100,000 rows of 200 columns ran a process out of heap. */
+export const MAX_TOTAL_CELLS = 10_000_000;
+
+/** Longest schema text an untrusted caller may send: it is parsed on the event loop, at roughly a quarter second per MB. */
+export const MAX_SCHEMA_TEXT_BYTES = 2 * 1024 * 1024;
+
+export function assertSchemaTextSize(text: string): void {
+  if (text.length > MAX_SCHEMA_TEXT_BYTES) throw new UserError(`The schema is larger than ${MAX_SCHEMA_TEXT_BYTES / 1024 / 1024} MB`);
+}
+
+/** Refuse a schema whose tables add up to more than `max` rows (or `MAX_TOTAL_CELLS` cells), before any generation work. */
+export function assertRowBudget(schema: { tables: Record<string, { rows: number; columns?: Record<string, unknown> }> }, max = MAX_TOTAL_ROWS): void {
+  const tables = Object.values(schema.tables);
+  const total = tables.reduce((n, t) => n + t.rows, 0);
   if (total > max) throw new UserError(`The schema would generate ${total} rows; the limit is ${max}. Lower the row counts in the schema.`);
+  const cells = tables.reduce((n, t) => n + t.rows * Object.keys(t.columns ?? {}).length, 0);
+  if (cells > MAX_TOTAL_CELLS) {
+    throw new UserError(`The schema would generate ${cells} values (rows x columns); the limit is ${MAX_TOTAL_CELLS}. Lower the row counts in the schema.`);
+  }
 }
 
 export const SCHEMA_EXT = new Set([".yaml", ".yml", ".json"]);
-export const isEnvFile = (p: string): boolean => path.basename(p).startsWith(".env");
+/**
+ * `.env`, `.env.local`, and also `prod.env` / `prod.env.json`. Case-insensitive: on macOS and Windows `.ENV` opens
+ * `.env`, and Node's realpath does not report the on-disk case.
+ */
+export const isEnvFile = (p: string): boolean => /^\.env|\.env(\.|$)/.test(path.basename(p).toLowerCase());
+/** Deepest folder nesting a caller may name for a schema file: every missing folder on the way is created, so depth is disk use. */
+export const MAX_SCHEMA_DEPTH = 6;
+/** What `infer` may read by path: sample files, schema documents and SQLite files, never arbitrary text under the root. */
+const INFER_EXT = new Set([".csv", ".json", ".ndjson", ".jsonl", ".yaml", ".yml", ".db", ".sqlite", ".sqlite3"]);
+/** A folder of samples is read whole, so bound how much one request can pull into memory. */
+const MAX_FOLDER_FILES = 200;
 
 /** Env var names a caller may use for a database URL: must look like database config, never e.g. an API key. */
 /** A database URL a caller may name for inference. MOCKDATA_* names are the operator's own settings (such as the account database), never a source. */
@@ -133,6 +158,8 @@ export function writeFileConfined(root: string, file: string, data: string | Buf
     if (r.startsWith("..") || path.isAbsolute(r) || opened.ino !== onDisk.ino || opened.dev !== onDisk.dev) {
       throw new UserError(`Path "${path.basename(file)}" changed while writing; refusing`);
     }
+    // A hard link inside the root may name a file outside it; a schema file never has a second name.
+    if (opened.nlink > 1) throw new UserError(`${path.basename(file)} has more than one name (hard link); refusing to write to it`);
     if (opts.overwrite) ftruncateSync(fd, 0);
     const buf = typeof data === "string" ? Buffer.from(data) : data;
     for (let off = 0; off < buf.length; ) off += writeSync(fd, buf, off);
@@ -174,6 +201,7 @@ export function openConfined(root: string, file: string): number {
       throw new UserError(`Path "${path.basename(file)}" changed while reading; refusing`);
     }
     if (!opened.isFile()) throw new UserError(`${path.basename(file)} is not a regular file`);
+    if (opened.nlink > 1) throw new UserError(`${path.basename(file)} has more than one name (hard link); refusing to read it`);
   } catch (e) {
     closeSync(fd);
     throw e;
@@ -246,6 +274,9 @@ export function localRequestProblem(host: string | undefined, origin: string | u
 export function checkSchemaPath(rel: string, label = "schemaPath"): string {
   const ext = path.extname(rel).toLowerCase();
   if (!SCHEMA_EXT.has(ext) || isEnvFile(rel)) throw new UserError(`${label} must be a .yaml, .yml or .json file (got "${rel}")`);
+  if (rel.split(/[\\/]+/).filter((part) => part && part !== ".").length > MAX_SCHEMA_DEPTH) {
+    throw new UserError(`${label} is nested too deeply (at most ${MAX_SCHEMA_DEPTH - 1} folders)`);
+  }
   return ext;
 }
 
@@ -306,6 +337,11 @@ export async function inferConfined(root: string, baseEnv: Record<string, string
   const target = resolveInside(root, args.path!);
   if (!existsSync(target)) throw new UserError(`No such file or folder: ${args.path}`);
   assertNotEnv(target);
+  const isDir = statSync(target).isDirectory();
+  // Without this a caller could read the first line of any file (.npmrc, key files) back as a column name.
+  if (!isDir && !INFER_EXT.has(path.extname(target).toLowerCase())) {
+    throw new UserError("path must be a .csv, .json, .ndjson, .jsonl, .yaml, .yml or SQLite (.db, .sqlite, .sqlite3) file, or a folder of sample files");
+  }
   if (args.kind === "database" && !detectDatabase(target)) throw new UserError("kind database with a path needs a SQLite file (.db, .sqlite, .sqlite3)");
   // A database is reflected through @mockdata/inputs, whose SQLite introspector opens the file itself — but
   // `openSqlite` verifies post-open that the path still resolves to the same file (dev/ino), so a swapped
@@ -313,24 +349,28 @@ export async function inferConfined(root: string, baseEnv: Record<string, string
   if (args.kind === "database" || (!args.kind && detectDatabase(target))) {
     return inferFromDatabase(target, opts);
   }
-  if (statSync(target).isDirectory()) {
+  if (isDir) {
     // A folder of samples: names come from the directory listing, but every
     // file is read through the confined reader, and symlinked children are
     // skipped (with a warning) exactly as inferFromSource did.
     const SAMPLE_EXT = /\.(csv|json|ndjson|jsonl)$/i;
     const skipped: string[] = [];
     const names = readdirSync(target)
-      .filter((f) => SAMPLE_EXT.test(f))
+      .filter((f) => SAMPLE_EXT.test(f) && !isEnvFile(f))
       .sort()
       .filter((f) => {
         const isLink = lstatSync(path.join(target, f)).isSymbolicLink();
         if (isLink) skipped.push(f);
         return !isLink;
       });
+    if (names.length > MAX_FOLDER_FILES) throw new UserError(`The folder has ${names.length} sample files; the limit is ${MAX_FOLDER_FILES}`);
     const files: { name: string; text: string }[] = [];
+    let budget = MAX_SOURCE_BYTES; // for the folder as a whole, not per file
     for (const f of names) {
       try {
-        files.push({ name: f, text: readFileConfined(root, path.join(target, f), { maxBytes: MAX_SOURCE_BYTES }) });
+        const text = readFileConfined(root, path.join(target, f), { maxBytes: budget });
+        budget -= Buffer.byteLength(text);
+        files.push({ name: f, text });
       } catch (e) {
         if (e instanceof UserError && /symbolic link/.test(e.message)) {
           skipped.push(f);
@@ -349,13 +389,14 @@ export async function inferConfined(root: string, baseEnv: Record<string, string
   // inferFromSource's dispatch for non-database files.
   const text = readFileConfined(root, target, { maxBytes: MAX_SOURCE_BYTES });
   const ext = path.extname(target).toLowerCase();
-  if (args.kind === "json-schema" || (!args.kind && (ext === ".yaml" || ext === ".yml"))) return fromJsonSchema(parseYaml(text), opts);
+  if (args.kind === "json-schema" || (!args.kind && (ext === ".yaml" || ext === ".yml"))) return fromJsonSchema(parseYaml(text) as Record<string, unknown>, opts);
   if (!args.kind && ext === ".json") {
     let doc: unknown;
     try {
       doc = JSON.parse(text);
-    } catch (e) {
-      throw new InferError(`${target}: invalid JSON (${(e as Error).message})`);
+    } catch {
+      // The parser's message quotes the file's content, which may not be a sample at all.
+      throw new InferError(`${path.basename(target)}: invalid JSON`);
     }
     if (looksLikeJsonSchema(doc)) return fromJsonSchema(doc as Record<string, unknown>, opts);
   }

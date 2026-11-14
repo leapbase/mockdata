@@ -35,7 +35,8 @@ type Mapped = { type: string; enum?: string[]; note?: string };
 
 /** Map a database type to a mockdata column type. */
 export function mapDbType(dataType: string, enumValues?: string[]): Mapped {
-  const t = dataType.toLowerCase().trim();
+  // A declared type is free text in SQLite; no real type name is this long, and the patterns below are not linear.
+  const t = dataType.slice(0, 256).toLowerCase().trim();
   const base = t.replace(/\(.*?\)/g, "").replace(/\s+(unsigned|zerofill|signed)\b/g, "").trim();
 
   if (enumValues && enumValues.length > 0) return { type: "string", enum: enumValues };

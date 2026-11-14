@@ -4,6 +4,7 @@ import { detectDatabase } from "@mockdata/inputs";
 import { generateWithLlm } from "@mockdata/llm";
 import type { IO } from "../cli.js";
 import { loadSchemaFile } from "../cli.js";
+import { assertRowBudget } from "../confined.js";
 import { loadEnv } from "../env.js";
 import { prepareSeedPlan, type SeedPlan } from "./preflight.js";
 import { openSeedSession, safeSeedError, type SeedSession } from "./session.js";
@@ -62,6 +63,7 @@ export async function runSeed(args: string[], io: IO): Promise<number> {
     if (values["pg-schema"] && detected.kind !== "postgres") throw new Error("--pg-schema applies only to PostgreSQL targets");
     const pgSchema = values["pg-schema"] ?? "public";
     const schema = parseSchema(loadSchemaFile(positionals[0]!));
+    assertRowBudget(schema); // the same in-memory ceiling as `generate`
 
     let preview: SeedSession | undefined;
     let plan: SeedPlan;

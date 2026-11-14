@@ -71,8 +71,13 @@ export function jobTimeoutMs(job: Job, settings: PoolSettings): number {
   const cells = llmCellsForJob(job);
   if (cells === 0) return base;
   const batchSize = job.schema.llm?.batchSize ?? 20;
-  return base + Math.ceil(cells / batchSize) * (settings.llmBatchSecs ?? 5) * 1000;
+  // The schema picks batchSize (and the model server), so the allowance needs a ceiling: without one, batchSize 1
+  // on a million rows asked for 58 days, and a few such jobs against a slow host would hold every worker.
+  return Math.min(base + Math.ceil(cells / batchSize) * (settings.llmBatchSecs ?? 5) * 1000, Math.max(base, MAX_JOB_TIMEOUT_MS));
 }
+
+/** Longest any job may run, however many model batches it has (an operator's larger `jobTimeoutSecs` still wins). */
+export const MAX_JOB_TIMEOUT_MS = 60 * 60 * 1000;
 
 export interface RunnerOptions {
   /** Path of the compiled worker entry. Default: worker.js next to this file (so it works from dist only). */

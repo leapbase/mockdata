@@ -124,7 +124,7 @@ A schema is YAML or JSON: an optional `seed`, an optional `llm` block, and `tabl
 | `enum: [a, b]` | One of these values (at most 1,000 entries) |
 | `enumWeights: [7, 2]` | Relative weights for the matching `enum` values; zero excludes a value |
 | `min`, `max` | Numbers, or ISO dates for `date`/`datetime` |
-| `pattern: "[A-Z]{3}-[0-9]{4}"` | String matching this regex (at most 200 characters) |
+| `pattern: "[A-Z]{3}-[0-9]{4}"` | String matching this pattern (at most 200 characters): literals, `.`, classes like `[A-Z0-9]`, and `?` `*` `+` `{n}` `{n,m}` with counts up to 100. Escapes (`\d`), groups, `\|` and anchors are refused |
 | `faker: person.fullName` | String from a faker `module.method` (no arguments) |
 | `ref: table.column` | Foreign key. The target must be a primary key or unique column of the same type |
 | `distribution: zipf` | A few parents get most of the children (default is uniform) |
@@ -182,9 +182,10 @@ Settings come from a `.env` file in the directory you run from (copy `.env.examp
 | `ANTHROPIC_MODEL`, `OPENAI_MODEL`, `OLLAMA_MODEL` | Model name for that provider (there is no default) |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | API keys |
 | `OLLAMA_BASE_URL` | Ollama host, e.g. `http://localhost:11434` (`/v1` is added) |
+| `MOCKDATA_LLM_HOSTS` | Optional: comma-separated host names that may receive an API key when a schema's `llm.baseUrl` names them |
 | `DATABASE_URL` | Optional: used as `mockdata infer env:DATABASE_URL` |
 
-Because a schema can come from someone else, its `llm:` block cannot redirect your keys. `baseUrl` is only accepted for `ollama` and `openai-compatible` (not `anthropic`/`openai`, whose keys go only to the official API) and never for link-local/metadata addresses. A schema's `baseUrl` must also be localhost or a public host: private, internal and LAN addresses (`10.x`, `192.168.x`, `100.64.x`, `*.internal`, short names) are refused. To use an Ollama server on your network, put its address in `OLLAMA_BASE_URL` (environment or `.env`), which is trusted. Hostnames are checked by name, not by DNS lookup, so a public name that resolves to a private address is not caught. `apiKeyEnv` must be an upper-case name ending `_API_KEY` or `_API_TOKEN`, and `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` work only with their own provider. A key is sent only over https (or to localhost). Error messages show a remote body only for localhost and the official APIs.
+Because a schema can come from someone else, its `llm:` block cannot redirect your keys. `baseUrl` is only accepted for `ollama` and `openai-compatible` (not `anthropic`/`openai`, whose keys go only to the official API) and never for link-local/metadata addresses. A schema's `baseUrl` must also be localhost or a public host: private, internal and LAN addresses (`10.x`, `192.168.x`, `100.64.x`, `*.internal`, short names) are refused. To use an Ollama server on your network, put its address in `OLLAMA_BASE_URL` (environment or `.env`), which is trusted. A public name in a schema's `baseUrl` is also resolved once and refused if any of its addresses is private or local (the connection resolves the name again, so this narrows DNS tricks rather than closing them), and redirects are never followed. `apiKeyEnv` must be an upper-case name ending `_API_KEY` or `_API_TOKEN`, and `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` work only with their own provider. Because `apiKeyEnv` could name any such variable in your environment, a key is sent to a host named by a schema only if that host is localhost or listed in `MOCKDATA_LLM_HOSTS` (for example `MOCKDATA_LLM_HOSTS=openrouter.ai`), and only over https (or to localhost). Error messages show a remote body only for the official APIs and a server you configured in the environment. A model reply larger than 8 MB, or a single value longer than 10,000 characters, is rejected.
 
 ```
 cp .env.example .env        # fill in AI_PROVIDER and the matching model / key
@@ -205,7 +206,7 @@ The MCP server exposes the same abilities to agents: over stdio or local HTTP (b
 | `generate_data` | Returns row counts and a small preview; can write every row to files |
 | `get_run_report` | Seed, row counts, files written, LLM calls and tokens for the last run |
 
-`generate_data` and the web UI's Export refuse schemas that add up to more than 1,000,000 rows, since they build everything in memory for a caller you may not control. The CLI has no such limit. Inferring from a folder of samples skips symlinks and reports them as warnings. Both servers answer only requests addressed to localhost, and a browser page must be same-origin with the address it called. Idle MCP HTTP sessions close after 30 minutes.
+`generate_data`, the web UI's Export and `mockdata generate` refuse schemas that add up to more than 1,000,000 rows or 10,000,000 values (rows x columns), since they build everything in memory. A schema may have at most 1,000 tables and 1,000 columns per table, and schema text sent to either server is limited to 2 MB. Without `outputDir`, `generate_data` generates only the preview rows. `infer_schema` reads only `.csv`, `.json`, `.ndjson`, `.jsonl`, `.yaml`, `.yml` and SQLite files (or a folder of at most 200 sample files). Inferring from a folder of samples skips symlinks and reports them as warnings. Both servers answer only requests addressed to localhost, and a browser page must be same-origin with the address it called. Idle MCP HTTP sessions close after 30 minutes.
 
 Register it in `.mcp.json` (or with `claude mcp add`), using absolute paths:
 

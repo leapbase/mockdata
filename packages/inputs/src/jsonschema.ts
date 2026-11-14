@@ -1,3 +1,4 @@
+import { compilePattern } from "@mockdata/core";
 import {
   DEFAULT_ROWS,
   fakerHint,
@@ -27,19 +28,39 @@ function resolveRef(doc: Json, ref: string): Json {
   return node;
 }
 
+const MAX_EXPANSIONS = 200_000;
+/** flatten() calls spent per document. */
+const expansions = new WeakMap<Json, number>();
+
 /** Follow $ref chains and merge allOf into one schema with combined properties/required. */
 function flatten(doc: Json, schema: Json, depth = 0): Json {
   if (depth > 20) throw new InferError("$ref/allOf nesting is too deep (cycle?)");
+  if (schema === null || typeof schema !== "object" || Array.isArray(schema)) throw new InferError("A schema in the document is not an object");
+  // The depth limit bounds how deep this goes, not how much work it does: nine levels of allOf with eight $refs
+  // each (under 2 KB) is 134 million expansions.
+  const spent = (expansions.get(doc) ?? 0) + 1;
+  if (spent > MAX_EXPANSIONS) throw new InferError("The document expands $ref/allOf too many times to process");
+  expansions.set(doc, spent);
   if (schema.$ref) return flatten(doc, { ...resolveRef(doc, schema.$ref), ...omit(schema, "$ref") }, depth + 1);
   if (!Array.isArray(schema.allOf)) return schema;
-  const merged: Json = { ...omit(schema, "allOf"), properties: { ...schema.properties }, required: [...(schema.required ?? [])] };
+  const merged: Json = { ...omit(schema, "allOf"), properties: { ...schema.properties }, required: Array.isArray(schema.required) ? [...schema.required] : [] };
   for (const part of schema.allOf) {
     const p = flatten(doc, part, depth + 1);
     Object.assign(merged.properties, p.properties);
-    merged.required.push(...(p.required ?? []));
+    if (Array.isArray(p.required)) merged.required.push(...p.required);
     for (const [k, v] of Object.entries(p)) if (!["properties", "required", "allOf"].includes(k) && merged[k] === undefined) merged[k] = v;
   }
   return merged;
+}
+
+function patternSupported(pattern: string): boolean {
+  if (pattern.length > 200) return false;
+  try {
+    compilePattern(pattern);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function omit(o: Json, key: string): Json {
@@ -139,6 +160,17 @@ function convertProperty(doc: Json, prop: Json): Converted {
  */
 export function fromJsonSchema(doc: Json, opts: InferOptions = {}): InferResult {
   if (doc === null || typeof doc !== "object") throw new InferError("Expected a JSON Schema or OpenAPI document (an object)");
+  expansions.set(doc, 0);
+  try {
+    return convertDocument(doc, opts);
+  } catch (e) {
+    // A document with the wrong shape somewhere (`required: 5`, a null definition) is bad input, not a crash.
+    if (e instanceof TypeError || e instanceof RangeError) throw new InferError("The document is not a well-formed JSON Schema or OpenAPI document");
+    throw e;
+  }
+}
+
+function convertDocument(doc: Json, opts: InferOptions): InferResult {
   const warnings: string[] = [];
 
   // Collect candidate table schemas by name.
@@ -159,7 +191,7 @@ export function fromJsonSchema(doc: Json, opts: InferOptions = {}): InferResult 
     const flat = flatten(doc, raw);
     if (!isObjectSchema(flat)) continue;
     const tname = uniqueName(safeTableName(rawName), tableNames);
-    const req = new Set<string>(flat.required ?? []);
+    const req = new Set<string>(Array.isArray(flat.required) ? flat.required : []);
     required.set(tname, req);
     const columns: Record<string, ColumnDoc> = {};
     const colNames = new Set<string>();
@@ -171,6 +203,10 @@ export function fromJsonSchema(doc: Json, opts: InferOptions = {}): InferResult 
       }
       const cname = uniqueName(safeColumnName(rawCol), colNames);
       const col = conv.column;
+      if (typeof col.pattern === "string" && !patternSupported(col.pattern)) {
+        warnings.push(`${tname}.${rawCol}: pattern "${col.pattern.slice(0, 60)}" uses regex syntax the generator cannot produce; dropped`);
+        delete col.pattern;
+      }
       const isKey = rawCol.toLowerCase() === "id" && ["integer", "uuid", "string"].includes(col.type) && !col.enum;
       if (isKey) {
         col.primaryKey = true;
