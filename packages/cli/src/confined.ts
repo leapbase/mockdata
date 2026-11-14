@@ -1,4 +1,4 @@
-import { closeSync, constants, existsSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync, writeSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync, unlinkSync, writeSync } from "node:fs";
 import path from "node:path";
 import { parseYamlLinear as parseYaml } from "./yaml.js";
 import {
@@ -31,6 +31,26 @@ export const MAX_TOTAL_CELLS = 10_000_000;
 
 /** Longest schema text an untrusted caller may send: it is parsed on the event loop, at roughly a quarter second per MB. */
 export const MAX_SCHEMA_TEXT_BYTES = 2 * 1024 * 1024;
+
+/** Most model-written cells one MCP run may fill, unless MOCKDATA_MAX_LLM_CELLS says otherwise: each one is paid for. */
+export const DEFAULT_MAX_LLM_CELLS = 100_000;
+
+/**
+ * Refuse a run that would ask a model for more than the budget of cells. The caller is an agent, which may be
+ * acting on text it read somewhere, and the model bill is the owner's. `MOCKDATA_MAX_LLM_CELLS` (a whole number,
+ * 0 = no model-written cells at all) replaces the default.
+ */
+export function assertLlmBudget(cells: number, env: Record<string, string | undefined>): void {
+  const raw = env.MOCKDATA_MAX_LLM_CELLS?.trim();
+  let max = DEFAULT_MAX_LLM_CELLS;
+  if (raw) {
+    max = Number(raw);
+    if (!Number.isSafeInteger(max) || max < 0) throw new UserError("MOCKDATA_MAX_LLM_CELLS must be a whole number of 0 or more");
+  }
+  if (cells > max) {
+    throw new UserError(`The run would have a model write ${cells} values; the limit is ${max}. Lower the row counts, or raise MOCKDATA_MAX_LLM_CELLS in the server's environment.`);
+  }
+}
 
 export function assertSchemaTextSize(text: string): void {
   if (text.length > MAX_SCHEMA_TEXT_BYTES) throw new UserError(`The schema is larger than ${MAX_SCHEMA_TEXT_BYTES / 1024 / 1024} MB`);
@@ -73,7 +93,7 @@ export const MAX_RELATIVE_PATH = 1024;
  */
 export function resolveInside(root: string, rel: string): string {
   if (rel.length > MAX_RELATIVE_PATH) throw new UserError(`Path is longer than ${MAX_RELATIVE_PATH} characters`);
-  if (path.isAbsolute(rel)) throw new UserError(`Path "${rel}" must be relative to the server root`);
+  if (path.isAbsolute(rel)) throw new UserError("The path must be relative to the server root");
   const rootReal = realpathSync(root);
   const target = path.resolve(rootReal, rel);
   const within = (p: string) => {
@@ -82,7 +102,7 @@ export function resolveInside(root: string, rel: string): string {
   };
   let probe = target;
   while (!existsSync(probe)) probe = path.dirname(probe);
-  if (!within(target) || !within(realpathSync(probe))) throw new UserError(`Path "${rel}" is outside the server root`);
+  if (!within(target) || !within(realpathSync(probe))) throw new UserError("The path is outside the server root");
   // existsSync is false for a dangling symlink, so the probe above would skip it: walk the path and inspect every link.
   let current = rootReal;
   for (const segment of path.relative(rootReal, target).split(path.sep).filter(Boolean)) {
@@ -98,9 +118,9 @@ export function resolveInside(root: string, rel: string): string {
     try {
       real = realpathSync(current);
     } catch {
-      throw new UserError(`Path "${rel}" goes through a link that points nowhere`);
+      throw new UserError("The path goes through a link that points nowhere");
     }
-    if (!within(real)) throw new UserError(`Path "${rel}" is outside the server root`);
+    if (!within(real)) throw new UserError("The path is outside the server root");
   }
   return target;
 }
@@ -142,8 +162,17 @@ export function writeFileConfined(root: string, file: string, data: string | Buf
   mkdirSync(path.dirname(target), { recursive: true });
   const target2 = resolveInside(root, rel); // folders now exist: check again through any link that appeared
   let fd: number;
+  let created = true;
+  const open = (excl: boolean) => openSync(target2, constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW | (excl ? constants.O_EXCL : 0), 0o644);
   try {
-    fd = openSync(target2, constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW | (opts.overwrite ? 0 : constants.O_EXCL), 0o644);
+    // Create-only first even when overwriting, to know whether this call made the file (see the cleanup below).
+    try {
+      fd = open(true);
+    } catch (e) {
+      if (!opts.overwrite || (e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+      created = false;
+      fd = open(false);
+    }
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code === "EEXIST") throw new UserError(`${path.basename(file)} already exists`);
@@ -156,6 +185,15 @@ export function writeFileConfined(root: string, file: string, data: string | Buf
     const opened = fstatSync(fd);
     const onDisk = lstatSync(real);
     if (r.startsWith("..") || path.isAbsolute(r) || opened.ino !== onDisk.ino || opened.dev !== onDisk.dev) {
+      // A folder was swapped for a link between the check and the open, so the empty file this call just created
+      // sits outside the root: take it away again (only if it is still the very file that was opened).
+      if (created && opened.ino === onDisk.ino && opened.dev === onDisk.dev && opened.size === 0) {
+        try {
+          unlinkSync(real);
+        } catch {
+          /* best effort */
+        }
+      }
       throw new UserError(`Path "${path.basename(file)}" changed while writing; refusing`);
     }
     // A hard link inside the root may name a file outside it; a schema file never has a second name.
@@ -273,7 +311,7 @@ export function localRequestProblem(host: string | undefined, origin: string | u
 /** Throws unless `rel` names a schema file we may read or write; returns its lower-case extension. */
 export function checkSchemaPath(rel: string, label = "schemaPath"): string {
   const ext = path.extname(rel).toLowerCase();
-  if (!SCHEMA_EXT.has(ext) || isEnvFile(rel)) throw new UserError(`${label} must be a .yaml, .yml or .json file (got "${rel}")`);
+  if (!SCHEMA_EXT.has(ext) || isEnvFile(rel)) throw new UserError(`${label} must be a .yaml, .yml or .json file`);
   if (rel.split(/[\\/]+/).filter((part) => part && part !== ".").length > MAX_SCHEMA_DEPTH) {
     throw new UserError(`${label} is nested too deeply (at most ${MAX_SCHEMA_DEPTH - 1} folders)`);
   }
@@ -335,7 +373,7 @@ export async function inferConfined(root: string, baseEnv: Record<string, string
 
   if (isEnvFile(args.path!)) throw new UserError("Refusing to read .env files");
   const target = resolveInside(root, args.path!);
-  if (!existsSync(target)) throw new UserError(`No such file or folder: ${args.path}`);
+  if (!existsSync(target)) throw new UserError("No such file or folder");
   assertNotEnv(target);
   const isDir = statSync(target).isDirectory();
   // Without this a caller could read the first line of any file (.npmrc, key files) back as a column name.

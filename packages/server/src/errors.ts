@@ -1,6 +1,7 @@
 import { UserError } from "@mockdata/cli";
 import { BusyError, CycleError, GenerationError, SchemaError, QuotaError, ValidationError } from "@mockdata/core";
 import { LlmConfigError, LlmFillError, LlmHttpError } from "@mockdata/llm";
+import { InferError } from "@mockdata/inputs";
 import { HttpError } from "./http.js";
 import { JobTimeoutError } from "./workers/errors.js";
 
@@ -13,6 +14,7 @@ export function statusFor(e: unknown): number {
   if (e instanceof LlmFillError || e instanceof LlmHttpError) return 502;
   if (
     e instanceof UserError ||
+    e instanceof InferError || // a sample or document that cannot be read as one is the caller's input, not a server fault
     e instanceof SchemaError ||
     e instanceof CycleError ||
     e instanceof GenerationError ||

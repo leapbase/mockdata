@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { assertNotEnv, assertNotSymlink, assertRowBudget, assertSchemaTextSize, MAX_SCHEMA_TEXT_BYTES, checkSchemaPath, inferConfined, loadEnv, parseSchemaText, readFileConfined, resolveInside, serialize, UserError, writeFileConfined } from "@mockdata/cli";
+import { assertNotEnv, assertLlmBudget, assertNotSymlink, assertRowBudget, assertSchemaTextSize, MAX_SCHEMA_TEXT_BYTES, checkSchemaPath, inferConfined, loadEnv, parseSchemaText, readFileConfined, resolveInside, serialize, UserError, writeFileConfined } from "@mockdata/cli";
 import { GenerationError, llmColumns, parseSchema, planGeneration, type Dataset, type DataSchemaT } from "@mockdata/core";
 import { generateWithLlm, type GenerateWithLlmOptions, type LlmReport } from "@mockdata/llm";
 import { SCHEMA_REFERENCE } from "./reference.js";
@@ -271,7 +271,10 @@ async function generateHere(
 ): Promise<GenerateResult> {
   assertRowBudget(schema);
   const format = want.format;
-  const run = (s: DataSchemaT) => generateWithLlm(s, { seed: want.seed, ...llm, env, signal: want.signal, parsed: s, plan: planGeneration(s) });
+  const run = (s: DataSchemaT) => {
+    assertLlmBudget(llmColumns(s).reduce((n, c) => n + s.tables[c.table]!.rows, 0), env);
+    return generateWithLlm(s, { seed: want.seed, ...llm, env, signal: want.signal, parsed: s, plan: planGeneration(s) });
+  };
   let result: Awaited<ReturnType<typeof run>> | undefined;
   if (!format) {
     // Nothing is written, so only the preview rows are needed: building (and model-filling) every row just to

@@ -13,7 +13,10 @@ const MAX_SCHEMA_BYTES = 10 * 1024 * 1024;
 /** Only the first bytes of a file are needed to tell whether it defines `tables:`; never read the whole file for the sniff. */
 const SNIFF_PREFIX_BYTES = 16 * 1024;
 /** Schema files define a top-level `tables:` map (YAML at line start, or JSON possibly on one line). */
-const LOOKS_LIKE_SCHEMA = /(^|[{,])\s*["']?tables["']?\s*:/m;
+// [ \t]*, not \s*: whitespace that may cross lines made every line start rescan the rest of a blank file (quadratic).
+const LOOKS_LIKE_SCHEMA = /(^|[{,])[ \t]*["']?tables["']?[ \t]*:/m;
+/** Directory entries one listing may look at: without it a root full of other files is walked to the end. */
+const MAX_ENTRIES = 5000;
 
 /**
  * Whether each file looked like a schema, by path, size and mtime. Listing runs on every page load and used to read
@@ -34,18 +37,23 @@ async function looksLikeSchema(root: string, full: string): Promise<boolean> {
   return yes;
 }
 
-/** Off the event loop (other users wait on it), in the same order as before so the MAX_FILES cut is unchanged. */
-async function walk(root: string, dir: string, depth: number, out: string[]): Promise<void> {
+/**
+ * Off the event loop (other users wait on it). A folder's own files are looked at before its subfolders, so when the
+ * entry budget runs out inside one large folder, schemas next to it have already been found.
+ */
+async function walk(root: string, dir: string, depth: number, out: string[], seen = { entries: 0 }): Promise<void> {
+  const subfolders: string[] = [];
   for (const entry of await readdir(dir, { withFileTypes: true })) {
-    if (out.length >= MAX_FILES) return;
+    if (out.length >= MAX_FILES || ++seen.entries > MAX_ENTRIES) return;
     if (entry.name.startsWith(".") || entry.isSymbolicLink()) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (depth < MAX_DEPTH && !SKIP_DIRS.has(entry.name)) await walk(root, full, depth + 1, out);
+      if (depth < MAX_DEPTH && !SKIP_DIRS.has(entry.name)) subfolders.push(full);
     } else if (entry.isFile() && SCHEMA_EXT.has(path.extname(entry.name).toLowerCase()) && !isEnvFile(entry.name)) {
       if (await looksLikeSchema(root, full).catch(() => false)) out.push(path.relative(root, full).split(path.sep).join("/"));
     }
   }
+  for (const full of subfolders) await walk(root, full, depth + 1, out, seen);
 }
 
 export const listFiles: Handler = async (ctx, _req, res) => {
@@ -59,7 +67,7 @@ export const readFile: Handler = async (ctx, _req, res, url) => {
   if (!rel) throw new UserError('Query parameter "path" is required');
   checkSchemaPath(rel, "path");
   const file = resolveInside(ctx.root, rel);
-  if (!existsSync(file)) throw new UserError(`No such file: ${rel}`);
+  if (!existsSync(file)) throw new UserError("No such file");
   assertNotEnv(file);
   sendJson(res, 200, { path: rel, text: readFileConfined(ctx.root, file, { maxBytes: MAX_SCHEMA_BYTES }) });
 };
@@ -84,7 +92,7 @@ export const writeFile: Handler = async (ctx, req, res) => {
   const file = resolveInside(ctx.root, rel);
   assertNotSymlink(file);
   const create = optBool(body, "create") ?? false;
-  if (create && existsSync(file)) throw new UserError(`${rel} already exists`);
+  if (create && existsSync(file)) throw new UserError("A file with that name already exists");
   await checkWriteAllowed(ctx, file, text);
   writeFileConfined(ctx.root, file, text, { overwrite: !create });
   sendJson(res, 200, { path: rel });
@@ -123,13 +131,13 @@ export const renameFile: Handler = async (ctx, req, res) => {
   try {
     stat = lstatSync(source);
   } catch {
-    throw new UserError(`No such file: ${from}`);
+    throw new UserError("No such file");
   }
   if (stat.isSymbolicLink()) throw new UserError(`${path.basename(source)} is a symbolic link; refusing to rename it`);
-  if (!stat.isFile()) throw new UserError(`No such file: ${from}`);
+  if (!stat.isFile()) throw new UserError("No such file");
   assertNotEnv(source);
   assertNotSymlink(target);
-  if (existsSync(target)) throw new UserError(`${to} already exists`);
+  if (existsSync(target)) throw new UserError("A file with that name already exists");
   await checkWriteAllowed(ctx, target, text, stat.size);
   writeFileConfined(ctx.root, target, text);
   // The quota check above awaited, so the path may have changed: only remove the very file that was checked.

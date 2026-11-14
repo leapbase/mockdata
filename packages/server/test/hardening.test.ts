@@ -78,6 +78,35 @@ describe("oversized or hostile schema text", () => {
   });
 });
 
+describe("listing schema files", () => {
+  it("stops after a bounded number of directory entries, and sniffs a blank file quickly", async () => {
+    const root = tmpRoot();
+    mkdirSync(join(root, "aaa"));
+    for (let i = 0; i < 5200; i++) writeFileSync(join(root, "aaa", `note${i}.txt`), "");
+    writeFileSync(join(root, "aaa", "zzz.yaml"), SHOP_YAML); // after the cap in directory order or not, the listing must return
+    writeFileSync(join(root, "blank.yaml"), " \n".repeat(8000));
+    writeFileSync(join(root, "shop.yaml"), SHOP_YAML);
+    writeFileSync(join(root, "one-line.json"), '{"seed": 1, "tables": {}}');
+    const { get } = await boot({ root });
+    const start = performance.now();
+    const r = await get("/api/files");
+    expect(r.status).toBe(200);
+    expect(performance.now() - start).toBeLessThan(2000);
+    expect(r.json.files).toContain("shop.yaml");
+    expect(r.json.files).toContain("one-line.json");
+    expect(r.json.files).not.toContain("blank.yaml");
+  });
+});
+
+describe("bad sample input", () => {
+  it("is the caller's error (400), not a server fault", async () => {
+    const { post } = await boot();
+    const r = await post("/api/infer", { content: 'a\n"oops', name: "x.csv" });
+    expect(r.status).toBe(400);
+    expect(r.raw).toMatch(/unterminated/);
+  });
+});
+
 describe("job time limit", () => {
   it("has a ceiling however small the schema makes its batches", () => {
     const settings: PoolSettings = { size: 2, maxQueue: 16, jobTimeoutSecs: 120, llmBatchSecs: 5, heapMb: 2048 };

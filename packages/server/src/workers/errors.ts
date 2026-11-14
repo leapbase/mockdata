@@ -1,4 +1,5 @@
 import { UserError } from "@mockdata/cli";
+import { InferError } from "@mockdata/inputs";
 import { BusyError, CycleError, GenerationError, SchemaError, QuotaError, ValidationError } from "@mockdata/core";
 import { LlmCancelledError, LlmConfigError, LlmFillError, LlmHttpError } from "@mockdata/llm";
 
@@ -24,6 +25,7 @@ export interface WireError {
 /** Order matters only between classes that extend one another; none of these do. */
 const KINDS: [string, new (...args: never[]) => Error][] = [
   ["user", UserError],
+  ["infer", InferError],
   ["schema", SchemaError],
   ["cycle", CycleError],
   ["generation", GenerationError],

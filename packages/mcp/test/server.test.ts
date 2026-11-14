@@ -97,6 +97,24 @@ describe("mcp server", () => {
     expect(prompts).toHaveLength(1); // one batch of 3 rows, not 250 batches
   });
 
+  it("generate_data refuses a run that would have a model write more cells than the budget", async () => {
+    let calls = 0;
+    const provider = { name: "fake", complete: async (req: { user: string }) => (calls++, { text: JSON.stringify(Array.from({ length: (req.user.match(/^\d+: /gm) ?? []).length }, (_, i) => `note ${i}`)), usage: { inputTokens: 1, outputTokens: 1 } }) };
+    const notes = (rows: number) => ({ tables: { notes: { rows, columns: { id: { type: "integer", primaryKey: true }, body: { type: "string", llm: true } } } } });
+    const strict = await start({ llm: { provider }, env: { MOCKDATA_MAX_LLM_CELLS: "50" } });
+    const refused = await strict.call("generate_data", { schema: notes(60), outputDir: "out", format: "csv" });
+    expect(refused.isError).toBe(true);
+    expect(refused.body).toMatch(/model write 60 values; the limit is 50/);
+    expect(calls).toBe(0);
+    expect(existsSync(join(strict.root, "out"))).toBe(false);
+    // A preview only fills the rows it shows, so the same schema is fine without outputDir; so is a run within budget.
+    expect((await strict.call("generate_data", { schema: notes(60), previewRows: 5 })).isError).toBe(false);
+    expect((await strict.call("generate_data", { schema: notes(40), outputDir: "out", format: "csv" })).isError).toBe(false);
+    // The default allows 100,000.
+    const usual = await start({ llm: { provider } });
+    expect((await usual.call("generate_data", { schema: notes(100_001), outputDir: "out", format: "csv" })).body).toMatch(/limit is 100000/);
+  });
+
   it("generate_data refuses oversized schema text and a file that is not a sample for infer_schema", async () => {
     const { call, root } = await start();
     expect((await call("generate_data", { schema: "# " + "x".repeat(2 * 1024 * 1024) + "\ntables: {}" })).body).toMatch(/larger than 2 MB/);

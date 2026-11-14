@@ -206,7 +206,7 @@ The MCP server exposes the same abilities to agents: over stdio or local HTTP (b
 | `generate_data` | Returns row counts and a small preview; can write every row to files |
 | `get_run_report` | Seed, row counts, files written, LLM calls and tokens for the last run |
 
-`generate_data`, the web UI's Export and `mockdata generate` refuse schemas that add up to more than 1,000,000 rows or 10,000,000 values (rows x columns), since they build everything in memory. A schema may have at most 1,000 tables and 1,000 columns per table, and schema text sent to either server is limited to 2 MB. Without `outputDir`, `generate_data` generates only the preview rows. `infer_schema` reads only `.csv`, `.json`, `.ndjson`, `.jsonl`, `.yaml`, `.yml` and SQLite files (or a folder of at most 200 sample files). Inferring from a folder of samples skips symlinks and reports them as warnings. Both servers answer only requests addressed to localhost, and a browser page must be same-origin with the address it called. Idle MCP HTTP sessions close after 30 minutes.
+`generate_data`, the web UI's Export and `mockdata generate` refuse schemas that add up to more than 1,000,000 rows or 10,000,000 values (rows x columns), since they build everything in memory. A schema may have at most 1,000 tables and 1,000 columns per table, and schema text sent to either server is limited to 2 MB. Without `outputDir`, `generate_data` generates only the preview rows, and with `outputDir` it refuses a run that would have a model write more than 100,000 values (set `MOCKDATA_MAX_LLM_CELLS` in the server's environment to change that; the CLI has no such limit). `infer_schema` reads only `.csv`, `.json`, `.ndjson`, `.jsonl`, `.yaml`, `.yml` and SQLite files (or a folder of at most 200 sample files). Inferring from a folder of samples skips symlinks and reports them as warnings. Both servers answer only requests addressed to localhost, and a browser page must be same-origin with the address it called. Idle MCP HTTP sessions close after 30 minutes.
 
 Register it in `.mcp.json` (or with `claude mcp add`), using absolute paths:
 
@@ -272,7 +272,7 @@ Everyone outside this machine also needs a shared secret token. Set `MOCKDATA_TO
 - **Scripts and MCP clients:** send `Authorization: Bearer <token>`, for example `claude mcp add --transport http mockdata http://<address>:4748/mcp --header "Authorization: Bearer <token>"`. The MCP endpoint accepts the header only, never a cookie or query string.
 - **Localhost** needs no token.
 
-Traffic is plain http, so the token can be read by anyone who can see the network path. Use a network you trust, such as a Tailscale tailnet (already encrypted). Anyone holding the token can read and write schema files under the root, spend your LLM credits and use every MCP tool, so treat it like a password and keep sensitive files out of the root. Rotate it by changing `MOCKDATA_TOKEN` and restarting.
+Traffic is plain http, so the token can be read by anyone who can see the network path. Browsers do not separate cookies by port, so the token cookie is also sent to any other http service on the same address; do not open the UI on an address that hosts services you do not trust. Use a network you trust, such as a Tailscale tailnet (already encrypted). Anyone holding the token can read and write schema files under the root, spend your LLM credits and use every MCP tool, so treat it like a password and keep sensitive files out of the root. Rotate it by changing `MOCKDATA_TOKEN` and restarting.
 
 ## Generation runs in worker threads
 

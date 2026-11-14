@@ -45,7 +45,7 @@ export function poolSettingsFromEnv(env: Record<string, string | undefined>, cor
  * jobs fill only the preview subset (`previewRows` per table), and export/sample jobs fill every row.
  */
 export function llmCellsForJob(job: Job): number {
-  if (job.kind === "preview") return 0;
+  if (job.kind === "preview" || job.kind === "infer") return 0;
   const rowsOf = (table: string) => job.schema.tables[table]?.rows ?? 0;
   const perTable = job.kind === "run" ? (t: string) => Math.min(rowsOf(t), job.previewRows) : rowsOf;
   return llmColumns(job.schema).reduce((n, c) => n + perTable(c.table), 0);
@@ -69,7 +69,7 @@ export function jobTimeoutMs(job: Job, settings: PoolSettings): number {
   // instead of producing a NaN timeout (which would fire immediately and kill the job).
   const base = (settings.jobTimeoutSecs ?? 120) * 1000;
   const cells = llmCellsForJob(job);
-  if (cells === 0) return base;
+  if (cells === 0 || job.kind === "infer") return base;
   const batchSize = job.schema.llm?.batchSize ?? 20;
   // The schema picks batchSize (and the model server), so the allowance needs a ceiling: without one, batchSize 1
   // on a million rows asked for 58 days, and a few such jobs against a slow host would hold every worker.

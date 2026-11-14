@@ -1,4 +1,4 @@
-import { serialize } from "@mockdata/cli";
+import { inferConfined, serialize, toYaml, type InferArgs } from "@mockdata/cli";
 import { generate, planGeneration, type DataSchemaT, type Dataset } from "@mockdata/core";
 import { generateWithLlm, type GenerateWithLlmOptions, type LlmProgress, type LlmReport } from "@mockdata/llm";
 import { buildPreview, capRowsForPreview, type Preview } from "../preview.js";
@@ -49,13 +49,24 @@ export interface SampleJob {
   format?: "json" | "ndjson" | "csv";
   env: Record<string, string | undefined>;
 }
-export type Job = PreviewJob | RunJob | ExportJob | SampleJob;
+/**
+ * Build a draft schema from a file or folder under `root`, or from pasted content. Parsing and analysing a large
+ * sample is seconds of synchronous work, so it runs here like generation does. Database sources are not jobs: they
+ * are network waits, not CPU, and stay on the calling thread.
+ */
+export interface InferJob {
+  kind: "infer";
+  root: string;
+  args: Omit<InferArgs, "connectionEnv">;
+}
+export type Job = PreviewJob | RunJob | ExportJob | SampleJob | InferJob;
 
 export interface JobResults {
   preview: { preview: Preview };
   run: { preview: Preview; report: LlmReport };
   export: { counts: Record<string, number>; report: LlmReport; texts?: Record<string, string>; archive?: Uint8Array };
   sample: { counts: Record<string, number>; report: LlmReport; sample: Dataset; texts?: Record<string, string> };
+  infer: { schemaText: string; tables: string[]; warnings: string[] };
 }
 export type ResultOf<J extends Job> = JobResults[J["kind"]];
 
@@ -73,6 +84,11 @@ export interface JobHooks {
  */
 export async function runJob<J extends Job>(job: J, hooks: JobHooks = {}): Promise<ResultOf<J>> {
   const j = job as Job;
+  if (j.kind === "infer") {
+    // No environment is passed: without `connectionEnv` nothing in here reads one.
+    const result = await inferConfined(j.root, {}, { ...j.args, connectionEnv: undefined });
+    return { schemaText: toYaml(result.schema), tables: Object.keys(result.schema.tables), warnings: result.warnings } as ResultOf<J>;
+  }
   if (j.kind === "preview") {
     // Model-written columns stay pending here; the run route fills them.
     // Only the rows the preview shows are generated (parents first, same seed, so foreign keys resolve inside the

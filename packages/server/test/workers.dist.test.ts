@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
 import { LlmCancelledError } from "@mockdata/llm";
@@ -209,5 +210,40 @@ d("through the HTTP routes", () => {
     expect(zb.raw).toBe(za.raw);
     const bad = await threaded.post("/api/generate", { text: "tables: { a: { rows: 1, columns: { x: { type: nope } } } }" });
     expect(bad.status).toBe(400);
+  });
+
+  it("infers from pasted content and from files in a worker, with the same answers and errors", async () => {
+    const inline = await boot();
+    const threaded = await boot({ workers: { ...settings, workerFile } });
+    writeFileSync(join(threaded.root, "people.csv"), "id,name\n1,Ann\n2,Bo\n3,Cy\n");
+    writeFileSync(join(inline.root, "people.csv"), "id,name\n1,Ann\n2,Bo\n3,Cy\n");
+    writeFileSync(join(threaded.root, ".env"), "ANTHROPIC_API_KEY=sk-ant-very-secret\n");
+    for (const body of [{ content: "id,name\n1,Ann\n2,Bo\n3,Cy\n", name: "people.csv" }, { path: "people.csv" }, { content: '{"$defs": {"item": {"type": "object", "properties": {"id": {"type": "integer"}}}}}' }]) {
+      const a = await inline.post("/api/infer", body);
+      const b = await threaded.post("/api/infer", body);
+      expect(b.status).toBe(200);
+      expect(b.json).toEqual(a.json);
+    }
+    // Refusals and bad input keep their class (and so their status) across the thread boundary.
+    for (const body of [{ path: ".ENV" }, { path: "../people.csv" }, { content: "" }, { content: '"a\n"oops', name: "x.csv" }]) {
+      const b = await threaded.post("/api/infer", body);
+      expect(b.status, JSON.stringify(body)).toBe(400);
+      expect(b.raw).not.toContain("sk-ant");
+    }
+  });
+
+  it("keeps answering other requests while a large sample is being analysed", async () => {
+    const threaded = await boot({ workers: { ...settings, workerFile } });
+    const content = "id,name,city,joined\n" + Array.from({ length: 120_000 }, (_, i) => `${i},Person ${i},City ${i % 97},2024-01-${String((i % 28) + 1).padStart(2, "0")}`).join("\n");
+    const slow = threaded.post("/api/infer", { content, name: "people.csv" });
+    let worst = 0;
+    for (let i = 0; i < 20; i++) {
+      const start = performance.now();
+      expect((await threaded.get("/healthz")).status).toBe(200);
+      worst = Math.max(worst, performance.now() - start);
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect((await slow).status).toBe(200);
+    expect(worst).toBeLessThan(250);
   });
 });
